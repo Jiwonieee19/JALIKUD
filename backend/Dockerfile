@@ -2,7 +2,7 @@
 FROM php:8.4-cli-alpine
 
 # Install system deps and PHP extensions needed by Laravel + SQLite
-RUN apk add --no-cache bash sqlite \
+RUN apk add --no-cache bash sqlite sqlite-dev pkgconfig \
     && docker-php-ext-install pdo_sqlite
 
 # Install Composer
