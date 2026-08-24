@@ -11,7 +11,7 @@ use Illuminate\Validation\ValidationException;
 class AuthController extends Controller
 {
     /**
-     * Register a new user and return an API token.
+     * basic ahh register
      */
     public function register(Request $request): JsonResponse
     {
@@ -37,7 +37,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Authenticate a user and issue a Sanctum API token.
+     * basic ahh auth
      */
     public function login(Request $request): JsonResponse
     {
@@ -64,7 +64,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Return the authenticated user.
+     * return authenticated user
      */
     public function user(Request $request): JsonResponse
     {
@@ -74,7 +74,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Revoke the current access token.
+     * revoke the current access token
      */
     public function logout(Request $request): JsonResponse
     {
