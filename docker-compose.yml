@@ -1,0 +1,24 @@
+services:
+  backend:
+    build: ./backend
+    container_name: jalikud-api
+    environment:
+      - DB_CONNECTION=sqlite
+    volumes:
+      # Persist the SQLite database across container rebuilds
+      - sqlite-data:/var/www/html/database
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: jalikud-web
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+volumes:
+  sqlite-data:
