@@ -13,9 +13,21 @@ if ! grep -q "^APP_KEY=base64" .env; then
     php artisan key:generate --force
 fi
 
-# Ensure SQLite database file exists and is writable, then migrate
-touch database/database.sqlite
-chown www-data:www-data database/database.sqlite
+# Persist runtime DB settings into .env because `artisan serve` workers
+# do not reliably inherit container environment variables
+for var in DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD; do
+    value=$(printenv "$var")
+    if [ -n "$value" ]; then
+        sed -i "s#^$var=.*#$var=$value#" .env
+    fi
+done
+
+# Ensure SQLite database file exists when running on SQLite, then migrate
+if grep -q "^DB_CONNECTION=sqlite" .env || [ "$DB_CONNECTION" = "sqlite" ]; then
+    touch database/database.sqlite
+    chown www-data:www-data database/database.sqlite
+fi
+
 php artisan migrate --force
 
 exec php artisan serve --host=0.0.0.0 --port=8000

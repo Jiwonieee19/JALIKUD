@@ -1,12 +1,35 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: jalikud-postgres
+    environment:
+      POSTGRES_DB: jalikud
+      POSTGRES_USER: jalikud
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jalikud -d jalikud"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   backend:
     build: ./backend
     container_name: jalikud-api
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      - DB_CONNECTION=sqlite
-    volumes:
-      # Persist the SQLite database across container rebuilds
-      - sqlite-data:/var/www/html/database
+      - DB_CONNECTION=pgsql
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=jalikud
+      - DB_USERNAME=jalikud
+      - DB_PASSWORD=secret
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -21,4 +44,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  sqlite-data:
+  pgdata:

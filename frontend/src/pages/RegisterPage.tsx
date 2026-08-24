@@ -2,26 +2,33 @@ import { useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
 
 interface ValidationErrors {
+  name?: string[]
   email?: string[]
   password?: string[]
 }
 
-export default function LoginPage({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
-  const { login } = useAuth()
+export default function RegisterPage({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
+  const { register } = useAuth()
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [passwordConfirmation, setPasswordConfirmation] = useState('')
   const [errors, setErrors] = useState<ValidationErrors>({})
   const [generalError, setGeneralError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (password !== passwordConfirmation) {
+      setErrors({ password: ['Password confirmation does not match.'] })
+      return
+    }
     setErrors({})
     setGeneralError('')
     setSubmitting(true)
 
     try {
-      await login(email, password)
+      await register(name, email, password, passwordConfirmation)
     } catch (err: unknown) {
       type AxiosLikeError = {
         response?: { status?: number; data?: { message?: string; errors?: ValidationErrors } }
@@ -44,9 +51,23 @@ export default function LoginPage({ onSwitchToRegister }: { onSwitchToRegister: 
     <div style={styles.container}>
       <form onSubmit={handleSubmit} style={styles.card}>
         <h1 style={styles.title}>JALIKUD</h1>
-        <p style={styles.subtitle}>Sign in to your account</p>
+        <p style={styles.subtitle}>Create a new account</p>
 
         {generalError && <p style={styles.error}>{generalError}</p>}
+
+        <label style={styles.label} htmlFor="name">
+          Name
+        </label>
+        <input
+          id="name"
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          style={styles.input}
+          placeholder="Your name"
+        />
+        {errors.name && <p style={styles.error}>{errors.name[0]}</p>}
 
         <label style={styles.label} htmlFor="email">
           Email
@@ -71,26 +92,40 @@ export default function LoginPage({ onSwitchToRegister }: { onSwitchToRegister: 
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
+          minLength={8}
           style={styles.input}
-          placeholder="••••••••"
+          placeholder="At least 8 characters"
         />
         {errors.password && <p style={styles.error}>{errors.password[0]}</p>}
 
+        <label style={styles.label} htmlFor="password-confirmation">
+          Confirm Password
+        </label>
+        <input
+          id="password-confirmation"
+          type="password"
+          value={passwordConfirmation}
+          onChange={(e) => setPasswordConfirmation(e.target.value)}
+          required
+          style={styles.input}
+          placeholder="••••••••"
+        />
+
         <button type="submit" disabled={submitting} style={styles.button}>
-          {submitting ? 'Signing in…' : 'Sign In'}
+          {submitting ? 'Creating account…' : 'Sign Up'}
         </button>
 
         <p style={styles.footer}>
-          Don't have an account?{' '}
+          Already have an account?{' '}
           <a
-            href="#register"
+            href="#login"
             onClick={(e) => {
               e.preventDefault()
-              onSwitchToRegister()
+              onSwitchToLogin()
             }}
             style={styles.link}
           >
-            Sign up
+            Sign in
           </a>
         </p>
       </form>
