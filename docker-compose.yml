@@ -3,9 +3,9 @@ services:
     image: postgres:17-alpine
     container_name: jalikud-postgres
     environment:
-      POSTGRES_DB: jalikud
-      POSTGRES_USER: jalikud
-      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: ${POSTGRES_DB:-jalikud}
+      POSTGRES_USER: ${POSTGRES_USER:-jalikud}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
@@ -25,12 +25,13 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      - APP_KEY=${APP_KEY:?Set APP_KEY in the root .env}
       - DB_CONNECTION=pgsql
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_DATABASE=jalikud
-      - DB_USERNAME=jalikud
-      - DB_PASSWORD=secret
+      - DB_DATABASE=${POSTGRES_DB:-jalikud}
+      - DB_USERNAME=${POSTGRES_USER:-jalikud}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}
     ports:
       - "8000:8000"
     restart: unless-stopped

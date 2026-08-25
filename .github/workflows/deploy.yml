@@ -3,6 +3,10 @@ name: deploy
 on:
   workflow_dispatch:
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: ghcr.io
   API_IMAGE: ghcr.io/jiwonieee19/jalikud-api
@@ -50,3 +54,42 @@ jobs:
             ${{ env.WEB_IMAGE }}:${{ github.sha }}
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
+
+      - name: Write deployment summary
+        run: |
+          {
+            echo "## Deploy complete 🚀"
+            echo ""
+            echo "| Image | Tag |"
+            echo "|-------|-----|"
+            echo "| \`${{ env.API_IMAGE }}\` | \`latest\`, \`${GITHUB_SHA::7}\` |"
+            echo "| \`${{ env.WEB_IMAGE }}\` | \`latest\`, \`${GITHUB_SHA::7}\` |"
+            echo ""
+            echo "Pull locally with: **./deploy.ps1**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Deploys onto the local machine. Requires a registered self-hosted
+  # runner (repo Settings > Actions > Runners) with Docker installed.
+  deploy-local:
+    runs-on: [self-hosted]
+    needs: build-and-push
+    steps:
+      - name: Checkout repository (for docker-compose.yml)
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        shell: pwsh
+        run: |
+          '${{ secrets.GHCR_TOKEN }}' | docker login ghcr.io -u Jiwonieee19 --password-stdin
+
+      - name: Pull and restart stack
+        shell: pwsh
+        run: |
+          docker compose pull backend frontend
+          docker compose up -d --no-build backend frontend
+          docker image prune -f
+
+      - name: Log out of GHCR
+        if: always()
+        shell: pwsh
+        run: docker logout ghcr.io

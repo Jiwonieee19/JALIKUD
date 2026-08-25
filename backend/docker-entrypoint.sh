@@ -13,9 +13,9 @@ if ! grep -q "^APP_KEY=base64" .env; then
     php artisan key:generate --force
 fi
 
-# Persist runtime DB settings into .env because `artisan serve` workers
+# Persist runtime settings into .env because `artisan serve` workers
 # do not reliably inherit container environment variables
-for var in DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD; do
+for var in APP_KEY DB_CONNECTION DB_HOST DB_PORT DB_DATABASE DB_USERNAME DB_PASSWORD; do
     value=$(printenv "$var")
     if [ -n "$value" ]; then
         sed -i "s#^$var=.*#$var=$value#" .env
