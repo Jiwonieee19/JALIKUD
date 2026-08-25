@@ -24,9 +24,21 @@ const navItems = [
       <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
         <path
           fillRule="evenodd"
-          d="M8.34 1.66a1.5 1.5 0 0 1 3.32 0c.16.72.97 1.08 1.63.74a1.5 1.5 0 0 1 2.35 2.35c-.34.66.02 1.47.74 1.63a1.5 1.5 0 0 1 0 3.32c-.72.16-1.08.97-.74 1.63a1.5 1.5 0 0 1-2.35 2.35c-.66-.34-1.47.02-1.63.74a1.5 1.5 0 0 1-3.32 0c-.16-.72-.97-1.08-1.63-.74a1.5 1.5 0 0 1-2.35-2.35c.34-.66-.02-1.47-.74-1.63a1.5 1.5 0 0 1 0-3.32c.72-.16 1.08-.97.74-1.63a1.5 1.5 0 0 1 2.35-2.35c.66.34 1.47-.02 1.63-.74ZM10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
+          d="M8.34 1.66a1.5 1.5 0 0 1 3.32 0c.16.72.97 1.08 1.63.74a1.5 1.5 0 0 1 2.35 2.35c-.34.66.02 1.47.74 1.63a1.5 1.5 0 0 1 0 3.32c-.72.16-1.08.97-.74 1.63a1.5 1.5 0 0 1-2.35 2.35c-.66-.34-1.47.02-1.63.74a1.5 1.5 0 0 1-3.32 0c-.16-.72-.97-1.08-1.63-.74a1.5 1.5 0 0 1-2.35-2.35c.34-.66-.02-1.47-.74-1.63a1.5 1.5 0 0 1 0-3.32c.72-.16 1.08-.97.74-1.63a1.5 1.5 0 0 1-2.35-2.35c.34-.66-.02-1.47-.74-1.63a1.5 1.5 0 0 1 0-3.32c.72-.16 1.08-.97.74-1.63a1.5 1.5 0 0 1 2.35-2.35c.66.34 1.47-.02 1.63-.74ZM10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
           clipRule="evenodd"
         />
+      </svg>
+    ),
+  },
+]
+
+const adminNavItems = [
+  {
+    to: '/admin/users',
+    label: 'Users',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+        <path d="M10 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 8a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm12 0a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm-10.667 5.333A4.667 4.667 0 0 1 12 17.86v.14H2v-.14a4.667 4.667 0 0 1 5.333-4.527ZM14 13.5a3.5 3.5 0 0 1 3.5 3.5v1H14v-1c0-.864-.217-1.68-.602-2.394.194.058.396.094.602.094v-.2Z" />
       </svg>
     ),
   },
@@ -40,6 +52,8 @@ export default function AppLayout() {
     await logout()
     navigate('/login')
   }
+
+  const allItems = user?.role === 'admin' ? [...navItems, ...adminNavItems] : navItems
 
   const linkClasses = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
@@ -56,7 +70,7 @@ export default function AppLayout() {
           JALIKUD
         </div>
         <nav className="flex flex-1 flex-col gap-1">
-          {navItems.map((item) => (
+          {allItems.map((item) => (
             <NavLink key={item.to} to={item.to} className={linkClasses}>
               {item.icon}
               {item.label}

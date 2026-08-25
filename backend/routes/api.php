@@ -1,7 +1,8 @@
 <?php
 
+use App\Http\Controllers\AdminUserController;
 use App\Http\Controllers\AuthController;
-use Illuminate\Http\Request;
+use App\Http\Middleware\EnsureAdmin;
 use Illuminate\Support\Facades\Route;
 
 // Public authentication endpoints (rate limited to slow down brute force)
@@ -14,5 +15,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/profile', [AuthController::class, 'updateProfile']);
     Route::put('/password', [AuthController::class, 'updatePassword']);
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Admin-only user management
+    Route::middleware(EnsureAdmin::class)
+        ->prefix('admin')
+        ->group(function () {
+            Route::get('/users', [AdminUserController::class, 'index']);
+            Route::post('/users', [AdminUserController::class, 'store']);
+            Route::get('/users/{user}', [AdminUserController::class, 'show']);
+            Route::match(['put', 'patch'], '/users/{user}', [AdminUserController::class, 'update']);
+            Route::delete('/users/{user}', [AdminUserController::class, 'destroy']);
+        });
 });
 
