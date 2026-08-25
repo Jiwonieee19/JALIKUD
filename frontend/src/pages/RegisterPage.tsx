@@ -1,5 +1,9 @@
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
+import Label from '../components/ui/Label'
 
 interface ValidationErrors {
   name?: string[]
@@ -7,7 +11,7 @@ interface ValidationErrors {
   password?: string[]
 }
 
-export default function RegisterPage({ onSwitchToLogin }: { onSwitchToLogin: () => void }) {
+export default function RegisterPage() {
   const { register } = useAuth()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -48,158 +52,113 @@ export default function RegisterPage({ onSwitchToLogin }: { onSwitchToLogin: () 
   }
 
   return (
-    <div style={styles.container}>
-      <form onSubmit={handleSubmit} style={styles.card}>
-        <h1 style={styles.title}>JALIKUD</h1>
-        <p style={styles.subtitle}>Create a new account</p>
+    <div className="flex min-h-full items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl bg-white p-8 shadow-xl ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 sm:p-10">
+          <div className="mb-8 text-center">
+            <h1 className="text-3xl font-bold tracking-widest text-indigo-600 dark:text-indigo-400">
+              JALIKUD
+            </h1>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              Create a new account to get started
+            </p>
+          </div>
 
-        {generalError && <p style={styles.error}>{generalError}</p>}
+          {generalError && (
+            <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-400">
+              {generalError}
+            </div>
+          )}
 
-        <label style={styles.label} htmlFor="name">
-          Name
-        </label>
-        <input
-          id="name"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-          style={styles.input}
-          placeholder="Your name"
-        />
-        {errors.name && <p style={styles.error}>{errors.name[0]}</p>}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <Label htmlFor="name" className="mb-1.5">
+                Full name
+              </Label>
+              <Input
+                id="name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                autoComplete="name"
+                placeholder="Your name"
+              />
+              {errors.name && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{errors.name[0]}</p>
+              )}
+            </div>
 
-        <label style={styles.label} htmlFor="email">
-          Email
-        </label>
-        <input
-          id="email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          style={styles.input}
-          placeholder="you@example.com"
-        />
-        {errors.email && <p style={styles.error}>{errors.email[0]}</p>}
+            <div>
+              <Label htmlFor="email" className="mb-1.5">
+                Email address
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+                placeholder="you@example.com"
+              />
+              {errors.email && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{errors.email[0]}</p>
+              )}
+            </div>
 
-        <label style={styles.label} htmlFor="password">
-          Password
-        </label>
-        <input
-          id="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          minLength={8}
-          style={styles.input}
-          placeholder="At least 8 characters"
-        />
-        {errors.password && <p style={styles.error}>{errors.password[0]}</p>}
+            <div>
+              <Label htmlFor="password" className="mb-1.5">
+                Password
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={8}
+                autoComplete="new-password"
+                placeholder="At least 8 characters"
+              />
+              {errors.password && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
+                  {errors.password[0]}
+                </p>
+              )}
+            </div>
 
-        <label style={styles.label} htmlFor="password-confirmation">
-          Confirm Password
-        </label>
-        <input
-          id="password-confirmation"
-          type="password"
-          value={passwordConfirmation}
-          onChange={(e) => setPasswordConfirmation(e.target.value)}
-          required
-          style={styles.input}
-          placeholder="••••••••"
-        />
+            <div>
+              <Label htmlFor="password-confirmation" className="mb-1.5">
+                Confirm password
+              </Label>
+              <Input
+                id="password-confirmation"
+                type="password"
+                value={passwordConfirmation}
+                onChange={(e) => setPasswordConfirmation(e.target.value)}
+                required
+                autoComplete="new-password"
+                placeholder="••••••••"
+              />
+            </div>
 
-        <button type="submit" disabled={submitting} style={styles.button}>
-          {submitting ? 'Creating account…' : 'Sign Up'}
-        </button>
+            <Button type="submit" disabled={submitting} className="w-full py-2.5">
+              {submitting ? 'Creating account…' : 'Create Account'}
+            </Button>
+          </form>
 
-        <p style={styles.footer}>
-          Already have an account?{' '}
-          <a
-            href="#login"
-            onClick={(e) => {
-              e.preventDefault()
-              onSwitchToLogin()
-            }}
-            style={styles.link}
-          >
-            Sign in
-          </a>
-        </p>
-      </form>
+          <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
+            Already have an account?{' '}
+            <Link
+              to="/login"
+              className="font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              Sign in
+            </Link>
+          </p>
+        </div>
+      </div>
     </div>
   )
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#f3f4f6',
-    padding: '1rem',
-  },
-  card: {
-    width: '100%',
-    maxWidth: 380,
-    background: '#fff',
-    borderRadius: 12,
-    boxShadow: '0 10px 30px rgba(0,0,0,0.08)',
-    padding: '2rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.5rem',
-  },
-  title: {
-    margin: 0,
-    textAlign: 'center' as const,
-    fontSize: '1.75rem',
-    letterSpacing: '0.05em',
-  },
-  subtitle: {
-    margin: '0 0 1rem',
-    textAlign: 'center' as const,
-    color: '#6b7280',
-  },
-  label: {
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    color: '#374151',
-  },
-  input: {
-    padding: '0.6rem 0.75rem',
-    borderRadius: 8,
-    border: '1px solid #d1d5db',
-    fontSize: '1rem',
-    outline: 'none',
-  },
-  button: {
-    marginTop: '1rem',
-    padding: '0.7rem',
-    borderRadius: 8,
-    border: 'none',
-    background: '#2563eb',
-    color: '#fff',
-    fontSize: '1rem',
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  error: {
-    color: '#dc2626',
-    fontSize: '0.85rem',
-    margin: '0.25rem 0 0',
-  },
-  footer: {
-    marginTop: '1rem',
-    textAlign: 'center' as const,
-    fontSize: '0.9rem',
-    color: '#6b7280',
-  },
-  link: {
-    color: '#2563eb',
-    fontWeight: 600,
-  },
 }

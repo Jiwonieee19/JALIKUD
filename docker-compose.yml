@@ -19,6 +19,7 @@ services:
 
   backend:
     build: ./backend
+    image: ghcr.io/jiwonieee19/jalikud-api:latest
     container_name: jalikud-api
     depends_on:
       postgres:
@@ -36,6 +37,7 @@ services:
 
   frontend:
     build: ./frontend
+    image: ghcr.io/jiwonieee19/jalikud-web:latest
     container_name: jalikud-web
     depends_on:
       - backend

@@ -1,12 +1,16 @@
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import Button from '../components/ui/Button'
+import Input from '../components/ui/Input'
+import Label from '../components/ui/Label'
 
 interface ValidationErrors {
   email?: string[]
   password?: string[]
 }
 
-export default function LoginPage({ onSwitchToRegister }: { onSwitchToRegister: () => void }) {
+export default function LoginPage() {
   const { login } = useAuth()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -41,130 +45,79 @@ export default function LoginPage({ onSwitchToRegister }: { onSwitchToRegister: 
   }
 
   return (
-    <div style={styles.container}>
-      <form onSubmit={handleSubmit} style={styles.card}>
-        <h1 style={styles.title}>JALIKUD</h1>
-        <p style={styles.subtitle}>Sign in to your account</p>
+    <div className="flex min-h-full items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
+      <div className="w-full max-w-md">
+        <div className="rounded-2xl bg-white p-8 shadow-xl ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 sm:p-10">
+          <div className="mb-8 text-center">
+            <h1 className="text-3xl font-bold tracking-widest text-indigo-600 dark:text-indigo-400">
+              JALIKUD
+            </h1>
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+              Sign in to your account to continue
+            </p>
+          </div>
 
-        {generalError && <p style={styles.error}>{generalError}</p>}
+          {generalError && (
+            <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-500/10 dark:text-red-400">
+              {generalError}
+            </div>
+          )}
 
-        <label style={styles.label} htmlFor="email">
-          Email
-        </label>
-        <input
-          id="email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          style={styles.input}
-          placeholder="you@example.com"
-        />
-        {errors.email && <p style={styles.error}>{errors.email[0]}</p>}
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <Label htmlFor="email" className="mb-1.5">
+                Email address
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoComplete="email"
+                placeholder="you@example.com"
+              />
+              {errors.email && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{errors.email[0]}</p>
+              )}
+            </div>
 
-        <label style={styles.label} htmlFor="password">
-          Password
-        </label>
-        <input
-          id="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          style={styles.input}
-          placeholder="••••••••"
-        />
-        {errors.password && <p style={styles.error}>{errors.password[0]}</p>}
+            <div>
+              <Label htmlFor="password" className="mb-1.5">
+                Password
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="current-password"
+                placeholder="••••••••"
+              />
+              {errors.password && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
+                  {errors.password[0]}
+                </p>
+              )}
+            </div>
 
-        <button type="submit" disabled={submitting} style={styles.button}>
-          {submitting ? 'Signing in…' : 'Sign In'}
-        </button>
+            <Button type="submit" disabled={submitting} className="w-full py-2.5">
+              {submitting ? 'Signing in…' : 'Sign In'}
+            </Button>
+          </form>
 
-        <p style={styles.footer}>
-          Don't have an account?{' '}
-          <a
-            href="#register"
-            onClick={(e) => {
-              e.preventDefault()
-              onSwitchToRegister()
-            }}
-            style={styles.link}
-          >
-            Sign up
-          </a>
-        </p>
-      </form>
+          <p className="mt-6 text-center text-sm text-slate-500 dark:text-slate-400">
+            Don't have an account?{' '}
+            <Link
+              to="/register"
+              className="font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              Sign up
+            </Link>
+          </p>
+        </div>
+      </div>
     </div>
   )
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#f3f4f6',
-    padding: '1rem',
-  },
-  card: {
-    width: '100%',
-    maxWidth: 380,
-    background: '#fff',
-    borderRadius: 12,
-    boxShadow: '0 10px 30px rgba(0,0,0,0.08)',
-    padding: '2rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.5rem',
-  },
-  title: {
-    margin: 0,
-    textAlign: 'center' as const,
-    fontSize: '1.75rem',
-    letterSpacing: '0.05em',
-  },
-  subtitle: {
-    margin: '0 0 1rem',
-    textAlign: 'center' as const,
-    color: '#6b7280',
-  },
-  label: {
-    fontSize: '0.875rem',
-    fontWeight: 600,
-    color: '#374151',
-  },
-  input: {
-    padding: '0.6rem 0.75rem',
-    borderRadius: 8,
-    border: '1px solid #d1d5db',
-    fontSize: '1rem',
-    outline: 'none',
-  },
-  button: {
-    marginTop: '1rem',
-    padding: '0.7rem',
-    borderRadius: 8,
-    border: 'none',
-    background: '#2563eb',
-    color: '#fff',
-    fontSize: '1rem',
-    fontWeight: 600,
-    cursor: 'pointer',
-  },
-  error: {
-    color: '#dc2626',
-    fontSize: '0.85rem',
-    margin: '0.25rem 0 0',
-  },
-  footer: {
-    marginTop: '1rem',
-    textAlign: 'center' as const,
-    fontSize: '0.9rem',
-    color: '#6b7280',
-  },
-  link: {
-    color: '#2563eb',
-    fontWeight: 600,
-  },
 }

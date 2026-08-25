@@ -1,36 +1,73 @@
-import { useState } from 'react'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { ThemeProvider } from './context/ThemeContext'
+import AppLayout from './components/layout/AppLayout'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
-import HomePage from './pages/HomePage'
+import DashboardPage from './pages/DashboardPage'
+import SettingsPage from './pages/SettingsPage'
+import type { ReactNode } from 'react'
 
-function AppContent() {
+function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
-  const [showRegister, setShowRegister] = useState(false)
-
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '3rem' }}>
+      <div className="flex h-full items-center justify-center text-slate-500 dark:text-slate-400">
         Loading…
       </div>
     )
   }
+  return user ? <>{children}</> : <Navigate to="/login" replace />
+}
 
-  if (user) {
-    return <HomePage />
+function PublicOnly({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth()
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center text-slate-500 dark:text-slate-400">
+        Loading…
+      </div>
+    )
   }
-
-  return showRegister ? (
-    <RegisterPage onSwitchToLogin={() => setShowRegister(false)} />
-  ) : (
-    <LoginPage onSwitchToRegister={() => setShowRegister(true)} />
-  )
+  return user ? <Navigate to="/dashboard" replace /> : <>{children}</>
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route
+              path="/login"
+              element={
+                <PublicOnly>
+                  <LoginPage />
+                </PublicOnly>
+              }
+            />
+            <Route
+              path="/register"
+              element={
+                <PublicOnly>
+                  <RegisterPage />
+                </PublicOnly>
+              }
+            />
+            <Route
+              element={
+                <RequireAuth>
+                  <AppLayout />
+                </RequireAuth>
+              }
+            >
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   )
 }
