@@ -1,4 +1,4 @@
-﻿# JALIKUD
+# JALIKUD
 
 A full-stack, mobile-first financial platform built to **sustain economical and financial growth** by helping people and businesses structure, track, and grow their money. JALIKUD is a monorepo containing a Laravel REST API, a React web client, an Expo (React Native) mobile app, and a shared Postman collection for testing the API.
 
@@ -13,8 +13,8 @@ A full-stack, mobile-first financial platform built to **sustain economical and 
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Running Locally](#running-locally)
-  - [Option A — Docker Compose (recommended)](#option-a--docker-compose-recommended)
-  - [Option B — Run outside Docker](#option-b--run-outside-docker)
+  - [Option A � Docker Compose (recommended)](#option-a--docker-compose-recommended)
+  - [Option B � Run outside Docker](#option-b--run-outside-docker)
 - [Database Access](#database-access)
 - [API Reference](#api-reference)
 - [Authentication & Roles](#authentication--roles)
@@ -55,31 +55,31 @@ A full-stack, mobile-first financial platform built to **sustain economical and 
 
 ```text
 JALIKUD/
-├── backend/            # Laravel REST API (separate Docker build)
-│   ├── app/            #   controllers, middleware, models
-│   ├── config/         #   Sanctum expiry, etc.
-│   ├── database/       #   migrations, factories, seeders
-│   ├── routes/api.php  #   all API routes live here
-│   ├── Dockerfile
-│   └── docker-entrypoint.sh   # prepares .env, migrates, serves
-├── frontend/           # React + Vite + TS web SPA (separate Docker build)
-│   ├── src/            #   pages, components, context, services
-│   ├── Dockerfile      #   multi-stage: build -> nginx
-│   └── nginx.conf      #   SPA fallback + /api proxy to backend
-├── mobile/Jalikud/     # Expo / React Native app (not yet containerized)
-├── postman/            # API collection + "JALIKUD Local" environment
-├── .github/workflows/  # deploy.yml (build & push to GHCR, optional deploy)
-├── deploy.ps1          # pull GHCR images + restart local stack
-├── docker-compose.yml  # postgres + backend + frontend
-├── .env.example        # template for the root .env
-└── README.md
++-- backend/            # Laravel REST API (separate Docker build)
+�   +-- app/            #   controllers, middleware, models
+�   +-- config/         #   Sanctum expiry, etc.
+�   +-- database/       #   migrations, factories, seeders
+�   +-- routes/api.php  #   all API routes live here
+�   +-- Dockerfile
+�   +-- docker-entrypoint.sh   # prepares .env, migrates, serves
++-- frontend/           # React + Vite + TS web SPA (separate Docker build)
+�   +-- src/            #   pages, components, context, services
+�   +-- Dockerfile      #   multi-stage: build -> nginx
+�   +-- nginx.conf      #   SPA fallback + /api proxy to backend
++-- mobile/Jalikud/     # Expo / React Native app (not yet containerized)
++-- postman/            # API collection + "JALIKUD Local" environment
++-- .github/workflows/  # deploy.yml (build & push to GHCR, optional deploy)
++-- deploy.ps1          # pull GHCR images + restart local stack
++-- docker-compose.yml  # postgres + backend + frontend
++-- .env.example        # template for the root .env
++-- README.md
 ```
 
 ---
 
 ## Architecture
 
-The system is a classic **client → API → database** split. The web SPA and the mobile app both talk to the same Laravel JSON API (though the mobile app is only scaffolded at this stage). In Docker, the frontend is served by **Nginx**, which also reverses proxies all `/api/*` traffic to the Laravel container so the browser only ever talks to one origin.
+The system is a classic **client ? API ? database** split. The web SPA and the mobile app both talk to the same Laravel JSON API (though the mobile app is only scaffolded at this stage). In Docker, the frontend is served by **Nginx**, which also reverses proxies all `/api/*` traffic to the Laravel container so the browser only ever talks to one origin.
 
 ```mermaid
 graph LR
@@ -97,20 +97,20 @@ graph LR
 ### Request flow (web)
 
 1. The browser loads the **React SPA** from Nginx on `http://localhost:5173`.
-2. The SPA (via Axios) issues requests under the `/api` base path — e.g. `POST /api/login`.
+2. The SPA (via Axios) issues requests under the `/api` base path � e.g. `POST /api/login`.
 3. Nginx forwards (`proxy_pass`) `/api` to the `backend` container on port `8000`.
 4. **Laravel** runs the request through middleware: rate limiting (`throttle`), optional Sanctum token guard, and the admin-only `EnsureAdmin` middleware for `/api/admin/*`.
 5. Laravel reads/writes **PostgreSQL**, then returns JSON. Nginx relays the JSON back to the browser.
 
-> When you run the frontend **without Docker** (`npm run dev`), Vite's dev server proxies `/api` → `http://localhost:8000` (see `frontend/vite.config.ts`) — same flow, still one origin.
+> When you run the frontend **without Docker** (`npm run dev`), Vite's dev server proxies `/api` ? `http://localhost:8000` (see `frontend/vite.config.ts`) � same flow, still one origin.
 
 ### Security features built in
 
-- **Sanctum tokens** — `POST /login` / `POST /register` return a `plainTextToken`. Send it as `Authorization: Bearer <token>`.
-- **Token expiry** — Sanctum tokens expire after **7 days** by default (`SANCTUM_TOKEN_EXPIRATION`, see `config/sanctum.php`).
-- **Rate limiting** — `/login` and `/register` are capped at **5 requests per minute** (`throttle:5,1`) to slow brute-force attempts.
-- **Role guard** — `/api/admin/*` returns `403` unless the authenticated user has `role = admin`.
-- **Self-protection** — an admin cannot demote or delete their own account.
+- **Sanctum tokens** � `POST /login` / `POST /register` return a `plainTextToken`. Send it as `Authorization: Bearer <token>`.
+- **Token expiry** � Sanctum tokens expire after **7 days** by default (`SANCTUM_TOKEN_EXPIRATION`, see `config/sanctum.php`).
+- **Rate limiting** � `/login` and `/register` are capped at **5 requests per minute** (`throttle:5,1`) to slow brute-force attempts.
+- **Role guard** � `/api/admin/*` returns `403` unless the authenticated user has `role = admin`.
+- **Self-protection** � an admin cannot demote or delete their own account.
 
 ---
 
@@ -120,17 +120,17 @@ graph LR
 | ----------------- | ------------------------------------------------ | ------------------------------ |
 | **Docker**        | Run the whole stack with Compose                 | Docker **24+** / Compose v2 |
 | **Git**           | Clone the repository                            | any recent                     |
-| PHP `8.4+`        | Optional — local backend dev / laravel commands | ^8.3                           |
-| Composer `2`      | Optional — backend dependencies                 | 2.x                            |
-| Node.js `22+`     | Optional — frontend / mobile local dev          | 22+/20+                        |
+| PHP `8.4+`        | Optional � local backend dev / laravel commands | ^8.3                           |
+| Composer `2`      | Optional � backend dependencies                 | 2.x                            |
+| Node.js `22+`     | Optional � frontend / mobile local dev          | 22+/20+                        |
 
-You can run everything with **Docker alone** — PHP, Composer, and Node are only needed for the "run outside Docker" workflow or for artisan commands.
+You can run everything with **Docker alone** � PHP, Composer, and Node are only needed for the "run outside Docker" workflow or for artisan commands.
 
 ---
 
 ## Running Locally
 
-### Option A — Docker Compose (recommended)
+### Option A � Docker Compose (recommended)
 
 This spins up **three** services defined in `docker-compose.yml`:
 
@@ -191,7 +191,7 @@ You should see all three containers `Running` and `healthy`.
 - **API directly:** <http://localhost:8000/api/...> (e.g. `http://localhost:8000/api` health/up at `http://localhost:8000/up`)
 - **Postgres:** `localhost:5432` with the credentials from `.env`
 
-On first boot the backend container runs migrations automatically (see `docker-entrypoint.sh`), so the schema is ready — you can register a user right away.
+On first boot the backend container runs migrations automatically (see `docker-entrypoint.sh`), so the schema is ready � you can register a user right away.
 
 #### Stop / reset
 
@@ -202,7 +202,7 @@ docker compose down -v       # stop AND delete the database volume (fresh start)
 
 ---
 
-### Option B — Run outside Docker
+### Option B � Run outside Docker
 
 Run each service directly on your machine. You still need the `backend/.env` (the Laravel one), with a database connection pointing at a running PostgreSQL (or switch to SQLite for a lightweight setup).
 
@@ -239,7 +239,7 @@ npm run dev                  # --- http://localhost:5173, proxies /api -> :8000
 #### 3. Mobile (Expo)
 
 ```bash
-cd mobile/Jalikud
+cd mobile
 npm install
 npx expo start               # scan the QR with Expo Go, or press a / i
 ```
@@ -299,7 +299,7 @@ Both return:
 { "message": "...", "user": { "id": 1, "name": "...", "email": "...", "role": "user", ... }, "token": "1|xxxxxxxxxx" }
 ```
 
-> ⚠️ Auth is limited to **5 requests per minute per IP**. If you hit `429 Too Many Requests`, wait a minute.
+> ?? Auth is limited to **5 requests per minute per IP**. If you hit `429 Too Many Requests`, wait a minute.
 
 ### Protected endpoints (require `Authorization: Bearer <token>`)
 
@@ -368,7 +368,7 @@ The repo ships a ready-to-use Postman collection and environment in the `postman
 
 ### 1. Import
 
-Open **Postman → Import → Files**, select both files (or drag them in), and import.
+Open **Postman ? Import ? Files**, select both files (or drag them in), and import.
 
 ### 2. Select the environment
 
@@ -388,18 +388,18 @@ http://localhost:5173/api
 
 ### 3. Run the flow
 
-1. **Make sure the stack is running** (`docker compose up --build -d` → app on `http://localhost:5173`).
-2. Run **Auth → Register** (or **Auth → Login**) once. The collection's test script automatically saves the returned token into the `token` environment variable, so the token stays filled for all the protected/Admin requests.
-3. Navigate the folders: **Auth → My Account** for your own profile, and **Admin → ...** for user management (requires an admin account — see above).
+1. **Make sure the stack is running** (`docker compose up --build -d` ? app on `http://localhost:5173`).
+2. Run **Auth ? Register** (or **Auth ? Login**) once. The collection's test script automatically saves the returned token into the `token` environment variable, so the token stays filled for all the protected/Admin requests.
+3. Navigate the folders: **Auth ? My Account** for your own profile, and **Admin ? ...** for user management (requires an admin account � see above).
 
 > The default Login body uses `sec@example.com`. Either update it to the account you created, or use **Register** first and let the script store that token.
 
 ### Troubleshooting in Postman
 
-- **`401`, empty token** — run Login/Register first; check the `token` variable is filled.
-- **`403`** on Admin routes → the logged-in user is not `role = admin`.
-- **`429`** → hit the 5/minute auth rate limit; wait and retry.
-- **Connection errors** → confirm the Docker stack is up, and that `base_url` is `http://localhost:5173/api`.
+- **`401`, empty token** � run Login/Register first; check the `token` variable is filled.
+- **`403`** on Admin routes ? the logged-in user is not `role = admin`.
+- **`429`** ? hit the 5/minute auth rate limit; wait and retry.
+- **Connection errors** ? confirm the Docker stack is up, and that `base_url` is `http://localhost:5173/api`.
 
 ---
 
@@ -413,7 +413,7 @@ Deployment is container-based and driven by `.github/workflows/deploy.yml`. It i
 2. Builds and pushes both images with `latest` + `${{ github.sha }}` tags:
    - `ghcr.io/jiwonieee19/jalikud-api`
    - `ghcr.io/jiwonieee19/jalikud-web`
-3. If a **self-hosted runner** (`runs-on: [self-hosted]`) is registered in repo **Settings ▸ Actions ▸ Runners** with Docker installed, it pulls the images and restarts the local Compose stack automatically.
+3. If a **self-hosted runner** (`runs-on: [self-hosted]`) is registered in repo **Settings ? Actions ? Runners** with Docker installed, it pulls the images and restarts the local Compose stack automatically.
 
 ### Updating a local machine from pre-built images
 
@@ -425,7 +425,7 @@ For the "deploy onto the host machine" flow, `deploy.ps1` logs into GHCR, pulls 
 # or run it with no args to be prompted securely for the token
 ```
 
-> Create a classic **Personal Access Token** on GitHub at **Settings ▸ Developer settings ▸ Personal access tokens** with the `read:packages` scope.
+> Create a classic **Personal Access Token** on GitHub at **Settings ? Developer settings ? Personal access tokens** with the `read:packages` scope.
 
 ---
 
@@ -437,9 +437,9 @@ For the "deploy onto the host machine" flow, `deploy.ps1` logs into GHCR, pulls 
 | ----------------- | -------- | --------- | -------------------------------------------------- |
 | `POSTGRES_DB`     | no       | `jalikud` | Database name                                      |
 | `POSTGRES_USER`   | no       | `jalikud` | Database user                                      |
-| `POSTGRES_PASSWORD` | **yes** | —         | Database password (**Compose aborts if empty**)     |
-| `APP_KEY`         | **yes**  | —         | Laravel app key, must be `base64:`-prefixed (**Compose aborts if empty**) |
-| `GHCR_TOKEN`      | no       | —         | Used by the deploy workflow for `docker login`      |
+| `POSTGRES_PASSWORD` | **yes** | �         | Database password (**Compose aborts if empty**)     |
+| `APP_KEY`         | **yes**  | �         | Laravel app key, must be `base64:`-prefixed (**Compose aborts if empty**) |
+| `GHCR_TOKEN`      | no       | �         | Used by the deploy workflow for `docker login`      |
 
 ### Laravel `backend/.env` (used for non-Docker runs)
 
@@ -451,9 +451,9 @@ Standard Laravel variables, notably:
 | `DB_HOST` / `DB_PORT` | `127.0.0.1` / `5432` | `postgres` when running inside Compose |
 | `DB_DATABASE` / `DB_USERNAME` / `DB_PASSWORD` | `jalikud` / `jalikud` / `secret` | match your DB |
 | `SANCTUM_TOKEN_EXPIRATION` | `10080` (7 days) | token lifetime in minutes; `null` = no expiry |
-| `APP_KEY` | — | generate with `php artisan key:generate` |
+| `APP_KEY` | � | generate with `php artisan key:generate` |
 
-> `.env` files are git-ignored — never commit real secrets.
+> `.env` files are git-ignored � never commit real secrets.
 
 ---
 
@@ -485,7 +485,7 @@ Standard Laravel variables, notably:
 | Backend logs show DB "Connection refused" | The API starts before Postgres is ready even with `depends_on`; check `docker compose logs backend` and restart once Postgres is healthy |
 | Frontend loads, API returns 502 | Backend not reachable; `docker compose logs backend` |
 | `429 Too Many Requests` on auth | Rate limiter (5/min). Wait a moment and retry |
-| `403` on `/api/admin/*` | Account role is not `admin` — promote via psql/tinker (see [Authentication & Roles](#authentication--roles)) |
+| `403` on `/api/admin/*` | Account role is not `admin` � promote via psql/tinker (see [Authentication & Roles](#authentication--roles)) |
 | Port `8000`/`5173`/`5432` in use | Change the `ports:` mapping in `docker-compose.yml`, then re-run `docker compose up -d` |
 
 ---
