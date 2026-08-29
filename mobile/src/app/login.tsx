@@ -1,4 +1,4 @@
-import { Link, Stack } from 'expo-router';
+import { Link, Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -12,6 +12,7 @@ const TEXT_DARK = '#1C1C1E';
 
 // Display-only login screen (no authentication logic).
 export default function LoginScreen() {
+  const router = useRouter();
   const [showPassword, setShowPassword] = useState(false);
 
   return (
@@ -62,7 +63,9 @@ export default function LoginScreen() {
                 </Pressable>
               </View>
 
-              <Pressable style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}>
+              <Pressable
+                style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}
+                onPress={() => router.replace('/(tabs)')}>
                 <Text style={styles.submitText}>Sign In</Text>
               </Pressable>
 
