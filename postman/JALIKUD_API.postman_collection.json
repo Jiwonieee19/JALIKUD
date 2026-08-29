@@ -1,7 +1,7 @@
 ﻿{
   "info": {
     "name": "JALIKUD API",
-    "description": "JALIKUD Laravel + Sanctum REST API. Login once and {token} is auto-filled for all protected routes.",
+    "description": "JALIKUD Laravel + Sanctum REST API.\n\n== THINK ABOUT ADMIN AUTH ==\nThe /api/admin/* endpoints require a user whose role = 'admin' (EnsureAdmin middleware -> 403 otherwise). Register/Login create NORMAL users (role = 'user'), so they will ALWAYS get 403 on admin calls. The Admin folder starts with 'Login (as Admin)' which authenticates with admin_username / admin_password (you must supply these in the environment) and stores a SEPARATE admin_token used by all admin requests.\n\n== DYNAMIC, REPEATABLE TEST INPUT ==\nWrite requests (Register, Update Profile, Change Password, Admin Create/Update) use AUTO-GENERATED inputs from pre-request scripts. Variables prefixed input_* (user) or admin_* (admin) are TEST INPUTS supplied by Postman and change every run, so you can re-run without deleting rows.\n\nThe ONE input you must set yourself: admin_username + admin_password (an existing user whose role = admin).\n\nFlow: Auth (user) -> My Account (user) -> Admin: Login (as Admin) -> Admin CRUD (admin_token) -> Teardown (logout user + admin).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "_postman_id": "4f1a2b3c-9d8e-4f7a-8b2c-3d4e5f6a7b8c"
   },
@@ -17,16 +17,31 @@
             "url": "{{base_url}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Jane Doe\",\n  \"email\": \"jane@example.com\",\n  \"password\": \"password123\",\n  \"password_confirmation\": \"password123\"\n}",
+              "raw": "{\n  \"name\": \"{{input_name}}\",\n  \"email\": \"{{input_email}}\",\n  \"password\": \"{{input_password}}\",\n  \"password_confirmation\": \"{{input_password}}\"\n}",
               "options": { "raw": { "language": "json" } }
-            }
+            },
+            "description": "Creates a NORMAL user (role = user). TEST INPUT: input_name, input_email, input_password."
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const uniq = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);",
+                  "pm.environment.set('input_name', 'Post User ' + uniq);",
+                  "pm.environment.set('input_email', 'postman.' + uniq + '@example.com');",
+                  "pm.environment.set('input_password', 'Passw0rd!' + uniq);",
+                  "pm.environment.set('input_new_password', 'NewPassw0rd!' + uniq);"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "pm.test('Register returns 201', function () { pm.response.to.have.status(201); });",
                   "const json = pm.response.json();",
                   "if (json && json.token) { pm.environment.set('token', json.token); }"
                 ]
@@ -35,18 +50,34 @@
           ]
         },
         {
-          "name": "Login",
+          "name": "Login (normal user)",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": "{{base_url}}/login",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"sec@example.com\",\n  \"password\": \"password123\"\n}",
+              "raw": "{\n  \"email\": \"{{input_email}}\",\n  \"password\": \"{{input_password}}\"\n}",
               "options": { "raw": { "language": "json" } }
-            }
+            },
+            "description": "Logs in a NORMAL user. Sets the user {token}. TEST INPUT: input_email, input_password."
           },
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('input_email')) {",
+                  "  const uniq = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);",
+                  "  pm.environment.set('input_name', 'Post User ' + uniq);",
+                  "  pm.environment.set('input_email', 'postman.' + uniq + '@example.com');",
+                  "  pm.environment.set('input_password', 'Passw0rd!' + uniq);",
+                  "  pm.environment.set('input_new_password', 'NewPassw0rd!' + uniq);",
+                  "}"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -54,25 +85,16 @@
                 "exec": [
                   "pm.test('Login succeeds', function () { pm.response.to.have.status(200); });",
                   "const json = pm.response.json();",
-                  "if (json && json.token) { pm.environment.set('token', json.token); console.log('Token saved'); }"
+                  "if (json && json.token) { pm.environment.set('token', json.token); }"
                 ]
               }
             }
           ]
-        },
-        {
-          "name": "Logout",
-          "request": {
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
-            "method": "POST",
-            "header": [],
-            "url": "{{base_url}}/logout"
-          }
         }
       ]
     },
     {
-      "name": "My Account",
+      "name": "My Account (normal user)",
       "item": [
         {
           "name": "Get Me",
@@ -81,7 +103,16 @@
             "method": "GET",
             "header": [],
             "url": "{{base_url}}/user"
-          }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Get Me returns 200', function () { pm.response.to.have.status(200); });"]
+              }
+            }
+          ]
         },
         {
           "name": "Update Profile",
@@ -92,10 +123,20 @@
             "url": "{{base_url}}/profile",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Jane Doe\",\n  \"email\": \"jane@example.com\"\n}",
+              "raw": "{\n  \"name\": \"{{input_name}} (updated)\",\n  \"email\": \"{{input_email}}\"\n}",
               "options": { "raw": { "language": "json" } }
+            },
+            "description": "TEST INPUT: input_name, input_email."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Update Profile returns 200', function () { pm.response.to.have.status(200); });"]
+              }
             }
-          }
+          ]
         },
         {
           "name": "Change Password",
@@ -106,10 +147,30 @@
             "url": "{{base_url}}/password",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"current_password\": \"password123\",\n  \"password\": \"newpassword123\",\n  \"password_confirmation\": \"newpassword123\"\n}",
+              "raw": "{\n  \"current_password\": \"{{input_password}}\",\n  \"password\": \"{{input_new_password}}\",\n  \"password_confirmation\": \"{{input_new_password}}\"\n}",
               "options": { "raw": { "language": "json" } }
+            },
+            "description": "TEST INPUT: input_password (current), input_new_password."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('input_password')) { pm.environment.set('input_password', 'Passw0rd!' + Date.now()); }",
+                  "if (!pm.environment.get('input_new_password')) { pm.environment.set('input_new_password', 'NewPassw0rd!' + Date.now()); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Change Password returns 200', function () { pm.response.to.have.status(200); });"]
+              }
             }
-          }
+          ]
         }
       ]
     },
@@ -117,9 +178,67 @@
       "name": "Admin",
       "item": [
         {
+          "name": "Login (as Admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{base_url}}/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{admin_username}}\",\n  \"password\": \"{{admin_password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "ADMIN AUTH: logs in with admin_username / admin_password (user-supplied TEST INPUT - an existing user whose role = admin). Stores the result in admin_token, which every Admin CRUD below uses. Read the response: if this returns 401 or non-admin, the rest of this folder will 403."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const un = pm.environment.get('admin_username');",
+                  "const pw = pm.environment.get('admin_password');",
+                  "console.log('[admin_username] = ' + JSON.stringify(un));",
+                  "console.log('[admin_password set] = ' + (!!pw));",
+                  "if (un === undefined || un === null) {",
+                  "  console.log('!!! VISIBLE: The JALIKUD Local environment is NOT selected, or admin_username is missing. Select JALIKUD Local in the top-right dropdown, then set admin_username to the admin email.');",
+                  "} else if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(un)) {",
+                  "  console.log('!!! VISIBLE: admin_username = \"' + un + '\" is NOT a valid email address. It must be the EMAIL of an existing admin user (e.g. admin@example.com), not a username.');",
+                  "}",
+                  "if (!pw) {",
+                  "  console.log('!!! VISIBLE: admin_password is empty. Set it in the JALIKUD Local environment.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  const role = json && json.user && json.user.role;",
+                  "  pm.test('Admin login returns 200', function () { pm.response.to.have.status(200); });",
+                  "  if (json && json.token) { pm.environment.set('admin_token', json.token); }",
+                  "  if (role !== 'admin') {",
+                  "    pm.expect.fail('Logged in but role = ' + role + '. Set admin_username/admin_password to a user whose role is admin.');",
+                  "  }",
+                  "} else {",
+                  "  pm.test('Admin login returns 200', function () {",
+                  "    const msg = pm.response.json().message || '';",
+                  "    pm.expect.fail('Admin login failed (' + pm.response.code + '). Check admin_username/admin_password in the environment. Server: ' + msg);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "List Users",
           "request": {
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] },
             "method": "GET",
             "header": [],
             "url": {
@@ -131,63 +250,203 @@
                 { "key": "per_page", "value": "15" },
                 { "key": "search", "value": "{{admin_search}}", "disabled": true }
               ]
-            }
+            },
+            "description": "AUTH: admin_token. QUERY INPUT: page, admin_search."
           }
         },
         {
           "name": "Search Users",
           "request": {
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] },
             "method": "GET",
             "header": [],
-            "url": "{{base_url}}/admin/users?search=hanni"
+            "url": "{{base_url}}/admin/users?search={{admin_search}}",
+            "description": "AUTH: admin_token. QUERY INPUT: admin_search."
           }
         },
         {
           "name": "Create User",
           "request": {
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] },
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": "{{base_url}}/admin/users",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"New User\",\n  \"email\": \"new@example.com\",\n  \"password\": \"password123\",\n  \"role\": \"user\"\n}",
+              "raw": "{\n  \"name\": \"{{admin_input_name}}\",\n  \"email\": \"{{admin_input_email}}\",\n  \"password\": \"{{admin_input_password}}\",\n  \"role\": \"{{admin_input_role}}\"\n}",
               "options": { "raw": { "language": "json" } }
+            },
+            "description": "AUTH: admin_token. TEST INPUT: admin_input_name, admin_input_email, admin_input_password, admin_input_role. Captures new user id into user_id."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const uniq = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);",
+                  "pm.environment.set('admin_input_name', 'Created User ' + uniq);",
+                  "pm.environment.set('admin_input_email', 'created.' + uniq + '@example.com');",
+                  "pm.environment.set('admin_input_password', 'Created0!' + uniq);",
+                  "if (!pm.environment.get('admin_input_role')) { pm.environment.set('admin_input_role', 'user'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create User returns 201', function () { pm.response.to.have.status(201); });",
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.id) {",
+                  "  pm.environment.set('user_id', String(json.data.id));",
+                  "  console.log('New user id set to ' + json.data.id);",
+                  "}"
+                ]
+              }
             }
-          }
+          ]
         },
         {
           "name": "Show User (:id)",
           "request": {
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] },
             "method": "GET",
             "header": [],
-            "url": "{{base_url}}/admin/users/{{user_id}}"
+            "url": "{{base_url}}/admin/users/{{user_id}}",
+            "description": "AUTH: admin_token. INPUT: user_id."
           }
         },
         {
           "name": "Update User (:id)",
           "request": {
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] },
             "method": "PUT",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "url": "{{base_url}}/admin/users/{{user_id}}",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Renamed User\",\n  \"email\": \"review@example.com\",\n  \"role\": \"user\"\n}",
+              "raw": "{\n  \"name\": \"{{admin_update_name}}\",\n  \"email\": \"{{admin_update_email}}\",\n  \"role\": \"{{admin_input_role}}\"\n}",
               "options": { "raw": { "language": "json" } }
+            },
+            "description": "AUTH: admin_token. TEST INPUT: admin_update_name, admin_update_email, admin_input_role."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const uniq = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);",
+                  "pm.environment.set('admin_update_name', 'Updated User ' + uniq);",
+                  "pm.environment.set('admin_update_email', 'updated.' + uniq + '@example.com');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Update User returns 200', function () { pm.response.to.have.status(200); });"]
+              }
             }
-          }
+          ]
         },
         {
           "name": "Delete User (:id)",
           "request": {
-            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] },
             "method": "DELETE",
             "header": [],
-            "url": "{{base_url}}/admin/users/{{user_id}}"
+            "url": "{{base_url}}/admin/users/{{user_id}}",
+            "description": "AUTH: admin_token. INPUT: user_id."
           }
+        }
+      ]
+    },
+    {
+      "name": "Test Data",
+      "item": [
+        {
+          "name": "View Generated Test Inputs",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/user",
+            "description": "Informational. Prints current TEST INPUT variables and both tokens to the console."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Show current test inputs', function () {",
+                  "  const env = pm.environment.toObject();",
+                  "  const keys = Object.keys(env).sort().filter(k => k.startsWith('input_') || k.startsWith('admin_') || k === 'user_id');",
+                  "  console.log('--- CURRENT POSTMAN TEST INPUTS ---');",
+                  "  keys.forEach(k => console.log(k + ' = ' + env[k]));",
+                  "  console.log('token (user) = ' + env.token);",
+                  "  console.log('admin_token = ' + env.admin_token);",
+                  "  console.log('admin_username = ' + env.admin_username);",
+                  "  console.log('-----------------------------------');",
+                  "  pm.expect(keys.length).to.be.above(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Teardown",
+      "item": [
+        {
+          "name": "Logout (normal user)",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/logout",
+            "description": "Revokes the normal user token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Logout (user) returns 200', function () { pm.response.to.have.status(200); });",
+                  "pm.environment.unset('token');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout (admin)",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/logout",
+            "description": "Revokes the admin token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Logout (admin) returns 200', function () { pm.response.to.have.status(200); });",
+                  "pm.environment.unset('admin_token');"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

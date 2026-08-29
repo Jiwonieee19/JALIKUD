@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\Admin\ListUsersRequest;
+use App\Http\Requests\Admin\StoreUserRequest;
+use App\Http\Requests\Admin\UpdateUserRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -19,9 +21,9 @@ class AdminUserController extends Controller
      * GET /api/admin/users
      * Paginated list of users.
      */
-    public function index(Request $request): JsonResponse
+    public function index(ListUsersRequest $request): JsonResponse
     {
-        $perPage = min(100, max(1, $request->integer('per_page', 15)));
+        $perPage = $request->perPage(15);
 
         $users = User::query()
             ->when($request->query('search'), function ($query, $search) {
@@ -48,9 +50,9 @@ class AdminUserController extends Controller
      * POST /api/admin/users
      * Create a user with an explicit role.
      */
-    public function store(Request $request): JsonResponse
+    public function store(StoreUserRequest $request): JsonResponse
     {
-        $data = $this->validateUser($request);
+        $data = $request->validated();
 
         $user = User::create([
             ...$data,
@@ -76,9 +78,9 @@ class AdminUserController extends Controller
      * Update a user. Role changes are allowed but an admin cannot
      * demote themselves (would risk locking out the last admin).
      */
-    public function update(Request $request, User $user): JsonResponse
+    public function update(UpdateUserRequest $request, User $user): JsonResponse
     {
-        $data = $this->validateUser($request, $user, false);
+        $data = $request->validated();
 
         if ($request->user()->id === $user->id
             && isset($data['role'])
@@ -125,28 +127,6 @@ class AdminUserController extends Controller
 
         return response()->json([
             'message' => "User {$user->email} deleted.",
-        ]);
-    }
-
-    /**
-     * Shared validation for store/update.
-     */
-    private function validateUser(Request $request, ?User $user = null, bool $requirePassword = true): array
-    {
-        $emailRule = ['required', 'string', 'email', 'max:255'];
-        if ($user) {
-            $emailRule[] = Rule::unique('users', 'email')->ignore($user->id);
-        } else {
-            $emailRule[] = 'unique:users,email';
-        }
-
-        return $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => $emailRule,
-            'password' => $requirePassword
-                ? ['required', 'string', 'min:8']
-                : ['sometimes', 'nullable', 'string', 'min:8'],
-            'role' => ['sometimes', 'string', Rule::in(['user', 'admin'])],
         ]);
     }
 

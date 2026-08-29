@@ -2,6 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\Auth\LoginRequest;
+use App\Http\Requests\Auth\RegisterRequest;
+use App\Http\Requests\Auth\UpdatePasswordRequest;
+use App\Http\Requests\Auth\UpdateProfileRequest;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,13 +17,10 @@ class AuthController extends Controller
     /**
      * basic ahh register
      */
-    public function register(Request $request): JsonResponse
+    public function register(RegisterRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
-        ]);
+        
+        $data = $request->validated();
 
         $user = User::create([
             'name' => $data['name'],
@@ -39,12 +40,9 @@ class AuthController extends Controller
     /**
      * basic ahh auth
      */
-    public function login(Request $request): JsonResponse
+    public function login(LoginRequest $request): JsonResponse
     {
-        $credentials = $request->validate([
-            'email' => ['required', 'string', 'email'],
-            'password' => ['required', 'string'],
-        ]);
+        $credentials = $request->validated();
 
         $user = User::where('email', $credentials['email'])->first();
 
@@ -76,14 +74,11 @@ class AuthController extends Controller
     /**
      * Update the authenticated user's profile (name / email).
      */
-    public function updateProfile(Request $request): JsonResponse
+    public function updateProfile(UpdateProfileRequest $request): JsonResponse
     {
         $user = $request->user();
 
-        $data = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email,' . $user->id],
-        ]);
+        $data = $request->validated();
 
         $user->update($data);
 
@@ -96,12 +91,9 @@ class AuthController extends Controller
     /**
      * Change the authenticated user's password.
      */
-    public function updatePassword(Request $request): JsonResponse
+    public function updatePassword(UpdatePasswordRequest $request): JsonResponse
     {
-        $data = $request->validate([
-            'current_password' => ['required', 'string', 'current_password:sanctum'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
-        ]);
+        $data = $request->validated();
 
         $request->user()->update([
             'password' => $data['password'],
