@@ -1,6 +1,7 @@
-import { NativeTabs } from 'expo-router/unstable-native-tabs';
+import { Tabs } from 'expo-router';
+import { Image, StyleSheet } from 'react-native';
 
-const WHITE = '#f7f1f1';
+const TAB_BAR_BACKGROUND = '#F7F1F1';
 
 const TABS = [
   { name: 'index', label: 'Menu', icon: require('@/assets/images/tabIcons/menu.png') },
@@ -8,23 +9,51 @@ const TABS = [
   { name: 'rewards', label: 'Rewards', icon: require('@/assets/images/tabIcons/rewards.png') },
   { name: 'cart', label: 'Cart', icon: require('@/assets/images/tabIcons/cart.png') },
   { name: 'orders', label: 'Orders', icon: require('@/assets/images/tabIcons/orders.png') },
-  { name: 'more', label: 'More', icon: require('@/assets/images/tabIcons/more.png') },
+  { name: 'settings', label: 'Settings', icon: require('@/assets/images/tabIcons/settings.png') },
 ] as const;
 
 export default function AppTabs() {
   return (
-    <NativeTabs
-      backgroundColor={WHITE}
-      indicatorColor="rgba(255, 255, 255, 0.25)"
-      labelStyle={{ color: '#FFFFFF', fontWeight: '600' }}
-      rippleColor="rgba(255, 255, 255, 0.2)">
+    <Tabs
+      screenOptions={{
+        headerShown: false,
+        tabBarActiveTintColor: '#208AEF',
+        tabBarInactiveTintColor: '#5F6368',
+        tabBarShowLabel: true,
+        tabBarLabelPosition: 'below-icon',
+        tabBarLabelStyle: styles.label,
+        tabBarStyle: styles.tabBar,
+      }}>
       {TABS.map((tab) => (
-        <NativeTabs.Trigger key={tab.name} name={tab.name}>
-          <NativeTabs.Trigger.Label>{tab.label}</NativeTabs.Trigger.Label>
-          <NativeTabs.Trigger.Icon src={tab.icon} />
-        </NativeTabs.Trigger>
+        <Tabs.Screen
+          key={tab.name}
+          name={tab.name}
+          options={{
+            title: tab.label,
+            tabBarLabel: tab.label,
+            tabBarIcon: ({ color }) => (
+              <Image source={tab.icon} style={[styles.icon, { tintColor: color }]} />
+            ),
+          }}
+        />
       ))}
-    </NativeTabs>
+    </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  tabBar: {
+    backgroundColor: TAB_BAR_BACKGROUND,
+    borderTopColor: '#E1DADA',
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  icon: {
+    width: 24,
+    height: 24,
+    resizeMode: 'contain',
+  },
+});
 
