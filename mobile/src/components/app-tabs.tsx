@@ -9,7 +9,7 @@ const TABS = [
   { name: 'rewards', label: 'Rewards', icon: require('@/assets/images/tabIcons/rewards.png') },
   { name: 'cart', label: 'Cart', icon: require('@/assets/images/tabIcons/cart.png') },
   { name: 'orders', label: 'Orders', icon: require('@/assets/images/tabIcons/orders.png') },
-  { name: 'settings', label: 'Settings', icon: require('@/assets/images/tabIcons/settings.png') },
+  { name: 'settings', label: 'Settings', icon: require('@/assets/images/tabIcons/more.png') },
 ] as const;
 
 export default function AppTabs() {
