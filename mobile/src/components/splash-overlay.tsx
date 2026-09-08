@@ -8,7 +8,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 const INITIAL_SCALE_FACTOR = Dimensions.get('screen').height / 90;
 const DURATION = 600;
 
-export function AnimatedSplashOverlay() {
+export function SplashOverlay() {
   const [animate, setAnimate] = useState(false);
   const [visible, setVisible] = useState(true);
 

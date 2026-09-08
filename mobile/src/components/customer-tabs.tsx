@@ -4,7 +4,7 @@ import { Image, StyleSheet } from 'react-native';
 const TAB_BAR_BACKGROUND = '#F7F1F1';
 
 const TABS = [
-  { name: 'index', label: 'Menu', icon: require('@/assets/images/tabIcons/menu.png') },
+  { name: 'menu', label: 'Menu', icon: require('@/assets/images/tabIcons/menu.png') },
   { name: 'deals', label: 'Deals', icon: require('@/assets/images/tabIcons/deals.png') },
   { name: 'rewards', label: 'Rewards', icon: require('@/assets/images/tabIcons/rewards.png') },
   { name: 'cart', label: 'Cart', icon: require('@/assets/images/tabIcons/cart.png') },
@@ -12,7 +12,7 @@ const TABS = [
   { name: 'settings', label: 'Settings', icon: require('@/assets/images/tabIcons/more.png') },
 ] as const;
 
-export default function AppTabs() {
+export default function CustomerTabs() {
   return (
     <Tabs
       screenOptions={{

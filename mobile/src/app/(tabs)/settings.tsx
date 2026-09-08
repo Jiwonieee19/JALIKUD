@@ -1,9 +1,11 @@
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
+import { useAuthDemo } from '@/context/auth-demo-context';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -12,12 +14,7 @@ const TEXT_DARK = '#1C1C1E';
 const TEXT_GRAY = '#8E8E93';
 const ICON_BG = '#FDE8E8';
 
-// Static profile for now — will come from the backend API later.
-const PROFILE = {
-  name: 'Maria Santos',
-  email: 'maria.santos@email.com',
-  phone: '09171234567',
-};
+// Profile comes from the temporary demo account signed in on this device.
 
 type Row = {
   icon: string;
@@ -43,8 +40,15 @@ const DANGER_ROWS: Row[] = [
 ];
 
 export default function SettingsScreen() {
+  const router = useRouter();
+  const { current, signOut } = useAuthDemo();
   const [pushNotifications, setPushNotifications] = useState(true);
   const [biometricLogin, setBiometricLogin] = useState(false);
+
+  const handleSignOut = () => {
+    signOut();
+    router.replace('/login');
+  };
 
   return (
     <View style={styles.container}>
@@ -78,9 +82,9 @@ export default function SettingsScreen() {
               </View>
             </View>
             <View style={styles.profileInfo}>
-              <Text style={styles.profileName}>{PROFILE.name}</Text>
-              <Text style={styles.profileDetail}>{PROFILE.email}</Text>
-              <Text style={styles.profileDetail}>{PROFILE.phone}</Text>
+              <Text style={styles.profileName}>{current?.name ?? 'Guest'}</Text>
+              <Text style={styles.profileDetail}>{current?.email ?? 'Not signed in'}</Text>
+              <Text style={styles.profileDetail}>{current?.phone ?? '—'}</Text>
             </View>
             <Pressable style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}>
               <Text style={styles.editIcon}>✏️</Text>
@@ -146,7 +150,10 @@ export default function SettingsScreen() {
         {/* Danger zone */}
         <View style={styles.card}>
           {DANGER_ROWS.map((row) => (
-            <Pressable key={row.label} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
+            <Pressable
+              key={row.label}
+              style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+              onPress={row.label === 'Log Out' ? handleSignOut : undefined}>
               <View style={styles.rowIconBox}>
                 <Text style={styles.rowIcon}>{row.icon}</Text>
               </View>
