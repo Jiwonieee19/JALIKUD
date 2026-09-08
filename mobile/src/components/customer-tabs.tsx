@@ -3,15 +3,15 @@ import { NativeTabs } from 'expo-router/unstable-native-tabs';
 const WHITE = '#f7f1f1';
 
 const TABS = [
-  { name: 'index', label: 'Menu', icon: require('@/assets/images/tabIcons/menu.png') },
+  { name: 'menu', label: 'Menu', icon: require('@/assets/images/tabIcons/menu.png') },
   { name: 'deals', label: 'Deals', icon: require('@/assets/images/tabIcons/deals.png') },
   { name: 'rewards', label: 'Rewards', icon: require('@/assets/images/tabIcons/rewards.png') },
   { name: 'cart', label: 'Cart', icon: require('@/assets/images/tabIcons/cart.png') },
   { name: 'orders', label: 'Orders', icon: require('@/assets/images/tabIcons/orders.png') },
-  { name: 'more', label: 'More', icon: require('@/assets/images/tabIcons/more.png') },
+  { name: 'settings', label: 'Settings', icon: require('@/assets/images/tabIcons/more.png') },
 ] as const;
 
-export default function AppTabs() {
+export default function CustomerTabs() {
   return (
     <NativeTabs
       backgroundColor={WHITE}

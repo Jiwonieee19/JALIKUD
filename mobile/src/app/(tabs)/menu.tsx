@@ -157,6 +157,7 @@ export default function HomeScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
+          style={styles.chipsScroll}
           contentContainerStyle={styles.chipsRow}>
           {CATEGORIES.map((category) => {
             const selected = category === activeCategory;
@@ -352,14 +353,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: 'rgba(255, 255, 255, 0.85)',
   },
+  chipsScroll: {
+    flexGrow: 0,
+  },
   chipsRow: {
+    alignItems: 'flex-start',
     gap: 8,
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
   chip: {
-    paddingVertical: 8,
-    paddingHorizontal: 18,
+    paddingVertical: 5,
+    paddingHorizontal: 13,
     borderRadius: 999,
     backgroundColor: CARD,
     borderWidth: 1,
@@ -370,7 +375,7 @@ const styles = StyleSheet.create({
     borderColor: RED,
   },
   chipText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
     color: TEXT_DARK,
   },

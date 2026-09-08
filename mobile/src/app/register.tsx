@@ -1,7 +1,9 @@
-import { Link, Stack } from 'expo-router';
+import { Link, Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { useAuthDemo } from '@/context/auth-demo-context';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -10,10 +12,74 @@ const INPUT_BORDER = '#E4E4E9';
 const PLACEHOLDER = '#B3B3BA';
 const TEXT_DARK = '#1C1C1E';
 
-// Display-only registration screen (no logic or validation).
+type FormState = {
+  firstName: string;
+  lastName: string;
+  address: string;
+  email: string;
+  phone: string;
+  password: string;
+  confirmPassword: string;
+};
+
+const INITIAL_FORM: FormState = {
+  firstName: '',
+  lastName: '',
+  address: '',
+  email: '',
+  phone: '',
+  password: '',
+  confirmPassword: '',
+};
+
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null;
+  return <Text style={styles.fieldError}>{message}</Text>;
+}
+
+// Prototype-only registration: creates a temporary in-memory customer account.
 export default function RegisterScreen() {
+  const router = useRouter();
+  const { registerAccount } = useAuthDemo();
+  const [form, setForm] = useState<FormState>(INITIAL_FORM);
+  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
+  const [formError, setFormError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+
+  const updateField = (field: keyof FormState, value: string) => {
+    setForm((current) => ({ ...current, [field]: value }));
+    setErrors((current) => ({ ...current, [field]: undefined }));
+    setFormError('');
+  };
+
+  const validate = (): boolean => {
+    const next: Partial<Record<keyof FormState, string>> = {};
+    if (!form.firstName.trim()) next.firstName = 'First name is required.';
+    if (!form.lastName.trim()) next.lastName = 'Last name is required.';
+    if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) next.email = 'Enter a valid email address.';
+    if (!form.phone.trim()) next.phone = 'Phone number is required.';
+    if (form.password.length < 8) next.password = 'Password must be at least 8 characters.';
+    if (form.confirmPassword !== form.password) next.confirmPassword = 'Passwords do not match.';
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const handleRegister = () => {
+    if (!validate()) return;
+    const result = registerAccount({
+      name: `${form.firstName.trim()} ${form.lastName.trim()}`.trim(),
+      email: form.email,
+      phone: form.phone,
+      password: form.password,
+    });
+    if (!result.ok) {
+      setFormError(result.error);
+      return;
+    }
+    // Newly registered prototype accounts are always customers.
+    router.replace('/(tabs)/menu');
+  };
 
   return (
     <>
@@ -33,22 +99,29 @@ export default function RegisterScreen() {
             {/* Form */}
             <View style={styles.form}>
               <Text style={styles.heading}>Create account</Text>
+              <Text style={styles.note}>Prototype: accounts are temporary and stored in memory only.</Text>
 
               <Text style={styles.label}>First name</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, errors.firstName && styles.inputError]}
                 placeholder="Juan"
                 placeholderTextColor={PLACEHOLDER}
                 autoComplete="given-name"
+                value={form.firstName}
+                onChangeText={(value) => updateField('firstName', value)}
               />
+              <FieldError message={errors.firstName} />
 
               <Text style={styles.label}>Last name</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, errors.lastName && styles.inputError]}
                 placeholder="Dela Cruz"
                 placeholderTextColor={PLACEHOLDER}
                 autoComplete="family-name"
+                value={form.lastName}
+                onChangeText={(value) => updateField('lastName', value)}
               />
+              <FieldError message={errors.lastName} />
 
               <Text style={styles.label}>Address</Text>
               <TextInput
@@ -57,26 +130,34 @@ export default function RegisterScreen() {
                 placeholderTextColor={PLACEHOLDER}
                 multiline
                 textAlignVertical="top"
+                value={form.address}
+                onChangeText={(value) => updateField('address', value)}
               />
 
               <Text style={styles.label}>Email</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, errors.email && styles.inputError]}
                 placeholder="you@example.com"
                 placeholderTextColor={PLACEHOLDER}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
+                value={form.email}
+                onChangeText={(value) => updateField('email', value)}
               />
+              <FieldError message={errors.email} />
 
               <Text style={styles.label}>Phone number</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, errors.phone && styles.inputError]}
                 placeholder="+63 900 000 0000"
                 placeholderTextColor={PLACEHOLDER}
                 keyboardType="phone-pad"
                 autoComplete="tel"
+                value={form.phone}
+                onChangeText={(value) => updateField('phone', value)}
               />
+              <FieldError message={errors.phone} />
 
               <Text style={styles.label}>Password</Text>
               <View style={styles.passwordRow}>
@@ -86,6 +167,8 @@ export default function RegisterScreen() {
                   placeholderTextColor={PLACEHOLDER}
                   secureTextEntry={!showPassword}
                   autoComplete="new-password"
+                  value={form.password}
+                  onChangeText={(value) => updateField('password', value)}
                 />
                 <Pressable
                   onPress={() => setShowPassword((v) => !v)}
@@ -93,6 +176,7 @@ export default function RegisterScreen() {
                   <Text style={styles.showText}>{showPassword ? 'Hide' : 'Show'}</Text>
                 </Pressable>
               </View>
+              <FieldError message={errors.password} />
 
               <Text style={styles.label}>Confirm password</Text>
               <View style={styles.passwordRow}>
@@ -102,6 +186,8 @@ export default function RegisterScreen() {
                   placeholderTextColor={PLACEHOLDER}
                   secureTextEntry={!showConfirm}
                   autoComplete="new-password"
+                  value={form.confirmPassword}
+                  onChangeText={(value) => updateField('confirmPassword', value)}
                 />
                 <Pressable
                   onPress={() => setShowConfirm((v) => !v)}
@@ -109,8 +195,17 @@ export default function RegisterScreen() {
                   <Text style={styles.showText}>{showConfirm ? 'Hide' : 'Show'}</Text>
                 </Pressable>
               </View>
+              <FieldError message={errors.confirmPassword} />
 
-              <Pressable style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}>
+              {formError !== '' && (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>⚠ {formError}</Text>
+                </View>
+              )}
+
+              <Pressable
+                style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}
+                onPress={handleRegister}>
                 <Text style={styles.submitText}>Register</Text>
               </Pressable>
 
@@ -175,6 +270,12 @@ const styles = StyleSheet.create({
     color: TEXT_DARK,
     marginBottom: 8,
   },
+  note: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: -4,
+    marginBottom: 4,
+  },
   label: {
     fontSize: 13,
     fontWeight: '600',
@@ -190,6 +291,15 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     fontSize: 16,
     color: TEXT_DARK,
+  },
+  inputError: {
+    borderColor: '#F87171',
+  },
+  fieldError: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#B91C1C',
+    marginTop: 2,
   },
   addressInput: {
     minHeight: 80,
@@ -218,6 +328,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: RED,
+  },
+  errorBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  errorText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#B91C1C',
   },
   submitButton: {
     marginTop: 16,
