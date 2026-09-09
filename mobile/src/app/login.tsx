@@ -25,6 +25,12 @@ const DEMO_ACCOUNTS = [
     email: DEMO_CREDENTIALS.staffEmail,
     subtitle: 'Manage orders and menu availability',
   },
+  {
+    role: 'Delivery Rider' as const,
+    icon: '🛵',
+    email: DEMO_CREDENTIALS.riderEmail,
+    subtitle: 'Deliver orders to customers',
+  },
 ];
 
 export default function LoginScreen() {
@@ -44,8 +50,16 @@ export default function LoginScreen() {
     setError('');
     setPassword('');
     // Route by the signed-in account's role.
-    const isStaff = email.trim().toLowerCase() === DEMO_CREDENTIALS.staffEmail;
-    router.replace(isStaff ? '/staff/orders' : '/(tabs)/menu');
+    const normalized = email.trim().toLowerCase();
+    if (normalized === DEMO_CREDENTIALS.staffEmail) {
+      router.replace('/staff/orders');
+      return;
+    }
+    if (normalized === DEMO_CREDENTIALS.riderEmail) {
+      router.replace('/rider/deliveries');
+      return;
+    }
+    router.replace('/(tabs)/menu');
   };
 
   const fillDemoAccount = (demoEmail: string) => {
@@ -74,7 +88,7 @@ export default function LoginScreen() {
               <Text style={styles.logoLetter}>J</Text>
             </View>
             <Text style={styles.brandName}>Jalikud</Text>
-            <Text style={styles.brandTagline}>Customer &amp; Store Staff</Text>
+            <Text style={styles.brandTagline}>Customer, Store Staff &amp; Rider</Text>
 
             {/* Form */}
             <View style={styles.form}>
