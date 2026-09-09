@@ -17,6 +17,7 @@ const ACTIVITY_APPEARANCE: Record<StaffActivity['kind'], { icon: string; bg: str
   order_rejected: { icon: '✕', bg: '#FEE2E2', color: '#B91C1C' },
   menu_reported: { icon: '!', bg: '#FEF3C7', color: '#B45309' },
   menu_restored: { icon: '↻', bg: '#DBEAFE', color: '#1D4ED8' },
+  rider_assigned: { icon: '🛵', bg: '#FFEDD5', color: '#C2410C' },
 };
 
 export default function StaffActivityScreen() {

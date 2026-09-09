@@ -35,7 +35,7 @@ export type StaffMenuItem = {
 
 export type StaffActivity = {
   id: string;
-  kind: 'order_confirmed' | 'order_rejected' | 'menu_reported' | 'menu_restored';
+  kind: 'order_confirmed' | 'order_rejected' | 'menu_reported' | 'menu_restored' | 'rider_assigned';
   title: string;
   detail: string;
   time: string;
@@ -53,6 +53,7 @@ type StaffDemoContextValue = {
     availability: MenuAvailability,
     note: string,
   ) => void;
+  addActivity: (activity: Omit<StaffActivity, 'id' | 'time'>) => void;
 };
 
 const INITIAL_ORDERS: StaffOrder[] = [
@@ -237,7 +238,7 @@ export function StaffDemoProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const value = { orders, menuItems, activities, confirmOrder, rejectOrder, updateMenuAvailability };
+  const value = { orders, menuItems, activities, confirmOrder, rejectOrder, updateMenuAvailability, addActivity };
 
   return <StaffDemoContext.Provider value={value}>{children}</StaffDemoContext.Provider>;
 }

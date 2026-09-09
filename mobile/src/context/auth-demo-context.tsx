@@ -1,8 +1,8 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
 
 // Temporary in-memory accounts for the prototype. Nothing here is persisted —
-// restarting the app resets every account back to the two seeded demo users.
-export type DemoRole = 'customer' | 'staff';
+// restarting the app resets every account back to the seeded demo users.
+export type DemoRole = 'customer' | 'staff' | 'rider';
 
 export type DemoAccount = {
   id: string;
@@ -32,12 +32,21 @@ const INITIAL_ACCOUNTS: DemoAccount[] = [
     phone: '09181234567',
     password: DEMO_PASSWORD,
   },
+  {
+    id: 'demo-rider',
+    role: 'rider',
+    name: 'Jomar Cruz',
+    email: 'rider@demo.ph',
+    phone: '09191234567',
+    password: DEMO_PASSWORD,
+  },
 ];
 
 export const DEMO_CREDENTIALS = {
   password: DEMO_PASSWORD,
   customerEmail: INITIAL_ACCOUNTS[0].email,
   staffEmail: INITIAL_ACCOUNTS[1].email,
+  riderEmail: INITIAL_ACCOUNTS[2].email,
 };
 
 type SignInResult = { ok: true } | { ok: false; error: string };
