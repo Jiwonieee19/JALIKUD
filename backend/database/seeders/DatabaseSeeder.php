@@ -15,11 +15,19 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        // Seed a default store setting if none exists
+        if (\App\Models\StoreSetting::count() === 0) {
+            \App\Models\StoreSetting::create([
+                'store_name' => 'JALIKUD',
+                'is_open' => true,
+                'accepts_delivery' => true,
+                'accepts_pickup' => true,
+                'min_order_amount' => 0,
+                'delivery_fee' => 0,
+                'tax_rate_percent' => 0,
+                'opening_time' => '08:00:00',
+                'closing_time' => '22:00:00',
+            ]);
+        }
     }
 }

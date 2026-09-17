@@ -8,13 +8,15 @@ import Label from '../components/ui/Label'
 interface ValidationErrors {
   name?: string[]
   email?: string[]
+  phone?: string[]
   password?: string[]
 }
 
 export default function RegisterPage() {
   const { register } = useAuth()
-  const [name, setName] = useState('')
+    const [name, setName] = useState('')
   const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [passwordConfirmation, setPasswordConfirmation] = useState('')
   const [errors, setErrors] = useState<ValidationErrors>({})
@@ -32,7 +34,7 @@ export default function RegisterPage() {
     setSubmitting(true)
 
     try {
-      await register(name, email, password, passwordConfirmation)
+      await register(name, email, password, passwordConfirmation, phone)
     } catch (err: unknown) {
       type AxiosLikeError = {
         response?: { status?: number; data?: { message?: string; errors?: ValidationErrors } }
@@ -105,6 +107,20 @@ export default function RegisterPage() {
               {errors.email && (
                 <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{errors.email[0]}</p>
               )}
+                        </div>
+
+            <div>
+              <Label htmlFor="phone" className="mb-1.5">
+                Phone <span className="font-normal text-slate-400">(optional)</span>
+              </Label>
+              <Input
+                id="phone"
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                autoComplete="tel"
+                placeholder="+63 912 345 6789"
+              />
             </div>
 
             <div>

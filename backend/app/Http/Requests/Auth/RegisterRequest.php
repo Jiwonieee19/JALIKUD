@@ -17,6 +17,7 @@ class RegisterRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255', 'min:2'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
             'password' => [
                 'required',
                 'string',
@@ -30,6 +31,7 @@ class RegisterRequest extends FormRequest
     {
         return [
             'name.required' => 'Please provide your full name.',
+            'phone.max' => 'The phone number must not exceed 30 characters.',
             'email.unique' => 'An account with this email already exists.',
             'password.confirmed' => 'The password confirmation does not match.',
         ];

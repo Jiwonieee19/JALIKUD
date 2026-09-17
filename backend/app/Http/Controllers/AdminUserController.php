@@ -56,6 +56,7 @@ class AdminUserController extends Controller
 
         $user = User::create([
             ...$data,
+            'phone' => $data['phone'] ?? null,
             'password' => $data['password'],
         ]);
 
@@ -84,7 +85,7 @@ class AdminUserController extends Controller
 
         if ($request->user()->id === $user->id
             && isset($data['role'])
-            && $data['role'] !== 'admin') {
+            && $data['role'] !== User::ROLE_ADMIN) {
             throw ValidationException::withMessages([
                 'role' => ['You cannot change your own role.'],
             ]);
@@ -93,6 +94,7 @@ class AdminUserController extends Controller
         $update = [
             'name' => $data['name'],
             'email' => $data['email'],
+            'phone' => $data['phone'] ?? $user->phone,
         ];
 
         if (! empty($data['password'])) {
@@ -139,8 +141,10 @@ class AdminUserController extends Controller
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
+            'phone' => $user->phone,
             'role' => $user->role,
             'created_at' => $user->created_at?->toIso8601String(),
+            'deleted_at' => $user->deleted_at?->toIso8601String(),
         ];
     }
 }

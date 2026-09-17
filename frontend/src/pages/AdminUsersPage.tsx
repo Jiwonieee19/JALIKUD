@@ -14,11 +14,12 @@ interface ListResponse {
 interface FormState {
   name: string
   email: string
+  phone: string
   password: string
-  role: 'user' | 'admin'
+  role: 'customer' | 'staff' | 'admin' | 'rider'
 }
 
-const emptyForm: FormState = { name: '', email: '', password: '', role: 'user' }
+const emptyForm: FormState = { name: '', email: '', phone: '', password: '', role: 'customer' }
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
@@ -62,7 +63,7 @@ export default function AdminUsersPage() {
   }
 
   const openEdit = (user: AdminUser) => {
-    setForm({ name: user.name, email: user.email, password: '', role: user.role })
+    setForm({ name: user.name, email: user.email, phone: user.phone ?? '', password: '', role: user.role })
     setFormErrors({})
     setCreating(false)
     setEditing(user)
@@ -99,6 +100,7 @@ export default function AdminUsersPage() {
         await api.put(`/admin/users/${editing.id}`, {
           name: form.name,
           email: form.email,
+          phone: form.phone || null,
           role: form.role,
           ...(form.password ? { password: form.password } : {}),
         })
@@ -300,6 +302,21 @@ export default function AdminUsersPage() {
                 )}
               </div>
               <div>
+                <Label htmlFor="au-phone" className="mb-1.5">
+                  Phone
+                </Label>
+                <Input
+                  id="au-phone"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  placeholder="e.g. +63 912 345 6789"
+                />
+                {formErrors.phone && (
+                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.phone}</p>
+                )}
+              </div>
+              <div>
                 <Label htmlFor="au-password" className="mb-1.5">
                   Password{' '}
                   {editing && (
@@ -331,8 +348,10 @@ export default function AdminUsersPage() {
                   onChange={(e) => setForm({ ...form, role: e.target.value as FormState['role'] })}
                   className="block w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600 dark:bg-slate-800 dark:text-white dark:ring-slate-700"
                 >
-                  <option value="user">user</option>
+                                    <option value="customer">customer</option>
+                  <option value="staff">staff</option>
                   <option value="admin">admin</option>
+                  <option value="rider">rider</option>
                 </select>
                 {formErrors.role && (
                   <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.role}</p>

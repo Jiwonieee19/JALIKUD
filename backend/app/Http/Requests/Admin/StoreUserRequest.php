@@ -18,8 +18,9 @@ class StoreUserRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255', 'min:2'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
             'password' => ['required', 'string', new StrongPassword],
-            'role' => ['sometimes', 'string', Rule::in(['user', 'admin'])],
+            'role' => ['sometimes', 'string', Rule::in(['customer', 'staff', 'admin', 'rider'])],
         ];
     }
 
@@ -27,7 +28,7 @@ class StoreUserRequest extends FormRequest
     {
         return [
             'email.unique' => 'A user with this email already exists.',
-            'role.in' => 'The role must be either user or admin.',
+            'role.in' => 'The role must be one of: customer, staff, admin, rider.',
         ];
     }
 }

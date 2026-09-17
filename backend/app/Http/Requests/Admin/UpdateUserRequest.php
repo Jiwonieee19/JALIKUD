@@ -25,7 +25,8 @@ class UpdateUserRequest extends FormRequest
                 Rule::unique('users', 'email')->ignore($this->route('user')),
             ],
             'password' => ['sometimes', 'nullable', 'string', new StrongPassword],
-            'role' => ['sometimes', 'string', Rule::in(['user', 'admin'])],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
+            'role' => ['sometimes', 'string', Rule::in(['customer', 'staff', 'admin', 'rider'])],
         ];
     }
 
@@ -33,7 +34,7 @@ class UpdateUserRequest extends FormRequest
     {
         return [
             'email.unique' => 'Another user already uses this email.',
-            'role.in' => 'The role must be either user or admin.',
+            'role.in' => 'The role must be one of: customer, staff, admin, rider.',
         ];
     }
 }

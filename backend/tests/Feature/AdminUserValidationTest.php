@@ -66,7 +66,7 @@ class AdminUserValidationTest extends TestCase
             'name' => 'Bob',
             'email' => 'bob@example.com',
             'password' => 'Str0ngPassw0rd',
-            'role' => 'user',
+            'role' => 'customer',
         ])->assertStatus(201)
             ->assertJsonPath('data.email', 'bob@example.com');
     }
