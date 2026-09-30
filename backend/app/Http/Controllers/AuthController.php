@@ -15,11 +15,15 @@ use Illuminate\Validation\ValidationException;
 class AuthController extends Controller
 {
     /**
-     * basic ahh register
+     * Maximum live tokens kept per user; older ones are pruned on each login.
+     */
+    private const MAX_TOKENS_PER_USER = 12;
+
+    /**
+     * Register a new customer account.
      */
     public function register(RegisterRequest $request): JsonResponse
     {
-        
         $data = $request->validated();
 
         $user = User::create([
@@ -29,17 +33,36 @@ class AuthController extends Controller
             'password' => $data['password'],
         ]);
 
-        $token = $user->createToken('auth-token')->plainTextToken;
-
         return response()->json([
             'message' => 'Registration successful.',
             'user' => $user,
-            'token' => $token,
+            'token' => $this->issueToken($user),
         ], 201);
     }
 
     /**
-     * basic ahh auth
+     * Issue an API token, pruning the oldest tokens beyond the per-user cap
+     * so abandoned sessions cannot accumulate forever.
+     */
+    private function issueToken(User $user): string
+    {
+        $token = $user->createToken('auth-token');
+
+        $stale = $user->tokens()
+            ->orderByDesc('id')
+            ->skip(self::MAX_TOKENS_PER_USER)
+            ->take(50)
+            ->pluck('id');
+
+        if ($stale->isNotEmpty()) {
+            $user->tokens()->whereIn('id', $stale)->delete();
+        }
+
+        return $token->plainTextToken;
+    }
+
+    /**
+     * Issue an API token for the credentials flow.
      */
     public function login(LoginRequest $request): JsonResponse
     {
@@ -53,12 +76,10 @@ class AuthController extends Controller
             ]);
         }
 
-        $token = $user->createToken('auth-token')->plainTextToken;
-
         return response()->json([
             'message' => 'Login successful.',
             'user' => $user,
-            'token' => $token,
+            'token' => $this->issueToken($user),
         ]);
     }
 
@@ -90,18 +111,26 @@ class AuthController extends Controller
     }
 
     /**
-     * Change the authenticated user's password.
+     * Change the authenticated user's password and revoke every other
+     * session/device token so a leaked token dies with the password.
      */
     public function updatePassword(UpdatePasswordRequest $request): JsonResponse
     {
         $data = $request->validated();
 
-        $request->user()->update([
+        $user = $request->user();
+        $currentTokenId = $user->currentAccessToken()?->id;
+
+        $user->update([
             'password' => $data['password'],
         ]);
 
+        $user->tokens()
+            ->when($currentTokenId !== null, fn ($query) => $query->whereKeyNot($currentTokenId))
+            ->delete();
+
         return response()->json([
-            'message' => 'Password changed successfully.',
+            'message' => 'Password changed successfully. Other sessions were signed out.',
         ]);
     }
 

@@ -19,7 +19,7 @@ Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:5,
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', [AuthController::class, 'user']);
     Route::put('/profile', [AuthController::class, 'updateProfile']);
-    Route::put('/password', [AuthController::class, 'updatePassword']);
+    Route::put('/password', [AuthController::class, 'updatePassword'])->middleware('throttle:password');
     Route::post('/logout', [AuthController::class, 'logout']);
 
     // Cart (customer)
@@ -28,12 +28,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/cart/items/{cart}/{cartItem}', [CartController::class, 'updateItem']);
     Route::delete('/cart/items/{cart}/{cartItem}', [CartController::class, 'removeItem']);
     Route::delete('/cart', [CartController::class, 'destroy']);
-    Route::post('/cart/coupon', [CartController::class, 'applyCoupon']);
+    Route::post('/cart/coupon', [CartController::class, 'applyCoupon'])->middleware('throttle:coupons');
 
     // Orders (customer)
     Route::get('/orders', [OrderController::class, 'index']);
     Route::get('/orders/{order}', [OrderController::class, 'show']);
-    Route::post('/orders', [OrderController::class, 'store']);
+    Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:orders');
 
     // Admin-only: all routes under /admin/*
     Route::middleware(EnsureAdmin::class)

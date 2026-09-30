@@ -38,4 +38,15 @@ class CartItem extends Model
     {
         return $this->hasMany(CartItemOption::class);
     }
+
+    /**
+     * Line total including variant option price deltas:
+     * (unit price + sum of deltas) x quantity.
+     */
+    public function lineTotal(): float
+    {
+        $unit = (float) $this->unit_price + (float) $this->options->sum('price_delta');
+
+        return round($unit * (int) $this->quantity, 2);
+    }
 }

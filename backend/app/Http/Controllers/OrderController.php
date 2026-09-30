@@ -3,19 +3,35 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\General\PaginationRequest;
-use App\Models\Address;
 use App\Models\Cart;
 use App\Models\Coupon;
+use App\Models\CouponRedemption;
 use App\Models\Order;
+use App\Models\StoreSetting;
+use App\Services\CartPricingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 /**
  * Browse and manage orders for the authenticated user.
  */
 class OrderController extends Controller
 {
+    /**
+     * Allowed status transitions (server-side; keeps the in: rule honest).
+     */
+    private const STATUS_TRANSITIONS = [
+        Order::STATUS_PENDING => [Order::STATUS_CONFIRMED, Order::STATUS_CANCELLED],
+        Order::STATUS_CONFIRMED => [Order::STATUS_PREPARING, Order::STATUS_CANCELLED],
+        Order::STATUS_PREPARING => [Order::STATUS_READY, Order::STATUS_CANCELLED],
+        Order::STATUS_READY => [Order::STATUS_OUT_FOR_DELIVERY, Order::STATUS_CANCELLED],
+        Order::STATUS_OUT_FOR_DELIVERY => [Order::STATUS_COMPLETED, Order::STATUS_CANCELLED],
+        Order::STATUS_COMPLETED => [],
+        Order::STATUS_CANCELLED => [],
+    ];
+
     public function index(PaginationRequest $request): JsonResponse
     {
         $user = $request->user();
@@ -43,20 +59,30 @@ class OrderController extends Controller
     }
 
     /**
-     * POST /api/orders — place an order from the current cart.
+     * POST /api/orders - place an order from the current cart.
      */
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, CartPricingService $pricing): JsonResponse
     {
         $data = $request->validate([
             'order_type' => ['required', 'in:delivery,pickup'],
-            'address_id' => ['nullable', 'exists:addresses,id'],
+            'address_id' => [
+                'required_if:order_type,delivery',
+                'nullable',
+                Rule::exists('addresses', 'id')->where('user_id', $request->user()->id),
+            ],
             'coupon_code' => ['nullable', 'string', 'max:50'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'scheduled_for' => ['nullable', 'date'],
         ]);
 
-        return DB::transaction(function () use ($request, $data) {
-            $user = $request->user();
+        $user = $request->user();
+
+        // The store must be able to accept the order right now.
+        if (! StoreSetting::isOpenNow()) {
+            return response()->json(['message' => 'The store is currently closed.'], 422);
+        }
+
+        return DB::transaction(function () use ($request, $data, $user, $pricing) {
             $cart = Cart::where('user_id', $user->id)
                 ->with(['cartItems.menuItem', 'cartItems.options.variantOption'])
                 ->first();
@@ -65,39 +91,54 @@ class OrderController extends Controller
                 return response()->json(['message' => 'Your cart is empty.'], 422);
             }
 
-            // Calculate totals
-            $subtotal = 0;
-            foreach ($cart->cartItems as $item) {
-                $itemTotal = $item->unit_price * $item->quantity;
-                $subtotal += $itemTotal;
+            // Re-price lines against the live catalog; stale/unavailable carts fail closed.
+            $priced = $pricing->price($cart);
+
+            if (! empty($priced['errors'])) {
+                return response()->json(['message' => implode(' ', $priced['errors']), 'errors' => ['items' => $priced['errors']]], 422);
             }
 
-            $discountAmount = 0;
+            $subtotal = $priced['subtotal'];
+
             $coupon = null;
+            $discountAmount = 0.0;
+            $code = $data['coupon_code'] ?? $cart->coupon?->code;
 
-            if (! empty($data['coupon_code'])) {
-                $coupon = Coupon::where('code', $data['coupon_code'])
-                    ->where('is_active', true)
-                    ->first();
+            if (! empty($code)) {
+                // Row lock serialises concurrent redemptions of the same coupon.
+                $coupon = Coupon::query()->lockForUpdate()->where('code', $code)->first();
 
-                if ($coupon && $subtotal >= $coupon->min_order_amount) {
-                    if ($coupon->type === 'fixed') {
-                        $discountAmount = min($coupon->value, $subtotal);
-                    } else {
-                        $discountAmount = min($coupon->value / 100 * $subtotal, $coupon->max_discount_amount ?? $subtotal);
-                    }
+                $reason = $coupon
+                    ? $coupon->rejectionReason($subtotal, $user->id)
+                    : 'Coupon code not found or inactive.';
+
+                if ($reason !== null) {
+                    return response()->json(['message' => $reason, 'errors' => ['coupon_code' => [$reason]]], 422);
                 }
+
+                $discountAmount = $coupon->discountFor($subtotal);
             }
 
-            $settings = \App\Models\StoreSetting::first();
-            $deliveryFee = ($data['order_type'] === 'delivery') ? ($settings->delivery_fee ?? 0) : 0;
-            $taxAmount = $subtotal * (($settings->tax_rate_percent ?? 0) / 100);
-            $totalAmount = $subtotal - $discountAmount + $deliveryFee + $taxAmount;
+            $settings = StoreSetting::query()->first();
 
-            $orderNumber = 'ORD-' . now()->format('Ymd') . '-' . str_pad($user->orders()->max('id') + 1, 4, '0', STR_PAD_LEFT);
+            if ($settings && $subtotal < (float) $settings->min_order_amount) {
+                return response()->json(['message' => 'Order subtotal is below the store minimum.'], 422);
+            }
+
+            $accepts = $data['order_type'] === 'delivery'
+                ? ($settings?->accepts_delivery ?? true)
+                : ($settings?->accepts_pickup ?? true);
+
+            if (! $accepts) {
+                return response()->json(['message' => 'The store does not accept '.$data['order_type'].' orders.'], 422);
+            }
+
+            $deliveryFee = $data['order_type'] === 'delivery' ? round((float) ($settings?->delivery_fee ?? 0), 2) : 0.0;
+            $taxAmount = round($subtotal * ((float) ($settings?->tax_rate_percent ?? 0) / 100), 2);
+            $totalAmount = round($subtotal - $discountAmount + $deliveryFee + $taxAmount, 2);
 
             $order = Order::create([
-                'order_number' => $orderNumber,
+                'order_number' => $this->generateOrderNumber(),
                 'user_id' => $user->id,
                 'address_id' => $data['address_id'] ?? null,
                 'order_type' => $data['order_type'],
@@ -115,21 +156,21 @@ class OrderController extends Controller
                 'placed_at' => now(),
             ]);
 
-            // Snapshot cart items into order items
-            foreach ($cart->cartItems as $cartItem) {
+            // Snapshot freshly priced lines into order items.
+            foreach ($priced['lines'] as $line) {
                 $orderItem = $order->orderItems()->create([
-                    'menu_item_id' => $cartItem->menu_item_id,
-                    'item_name' => $cartItem->menuItem->name,
-                    'unit_price' => $cartItem->unit_price,
-                    'quantity' => $cartItem->quantity,
-                    'subtotal' => $cartItem->unit_price * $cartItem->quantity,
-                    'notes' => $cartItem->notes,
+                    'menu_item_id' => $line['menu_item']->id,
+                    'item_name' => $line['menu_item']->name,
+                    'unit_price' => $line['unit_price'],
+                    'quantity' => $line['quantity'],
+                    'subtotal' => $line['line_total'],
+                    'notes' => $line['cart_item']->notes,
                 ]);
 
-                foreach ($cartItem->options as $option) {
+                foreach ($line['options'] as $option) {
                     $orderItem->options()->create([
-                        'option_name' => $option->variantOption->name ?? 'Option',
-                        'price_delta' => $option->price_delta,
+                        'option_name' => $option['option_name'],
+                        'price_delta' => $option['price_delta'],
                     ]);
                 }
             }
@@ -146,7 +187,7 @@ class OrderController extends Controller
             ]);
 
             if ($coupon) {
-                \App\Models\CouponRedemption::create([
+                CouponRedemption::create([
                     'coupon_id' => $coupon->id,
                     'user_id' => $user->id,
                     'order_id' => $order->id,
@@ -158,9 +199,8 @@ class OrderController extends Controller
             return response()->json(['data' => $order], 201);
         });
     }
-
     /**
-     * PUT /api/admin/orders/{order}/status — change order status (staff/admin).
+     * PUT /api/admin/orders/{order}/status - change order status (staff/admin).
      */
     public function updateStatus(Request $request, Order $order): JsonResponse
     {
@@ -173,14 +213,36 @@ class OrderController extends Controller
             'note' => ['nullable', 'string', 'max:500'],
         ]);
 
+        if ($data['status'] !== $order->status
+            && ! in_array($data['status'], self::STATUS_TRANSITIONS[$order->status] ?? [], true)) {
+            return response()->json([
+                'message' => "Cannot move an order from {$order->status} to {$data['status']}.",
+            ], 422);
+        }
+
         $order->update(['status' => $data['status']]);
 
         $order->statusHistory()->create([
             'status' => $data['status'],
             'changed_by' => $request->user()->id,
-            'note' => $data['note'],
+            'note' => $data['note'] ?? null,
         ]);
 
         return response()->json(['data' => $order]);
+    }
+
+    /**
+     * Collision-safe order number. Retrying inside a Postgres transaction
+     * after a unique violation is impossible (the transaction is aborted),
+     * so the candidate is checked before insert and the unique index on
+     * orders.order_number stays as the backstop.
+     */
+    private function generateOrderNumber(): string
+    {
+        do {
+            $number = 'ORD-'.now()->format('Ymd').'-'.strtoupper(substr(bin2hex(random_bytes(4)), 0, 8));
+        } while (Order::where('order_number', $number)->exists());
+
+        return $number;
     }
 }
