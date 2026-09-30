@@ -5,6 +5,18 @@ FROM php:8.4-cli-alpine
 RUN apk add --no-cache bash sqlite sqlite-dev pkgconfig libpq-dev \
     && docker-php-ext-install pdo_sqlite pdo_pgsql
 
+# Enable OPcache (CLI build) so artisan serve workers reuse compiled bytecode
+RUN docker-php-ext-install opcache \
+    && { \
+        echo "opcache.enable=1"; \
+        echo "opcache.enable_cli=1"; \
+        echo "opcache.memory_consumption=128"; \
+        echo "opcache.max_accelerated_files=20000"; \
+        echo "opcache.validate_timestamps=0"; \
+        echo "expose_php=Off"; \
+        echo "session.cookie_httponly=1"; \
+    } > /usr/local/etc/php/conf.d/app.ini
+
 # Install Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 

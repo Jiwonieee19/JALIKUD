@@ -9,6 +9,9 @@ class OrderStatusHistory extends Model
 {
     public $timestamps = false;
 
+    // Explicit: the migration creates "order_status_history" (not pluralised).
+    protected $table = 'order_status_history';
+
     protected $fillable = [
         'order_id',
         'status',

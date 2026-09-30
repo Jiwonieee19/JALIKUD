@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class StoreSetting extends Model
 {
-        // The store_settings table has no created_at column, only updated_at.
+    // The store_settings table has no created_at column, only updated_at.
     public const CREATED_AT = null;
     public const UPDATED_AT = 'updated_at';
 
@@ -35,5 +35,37 @@ class StoreSetting extends Model
             'closing_time' => 'datetime',
             'updated_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Whether orders can be placed right now: the open flag plus the
+     * opening/closing window (an overnight window is supported when the
+     * closing time is earlier than the opening time). Missing settings
+     * mean "open" so a freshly seeded store is usable immediately.
+     */
+    public static function isOpenNow(): bool
+    {
+        $settings = static::query()->first();
+
+        return $settings === null || $settings->openNow();
+    }
+
+    public function openNow(): bool
+    {
+        if (! $this->is_open) {
+            return false;
+        }
+
+        if ($this->opening_time === null || $this->closing_time === null) {
+            return true;
+        }
+
+        $now = now()->format('H:i:s');
+        $opens = $this->opening_time->format('H:i:s');
+        $closes = $this->closing_time->format('H:i:s');
+
+        return $opens <= $closes
+            ? ($now >= $opens && $now <= $closes)
+            : ($now >= $opens || $now <= $closes);
     }
 }

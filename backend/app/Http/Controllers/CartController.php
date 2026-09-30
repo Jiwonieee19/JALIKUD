@@ -4,9 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Cart;
 use App\Models\CartItem;
-use App\Models\CartItemOption;
 use App\Models\Coupon;
 use App\Models\MenuItem;
+use App\Services\CartPricingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -25,19 +25,38 @@ class CartController extends Controller
         return response()->json(['data' => $cart]);
     }
 
-    public function addItem(Request $request): JsonResponse
+    public function addItem(Request $request, CartPricingService $pricing): JsonResponse
     {
         $data = $request->validate([
             'menu_item_id' => ['required', 'exists:menu_items,id'],
-            'quantity' => ['required', 'integer', 'min:1'],
+            'quantity' => ['required', 'integer', 'min:1', 'max:99'],
             'notes' => ['nullable', 'string', 'max:500'],
-            'options' => ['nullable', 'array'],
-            'options.*.variant_option_id' => ['required', 'exists:variant_options,id'],
+            'options' => ['nullable', 'array', 'max:20'],
+            'options.*.variant_option_id' => ['required', 'exists:variant_options,id', 'distinct'],
         ]);
 
         $menuItem = MenuItem::findOrFail($data['menu_item_id']);
 
-        return DB::transaction(function () use ($request, $menuItem, $data) {
+        if (! $menuItem->is_available) {
+            return response()->json(['message' => 'This item is currently unavailable.'], 422);
+        }
+
+        $requestedIds = collect($data['options'] ?? [])->pluck('variant_option_id')->map(fn ($id) => (int) $id)->values()->all();
+
+        $errors = $pricing->optionSelectionErrors($menuItem, $requestedIds, $pricing->selectableOptionIds($menuItem));
+
+        if (! empty($errors)) {
+            return response()->json(['message' => implode(' ', $errors), 'errors' => ['options' => $errors]], 422);
+        }
+
+        // Snapshot the real option price deltas (server-authoritative values).
+        $options = empty($requestedIds)
+            ? collect()
+            : $menuItem->variantGroups()->with('variantOptions')->get()
+                ->flatMap->variantOptions
+                ->whereIn('id', $requestedIds);
+
+        return DB::transaction(function () use ($request, $menuItem, $data, $options) {
             $cart = $this->getCart($request);
 
             $cartItem = $cart->cartItems()->create([
@@ -47,14 +66,11 @@ class CartController extends Controller
                 'notes' => $data['notes'] ?? null,
             ]);
 
-            if (! empty($data['options'])) {
-                foreach ($data['options'] as $option) {
-                    $variantOptionId = $option['variant_option_id'];
-                    $cartItem->options()->create([
-                        'variant_option_id' => $variantOptionId,
-                        'price_delta' => 0,
-                    ]);
-                }
+            foreach ($options as $option) {
+                $cartItem->options()->create([
+                    'variant_option_id' => $option->id,
+                    'price_delta' => $option->price_delta,
+                ]);
             }
 
             $cart->load(['cartItems.menuItem', 'cartItems.options.variantOption']);
@@ -70,7 +86,7 @@ class CartController extends Controller
         }
 
         $data = $request->validate([
-            'quantity' => ['sometimes', 'integer', 'min:1'],
+            'quantity' => ['sometimes', 'integer', 'min:1', 'max:99'],
             'notes' => ['nullable', 'string', 'max:500'],
         ]);
 
@@ -106,20 +122,25 @@ class CartController extends Controller
         ]);
 
         $cart = $this->getCart($request);
-        return DB::transaction(function () use ($cart, $data) {
-            $coupon = Coupon::where('code', $data['code'])
-                ->where('is_active', true)
-                ->first();
 
-            if (! $coupon) {
-                return response()->json(['message' => 'Coupon code not found or inactive.'], 422);
-            }
+        $coupon = Coupon::where('code', $data['code'])->first();
 
-            $cart->update(['coupon_id' => $coupon->id]);
-            $cart->load('cartItems.menuItem', 'coupon');
+        if (! $coupon) {
+            return response()->json(['message' => 'Coupon code not found or inactive.'], 422);
+        }
 
-            return response()->json(['data' => $cart]);
-        });
+        // Enforce window + usage limits at apply time (subtotal not enforced here;
+        // checkout re-checks everything and fails closed).
+        $reason = $coupon->rejectionReason(null, $request->user()->id);
+
+        if ($reason !== null) {
+            return response()->json(['message' => $reason], 422);
+        }
+
+        $cart->update(['coupon_id' => $coupon->id]);
+        $cart->load('cartItems.menuItem', 'coupon');
+
+        return response()->json(['data' => $cart]);
     }
 
     private function getCart(Request $request): Cart
