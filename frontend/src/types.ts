@@ -243,3 +243,48 @@ export interface Order {
   payments?: Payment[]
   reviews?: Review[]
 }
+
+/* -------------------------------------------------------------------------
+ * Types below have NO backend contract yet. They are defined here so the
+ * frontend can be designed against them; whoever wires the API should keep
+ * these shapes or update them in one place.
+ * See docs/API_WIRING.md.
+ * ---------------------------------------------------------------------- */
+
+export type RiderStatus = 'available' | 'on_delivery' | 'offline'
+
+export interface RiderProfile {
+  id: number
+  user_id: number
+  vehicle: string | null
+  license_plate: string | null
+  status: RiderStatus
+  is_active: boolean
+  completed_today: number
+  user?: User
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface RiderAssignment {
+  order_id: number
+  rider_id: number
+  assigned_at: string
+  rider?: RiderProfile
+}
+
+export interface AdminOverview {
+  revenue_today: string
+  orders_today: number
+  active_orders: number
+  completed_today: number
+  cancelled_today: number
+  pending_orders: number
+  sold_out_items: number
+  menu_items_total: number
+  riders_available: number
+  riders_on_delivery: number
+  riders_offline: number
+  store_open: boolean
+  generated_at: string
+}

@@ -1,14 +1,26 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import api from '../services/api'
+import { mockAdminUsersApi } from '../mock/adminUsersApi'
 import type { AdminUser } from '../types'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
 
-interface ListResponse {
-  data: AdminUser[]
-  meta: { current_page: number; last_page: number; per_page: number; total: number }
+/**
+ * Data now comes from src/mock/adminUsersApi.ts so this page renders with no
+ * backend. To go live, delete that import and restore `import api from
+ * '../services/api'` — the four call sites below are already written against
+ * the real endpoint contracts. See docs/API_WIRING.md.
+ *
+ * `meta` is kept typed against Laravel's paginator envelope
+ * ({ current_page, last_page, per_page, total }) so the swap is mechanical.
+ */
+
+interface PaginatorMeta {
+  current_page: number
+  last_page: number
+  per_page: number
+  total: number
 }
 
 interface FormState {
@@ -23,7 +35,7 @@ const emptyForm: FormState = { name: '', email: '', phone: '', password: '', rol
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
-  const [meta, setMeta] = useState<ListResponse['meta'] | null>(null)
+  const [meta, setMeta] = useState<PaginatorMeta | null>(null)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
@@ -38,11 +50,12 @@ export default function AdminUsersPage() {
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await api.get<ListResponse>('/admin/users', {
-        params: { search: search || undefined, page },
+      const response = await mockAdminUsersApi.list({
+        search: search || undefined,
+        page,
       })
-      setUsers(response.data.data)
-      setMeta(response.data.meta)
+      setUsers(response.data)
+      setMeta(response.meta)
       setError('')
     } catch {
       setError('Failed to load users.')
@@ -97,7 +110,7 @@ export default function AdminUsersPage() {
     setFormErrors({})
     try {
       if (editing) {
-        await api.put(`/admin/users/${editing.id}`, {
+        await mockAdminUsersApi.update(editing.id, {
           name: form.name,
           email: form.email,
           phone: form.phone || null,
@@ -105,7 +118,7 @@ export default function AdminUsersPage() {
           ...(form.password ? { password: form.password } : {}),
         })
       } else {
-        await api.post('/admin/users', form)
+        await mockAdminUsersApi.store(form)
       }
       closeModal()
       await fetchUsers()
@@ -120,7 +133,7 @@ export default function AdminUsersPage() {
     if (!window.confirm(`Delete ${user.email}? This cannot be undone.`)) return
     setDeletingId(user.id)
     try {
-      await api.delete(`/admin/users/${user.id}`)
+      await mockAdminUsersApi.destroy(user.id)
       await fetchUsers()
     } catch (err) {
       alert(extractFieldError(err).form)

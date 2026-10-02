@@ -1,0 +1,246 @@
+import { useState } from 'react'
+import Badge from '../components/ui/Badge'
+import Button from '../components/ui/Button'
+import Card from '../components/ui/Card'
+import Input from '../components/ui/Input'
+import Label from '../components/ui/Label'
+import { formatDateTime, mockStoreSetting, peso } from '../mock'
+import type { StoreSetting } from '../types'
+
+/**
+ * MOCK-DATA PAGE — stands in for:
+ *   GET /api/store-setting        (public)
+ *   PUT /api/admin/store-setting  (admin token)
+ *
+ * TODO(next-dev): replace the mock with api calls, e.g.
+ *   const { data } = await api.get('/store-setting')
+ *   await api.put('/admin/store-setting', payload)
+ *
+ * ⚠️ The real endpoint validates its own rules server-side; mirror them in the
+ * form. See the Laravel StoreSetting request class on integration day.
+ */
+
+type Draft = {
+  is_open: boolean
+  accepts_delivery: boolean
+  accepts_pickup: boolean
+  min_order_amount: string
+  delivery_fee: string
+  tax_rate_percent: string
+  opening_time: string
+  closing_time: string
+}
+
+function toDraft(setting: StoreSetting): Draft {
+  const toTimeInput = (value: string | null) => (value ?? '08:00').slice(0, 5)
+  return {
+    is_open: setting.is_open,
+    accepts_delivery: setting.accepts_delivery,
+    accepts_pickup: setting.accepts_pickup,
+    min_order_amount: setting.min_order_amount,
+    delivery_fee: setting.delivery_fee,
+    tax_rate_percent: setting.tax_rate_percent,
+    opening_time: toTimeInput(setting.opening_time),
+    closing_time: toTimeInput(setting.closing_time),
+  }
+}
+
+export default function AdminSettingsPage() {
+  const [draft, setDraft] = useState<Draft>(() => toDraft(mockStoreSetting))
+  const [saved, setSaved] = useState(false)
+
+  function update<K extends keyof Draft>(key: K, value: Draft[K]) {
+    setDraft((current) => ({ ...current, [key]: value }))
+    setSaved(false)
+  }
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+            Store settings
+          </h1>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Hours, fees and fulfilment options. Changes apply immediately to the customer app.
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          {saved && <Badge tone="success">Saved</Badge>}
+          <Button onClick={() => setSaved(true)}>Save changes</Button>
+        </div>
+      </header>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card title="Store identity" description="Shown in the customer app header.">
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="st-name" className="mb-1.5">
+                Store name
+              </Label>
+              <Input id="st-name" defaultValue={mockStoreSetting.store_name} />
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Last updated {formatDateTime(mockStoreSetting.updated_at)}
+            </p>
+          </div>
+        </Card>
+
+        <Card title="Availability" description="Control what customers can do right now.">
+          <div className="space-y-4">
+            <Toggle
+              id="st-open"
+              label="Store is open"
+              description="Turn off to pause all new orders temporarily."
+              checked={draft.is_open}
+              onChange={(value) => update('is_open', value)}
+            />
+            <Toggle
+              id="st-delivery"
+              label="Accept delivery orders"
+              description="Riders fulfil doorstep deliveries."
+              checked={draft.accepts_delivery}
+              onChange={(value) => update('accepts_delivery', value)}
+              disabled={!draft.is_open}
+            />
+            <Toggle
+              id="st-pickup"
+              label="Accept pickup orders"
+              description="Customers collect at the counter."
+              checked={draft.accepts_pickup}
+              onChange={(value) => update('accepts_pickup', value)}
+              disabled={!draft.is_open}
+            />
+          </div>
+        </Card>
+
+        <Card title="Opening hours" description="Local store time.">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="st-open-time" className="mb-1.5">
+                Opens
+              </Label>
+              <Input
+                id="st-open-time"
+                type="time"
+                value={draft.opening_time}
+                onChange={(event) => update('opening_time', event.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="st-close-time" className="mb-1.5">
+                Closes
+              </Label>
+              <Input
+                id="st-close-time"
+                type="time"
+                value={draft.closing_time}
+                onChange={(event) => update('closing_time', event.target.value)}
+              />
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+            Currently{' '}
+            <span className="font-bold text-slate-700 dark:text-slate-300">
+              {draft.opening_time} – {draft.closing_time}
+            </span>
+            .
+          </p>
+        </Card>
+
+        <Card title="Pricing" description="Applied at checkout.">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <Label htmlFor="st-min" className="mb-1.5">
+                Min order (₱)
+              </Label>
+              <Input
+                id="st-min"
+                type="number"
+                min="0"
+                step="0.01"
+                value={draft.min_order_amount}
+                onChange={(event) => update('min_order_amount', event.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="st-fee" className="mb-1.5">
+                Delivery fee (₱)
+              </Label>
+              <Input
+                id="st-fee"
+                type="number"
+                min="0"
+                step="0.01"
+                value={draft.delivery_fee}
+                onChange={(event) => update('delivery_fee', event.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="st-tax" className="mb-1.5">
+                Tax rate (%)
+              </Label>
+              <Input
+                id="st-tax"
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={draft.tax_rate_percent}
+                onChange={(event) => update('tax_rate_percent', event.target.value)}
+              />
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+            A {peso('250.00')} order is charged {peso(draft.delivery_fee)} delivery +{' '}
+            {peso('250.00')} × {draft.tax_rate_percent || '0'}% tax.
+          </p>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+function Toggle({
+  id,
+  label,
+  description,
+  checked,
+  onChange,
+  disabled,
+}: {
+  id: string
+  label: string
+  description: string
+  checked: boolean
+  onChange: (value: boolean) => void
+  disabled?: boolean
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className={`flex items-start justify-between gap-4 rounded-xl px-4 py-3 ring-1 ring-inset transition-colors ${
+        disabled
+          ? 'cursor-not-allowed opacity-50 ring-slate-200 dark:ring-slate-800'
+          : 'cursor-pointer ring-slate-200 hover:bg-slate-50 dark:ring-slate-700 dark:hover:bg-slate-800/50'
+      }`}
+    >
+      <span className="min-w-0">
+        <span className="block text-sm font-bold text-slate-900 dark:text-white">{label}</span>
+        <span className="block text-xs text-slate-500 dark:text-slate-400">{description}</span>
+      </span>
+      <span className="relative mt-0.5 shrink-0">
+        <input
+          id={id}
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+          className="peer sr-only"
+        />
+        <span className="block h-6 w-11 rounded-full bg-slate-300 transition-colors peer-checked:bg-red-600 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-red-600 dark:bg-slate-700" />
+        <span className="absolute top-0.5 left-0.5 block h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
+      </span>
+    </label>
+  )
+}
