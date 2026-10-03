@@ -97,6 +97,18 @@ with `cancelled` reachable up to `ready`).
 | `GET /store-setting` | public |
 | `PUT /admin/store-setting` | admin |
 
+### Rewards — `/admin/rewards`
+| Real call | Auth |
+|---|---|
+| `GET /admin/rewards/redemptions` | admin — **does not exist yet** |
+| `GET/POST /admin/rewards` | admin — **does not exist yet** |
+| `PUT/DELETE /admin/rewards/{reward}` | admin — **does not exist yet** |
+| `GET /rewards` | customer catalogue — **does not exist yet** |
+
+Catalogue data in `src/mock/rewards.ts`, copied from
+`mobile/src/app/(tabs)/rewards.tsx:24-73`. See §4 for the reconstructed schema
+and the three data problems.
+
 ### Dashboard — `src/pages/DashboardPage.tsx`, data in `src/mock/overview.ts`
 See §4 — **the endpoint does not exist yet.**
 
@@ -136,13 +148,53 @@ Needs `GET /rider/deliveries`, `GET /rider/deliveries/{order}`, and
 middleware aliases at all.
 
 ### Rewards / redemption — `/admin/rewards`
-**Nothing exists.** No `Reward` model, no migration, no endpoint. It is named in
-the project proposal three times, and `backend/DATABASE_SCHEMA.md` designs three
-tables (`rewards`, `reward_redemptions`, `reward_point_transactions`) — but
-nothing is built. The route currently renders a placeholder.
+**Nothing exists on the backend.** No `Reward` model, no `rewards` /
+`reward_redemptions` / `reward_point_transactions` migration, no route matching
+`/reward`. `routes/api.php` was checked — zero.
 
-The mobile app has a static demo at `mobile/src/app/(tabs)/rewards.tsx`
-(2450 points, 6 redeemables) worth using as a starting point.
+The page is built and functional against mock data, sourced from the mobile
+catalogue at `mobile/src/app/(tabs)/rewards.tsx:24-73` so both clients agree.
+
+⚠️ **The schema design was deleted.** `DATABASE_SCHEMA.md` (514 lines, which
+specified all three tables) was removed in commit `14dd219`
+*"refactor: remove DATABASE_SCHEMA.md and update README with database design
+details"*. `README.md:291` still links to it and **that link is broken**, as are
+three others it now points at (`docs/DATA_DICTIONARY.md`,
+`docs/DATA_MODEL.md`, `docs/DATA_MODEL.drawio` — none of which were ever
+committed). So the rewards design is currently undocumented.
+
+The types in `src/types.ts` are a reconstruction from the mobile data plus what
+the deleted draft specified:
+
+| Table | Columns | Notes |
+|---|---|---|
+| `rewards` | `points_required`, `stock` (null = unlimited), `monetary_value` (decimal), `menu_item_id` (nullable), `type`, `is_active` | Mobile called these `points` and `worth` |
+| `reward_redemptions` | `code` (unique), `status` lifecycle `issued→used/expired/revoked`, `points_spent`, `redeemed_at`, `used_at`, `expires_at` | `code` is what the customer presents |
+| `reward_point_transactions` | `points` (signed), `reason` `earned/spent/reversed/adjusted`, `balance_after`, `order_id` | Append-only ledger — never UPDATE. Draft specified 1 point per ₱10 spent |
+
+Integrity rules the draft specified, worth preserving:
+- checkout must be one transaction
+- **lock the points balance** to prevent concurrent overspending
+- never hard-delete a reward that has redemptions — pause it instead
+
+Needed endpoints:
+```
+GET|POST            /api/admin/rewards
+PUT|DELETE           /api/admin/rewards/{reward}
+GET                 /api/admin/rewards/redemptions
+GET                 /api/rewards                (customer catalogue)
+POST                /api/rewards/{reward}/redeem
+```
+
+### Three known data problems
+
+1. **Price mismatch.** "Free Regular Fries" is worth ₱79.00 in mobile but the web
+   menu fixture prices Crispy Fries at ₱59.00. One app is wrong.
+2. **Orphaned rewards.** "Peach Mango Pie" and "Sundae Cup" are free-item rewards
+   with no matching `menu_items` row. Either add them to the menu or make them
+   standalone gifts. Surfaced in the page's "Needs attention" tab.
+3. **Nothing accrues points.** There is no ledger table, so balances never grow.
+   Mobile's `rewards.tsx:77` even hardcodes `useState(2450)` with no setter.
 
 ### Variant groups — no write endpoints
 `MenuItemController@index` eager-loads `variantGroups.options`

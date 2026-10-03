@@ -10,6 +10,7 @@ import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Textarea from '../components/ui/Textarea'
 import { categoryName, mockCategories, mockMenuItems, peso } from '../mock'
+import MenuThumb from '../components/ui/MenuThumb'
 import type { MenuItem } from '../types'
 
 /**
@@ -39,6 +40,7 @@ export default function AdminMenuPage() {
     category_id: '1',
     description: '',
     sku: '',
+    image_url: null as string | null,
     base_price: '',
     preparation_time_minutes: '10',
   })
@@ -69,6 +71,7 @@ export default function AdminMenuPage() {
       category_id: String(mockCategories[0]?.id ?? 1),
       description: '',
       sku: '',
+      image_url: null,
       base_price: '',
       preparation_time_minutes: '10',
     })
@@ -81,6 +84,7 @@ export default function AdminMenuPage() {
       category_id: String(item.category_id),
       description: item.description ?? '',
       sku: item.sku ?? '',
+      image_url: item.image_url,
       base_price: item.base_price,
       preparation_time_minutes: String(item.preparation_time_minutes),
     })
@@ -156,11 +160,14 @@ export default function AdminMenuPage() {
                   key: 'name',
                   header: 'Item',
                   render: (item: MenuItem) => (
-                    <div>
-                      <p className="font-extrabold text-slate-900 dark:text-white">{item.name}</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {item.sku ?? 'No SKU'} · {item.preparation_time_minutes} min
-                      </p>
+                    <div className="flex items-center gap-3">
+                      <MenuThumb src={item.image_url} name={item.name} />
+                      <div className="min-w-0">
+                        <p className="font-extrabold text-slate-900 dark:text-white">{item.name}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {item.sku ?? 'No SKU'} · {item.preparation_time_minutes} min
+                        </p>
+                      </div>
                     </div>
                   ),
                 },
@@ -219,16 +226,21 @@ export default function AdminMenuPage() {
             rows={mockCategories}
             rowKey={(category) => category.id}
             columns={[
-              {
-                key: 'name',
-                header: 'Category',
-                render: (category) => (
-                  <div>
-                    <p className="font-extrabold text-slate-900 dark:text-white">{category.name}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">{category.slug}</p>
-                  </div>
-                ),
-              },
+{
+                  key: 'name',
+                  header: 'Category',
+                  render: (category) => (
+                    <div className="flex items-center gap-3">
+                      <MenuThumb src={category.image_url} name={category.name} size="sm" />
+                      <div className="min-w-0">
+                        <p className="font-extrabold text-slate-900 dark:text-white">
+                          {category.name}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{category.slug}</p>
+                      </div>
+                    </div>
+                  ),
+                },
               {
                 key: 'count',
                 header: 'Items',
@@ -297,17 +309,42 @@ export default function AdminMenuPage() {
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            <Label htmlFor="mi-name" className="mb-1.5">
-              Name
-            </Label>
-            <Input
-              id="mi-name"
-              value={draft.name}
-              onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-              placeholder="Chickenjoy 1pc"
-            />
-          </div>
+<div className="sm:col-span-2 flex items-center gap-4 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200 ring-inset dark:bg-slate-800/50 dark:ring-slate-700">
+              <MenuThumb
+                src={
+                  draft.image_url ||
+                  (draft.name
+                    ? `/images/menu/${draft.name
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, '-')
+                        .replace(/^-|-$/g, '')}.svg`
+                    : null)
+                }
+                name={draft.name || 'New item'}
+                size="lg"
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  {draft.name || 'New menu item'}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                  Preview from the generated placeholders. The API has no image field yet —
+                  <span className="font-semibold"> menu_items.image_url </span>
+                  exists in the schema but no endpoint populates it.
+                </p>
+              </div>
+            </div>
+            <div className="sm:col-span-2">
+              <Label htmlFor="mi-name" className="mb-1.5">
+                Name
+              </Label>
+              <Input
+                id="mi-name"
+                value={draft.name}
+                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                placeholder="Chickenjoy 1pc"
+              />
+            </div>
           <div>
             <Label htmlFor="mi-category" className="mb-1.5">
               Category

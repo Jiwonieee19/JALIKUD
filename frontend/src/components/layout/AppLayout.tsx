@@ -2,6 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import ThemeToggle from '../ui/ThemeToggle'
 import Button from '../ui/Button'
+import Logo from '../ui/Logo'
 
 const navItems = [
   {
@@ -102,13 +103,8 @@ export default function AppLayout() {
     <div className="flex h-full">
       {/* Desktop sidebar */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-200 bg-white px-4 py-6 dark:border-slate-800 dark:bg-slate-900 md:flex">
-        <div className="mb-8 flex items-center gap-2 px-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-600 text-sm font-black text-white">
-            J
-          </span>
-          <span className="text-xl font-extrabold tracking-wide text-slate-900 dark:text-white">
-            JALIKUD
-          </span>
+        <div className="mb-8 px-2">
+          <Logo heightClass="h-9" />
         </div>
         <nav className="flex flex-1 flex-col gap-1">
           {allItems.map((item) => (
@@ -145,12 +141,7 @@ export default function AppLayout() {
       <div className="flex min-w-0 flex-1 flex-col pb-16 md:pb-0">
         {/* Mobile top bar */}
         <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 md:hidden">
-          <span className="flex items-center gap-2 text-lg font-extrabold tracking-wide text-slate-900 dark:text-white">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-600 text-xs font-black text-white">
-              J
-            </span>
-            JALIKUD
-          </span>
+          <Logo heightClass="h-7" />
           <ThemeToggle />
         </header>
 

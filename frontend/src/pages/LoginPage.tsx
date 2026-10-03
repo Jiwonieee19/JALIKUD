@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
+import Logo from '../components/ui/Logo'
 
 interface ValidationErrors {
   email?: string[]
@@ -48,11 +49,10 @@ export default function LoginPage() {
     <div className="flex min-h-full items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
       <div className="w-full max-w-md">
         <div className="rounded-2xl bg-white p-8 shadow-xl ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 sm:p-10">
-          <div className="mb-8 text-center">
-            <h1 className="text-3xl font-extrabold tracking-widest text-red-600 dark:text-red-400">
-              JALIKUD
-            </h1>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          <div className="mb-8 flex flex-col items-center text-center">
+            <Logo heightClass="h-16" />
+            <h1 className="sr-only">JALIKUD</h1>
+            <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
               Sign in to your account to continue
             </p>
           </div>

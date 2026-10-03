@@ -199,15 +199,15 @@ const seeds: Seed[] = [
   {
     id: 1, order_number: 'JAL-230021', user_id: 9, address_id: 1, rider_id: null,
     order_type: 'delivery', status: 'pending', payment_status: 'unpaid', payment_method: 'cod',
-    subtotal: '307.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '356.00',
+    subtotal: '327.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '376.00',
     coupon_id: null, notes: null, placed_at: '2026-09-29T11:42:00+08:00',
-    items: [item(2, 'Chickenjoy 2pc', '199.00', 1), item(15, 'Sotanghon', '49.00', 1), item(13, 'Crispy Fries', '59.00', 1)],
+    items: [item(2, 'Chickenjoy 2pc', '199.00', 1), item(15, 'Sotanghon', '49.00', 1), item(13, 'Crispy Fries', '79.00', 1)],
     history: history(1, [['pending', '2026-09-29T11:42:00+08:00', null]]),
   },
   {
     id: 2, order_number: 'JAL-230020', user_id: 10, address_id: 2, rider_id: null,
     order_type: 'delivery', status: 'confirmed', payment_status: 'unpaid', payment_method: 'cod',
-    subtotal: '438.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '487.00',
+    subtotal: '476.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '525.00',
     coupon_id: null, notes: 'Please call at the gate.', placed_at: '2026-09-29T11:18:00+08:00',
     items: [item(6, 'Champ Burger', '179.00', 1), item(11, 'Jolly Spaghetti', '99.00', 1), item(15, 'Sotanghon', '49.00', 1), item(14, 'Jolly Fries Bucket', '149.00', 1)],
     history: history(2, [
@@ -218,7 +218,7 @@ const seeds: Seed[] = [
   {
     id: 3, order_number: 'JAL-230019', user_id: 11, address_id: 3, rider_id: 2,
     order_type: 'delivery', status: 'preparing', payment_status: 'unpaid', payment_method: 'cod',
-    subtotal: '297.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '346.00',
+    subtotal: '296.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '345.00',
     coupon_id: null, notes: null, placed_at: '2026-09-29T10:55:00+08:00',
     assigned_at: '2026-09-29T11:08:00+08:00',
     items: [item(9, 'Jolly Spaghetti', '99.00', 2), item(15, 'Sotanghon', '49.00', 2)],
@@ -231,9 +231,9 @@ const seeds: Seed[] = [
   {
     id: 4, order_number: 'JAL-230018', user_id: 12, address_id: null, rider_id: null,
     order_type: 'pickup', status: 'ready', payment_status: 'unpaid', payment_method: 'cod',
-    subtotal: '728.00', discount_amount: '0.00', delivery_fee: '0.00', tax_amount: '0.00', total_amount: '728.00',
+    subtotal: '772.00', discount_amount: '0.00', delivery_fee: '0.00', tax_amount: '0.00', total_amount: '772.00',
     coupon_id: null, notes: 'Pickup at 17:00.', placed_at: '2026-09-29T10:30:00+08:00',
-    items: [item(3, 'Chickenjoy 6pc', '549.00', 1), item(13, 'Crispy Fries', '59.00', 2), item(16, 'Coke Float', '65.00', 1)],
+    items: [item(3, 'Chickenjoy 6pc', '549.00', 1), item(13, 'Crispy Fries', '79.00', 2), item(16, 'Coke Float', '65.00', 1)],
     history: history(4, [
       ['pending', '2026-09-29T10:30:00+08:00', null],
       ['confirmed', '2026-09-29T10:36:00+08:00', null],
@@ -244,7 +244,7 @@ const seeds: Seed[] = [
   {
     id: 5, order_number: 'JAL-230017', user_id: 9, address_id: 1, rider_id: 1,
     order_type: 'delivery', status: 'out_for_delivery', payment_status: 'paid', payment_method: 'gcash',
-    subtotal: '519.00', discount_amount: '51.90', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '516.10',
+    subtotal: '582.00', discount_amount: '51.90', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '579.10',
     coupon_id: 1, notes: null, placed_at: '2026-09-29T09:47:00+08:00',
     assigned_at: '2026-09-29T10:20:00+08:00',
     items: [item(7, 'Chicken & Burger Combo', '249.00', 1), item(16, 'Coke Float', '65.00', 1), item(14, 'Jolly Fries Bucket', '149.00', 1), item(12, 'Spaghetti Aglio Olio', '119.00', 1)],
@@ -270,10 +270,10 @@ const seeds: Seed[] = [
   {
     id: 7, order_number: 'JAL-230015', user_id: 11, address_id: 3, rider_id: 3,
     order_type: 'delivery', status: 'completed', payment_status: 'paid', payment_method: 'cod',
-    subtotal: '348.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '397.00',
+    subtotal: '445.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '494.00',
     coupon_id: null, notes: null, placed_at: '2026-09-28T18:02:00+08:00',
     assigned_at: '2026-09-28T18:30:00+08:00',
-    items: [item(1, 'Chickenjoy 1pc', '109.00', 2), item(9, 'Jolly Spaghetti', '99.00', 1), item(15, 'Sotanghon', '49.00', 1), item(13, 'Crispy Fries', '59.00', 1)],
+    items: [item(1, 'Chickenjoy 1pc', '109.00', 2), item(9, 'Jolly Spaghetti', '99.00', 1), item(15, 'Sotanghon', '49.00', 1), item(13, 'Crispy Fries', '79.00', 1)],
     history: history(7, [
       ['pending', '2026-09-28T18:02:00+08:00', null],
       ['confirmed', '2026-09-28T18:08:00+08:00', null],
@@ -286,7 +286,7 @@ const seeds: Seed[] = [
   {
     id: 8, order_number: 'JAL-230014', user_id: 12, address_id: 4, rider_id: null,
     order_type: 'pickup', status: 'completed', payment_status: 'paid', payment_method: 'gcash',
-    subtotal: '258.00', discount_amount: '25.80', delivery_fee: '0.00', tax_amount: '0.00', total_amount: '232.20',
+    subtotal: '277.00', discount_amount: '25.80', delivery_fee: '0.00', tax_amount: '0.00', total_amount: '251.20',
     coupon_id: 2, notes: null, placed_at: '2026-09-28T17:15:00+08:00',
     items: [item(5, 'Yumburger', '89.00', 1), item(8, 'Burger Steak', '139.00', 1), item(15, 'Sotanghon', '49.00', 1)],
     history: history(8, [
@@ -302,7 +302,7 @@ const seeds: Seed[] = [
   {
     id: 9, order_number: 'JAL-230022', user_id: 10, address_id: 2, rider_id: null,
     order_type: 'delivery', status: 'pending', payment_status: 'paid', payment_method: 'gcash',
-    subtotal: '436.00', discount_amount: '43.60', delivery_fee: '49.00', tax_amount: '44.14', total_amount: '485.54',
+    subtotal: '663.00', discount_amount: '43.60', delivery_fee: '49.00', tax_amount: '44.14', total_amount: '712.54',
     coupon_id: 1, notes: 'Scheduled — please deliver after 1pm, we have a meeting.',
     scheduled_for: '2026-09-29T13:00:00+08:00', placed_at: '2026-09-29T11:58:00+08:00',
     items: [item(3, 'Chickenjoy 6pc', '549.00', 1), item(15, 'Sotanghon', '49.00', 1), item(16, 'Coke Float', '65.00', 1)],
@@ -311,10 +311,10 @@ const seeds: Seed[] = [
   {
     id: 10, order_number: 'JAL-230023', user_id: 9, address_id: 1, rider_id: null,
     order_type: 'pickup', status: 'confirmed', payment_status: 'unpaid', payment_method: 'cod',
-    subtotal: '208.00', discount_amount: '0.00', delivery_fee: '0.00', tax_amount: '0.00', total_amount: '208.00',
+    subtotal: '342.00', discount_amount: '0.00', delivery_fee: '0.00', tax_amount: '0.00', total_amount: '342.00',
     coupon_id: null, notes: 'Collect at 5pm.',
     scheduled_for: '2026-09-29T17:00:00+08:00', placed_at: '2026-09-29T12:05:00+08:00',
-    items: [item(13, 'Crispy Fries', '59.00', 2), item(16, 'Coke Float', '65.00', 1), item(12, 'Spaghetti Aglio Olio', '119.00', 1)],
+    items: [item(13, 'Crispy Fries', '79.00', 2), item(16, 'Coke Float', '65.00', 1), item(12, 'Spaghetti Aglio Olio', '119.00', 1)],
     history: history(10, [
       ['pending', '2026-09-29T12:05:00+08:00', null],
       ['confirmed', '2026-09-29T12:09:00+08:00', 'Confirmed by Marites'],
@@ -325,10 +325,10 @@ const seeds: Seed[] = [
   {
     id: 11, order_number: 'JAL-230013', user_id: 11, address_id: 3, rider_id: null,
     order_type: 'delivery', status: 'cancelled', payment_status: 'refunded', payment_method: 'gcash',
-    subtotal: '307.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '356.00',
+    subtotal: '327.00', discount_amount: '0.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '376.00',
     coupon_id: null, notes: 'Item sold out — Chickenjoy 6pc.',
     placed_at: '2026-09-28T14:30:00+08:00',
-    items: [item(2, 'Chickenjoy 2pc', '199.00', 1), item(15, 'Sotanghon', '49.00', 1), item(13, 'Crispy Fries', '59.00', 1)],
+    items: [item(2, 'Chickenjoy 2pc', '199.00', 1), item(15, 'Sotanghon', '49.00', 1), item(13, 'Crispy Fries', '79.00', 1)],
     history: history(11, [
       ['pending', '2026-09-28T14:30:00+08:00', null],
       ['confirmed', '2026-09-28T14:36:00+08:00', null],
@@ -338,7 +338,7 @@ const seeds: Seed[] = [
   {
     id: 12, order_number: 'JAL-230012', user_id: 12, address_id: null, rider_id: null,
     order_type: 'pickup', status: 'cancelled', payment_status: 'unpaid', payment_method: 'cod',
-    subtotal: '129.00', discount_amount: '0.00', delivery_fee: '0.00', tax_amount: '0.00', total_amount: '129.00',
+    subtotal: '164.00', discount_amount: '0.00', delivery_fee: '0.00', tax_amount: '0.00', total_amount: '164.00',
     coupon_id: null, notes: 'Customer did not arrive within 30 minutes.',
     placed_at: '2026-09-28T13:10:00+08:00',
     items: [item(11, 'Jolly Spaghetti', '99.00', 1), item(16, 'Coke Float', '65.00', 1)],
@@ -370,10 +370,10 @@ const seeds: Seed[] = [
   {
     id: 14, order_number: 'JAL-230010', user_id: 10, address_id: 2, rider_id: 1,
     order_type: 'delivery', status: 'completed', payment_status: 'paid', payment_method: 'cod',
-    subtotal: '616.00', discount_amount: '150.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '515.00',
+    subtotal: '677.00', discount_amount: '150.00', delivery_fee: '49.00', tax_amount: '0.00', total_amount: '576.00',
     coupon_id: 3, notes: null, placed_at: '2026-09-28T11:00:00+08:00',
     assigned_at: '2026-09-28T11:31:00+08:00',
-    items: [item(3, 'Chickenjoy 6pc', '549.00', 1), item(13, 'Crispy Fries', '59.00', 1), item(15, 'Sotanghon', '49.00', 1)],
+    items: [item(3, 'Chickenjoy 6pc', '549.00', 1), item(13, 'Crispy Fries', '79.00', 1), item(15, 'Sotanghon', '49.00', 1)],
     history: history(14, [
       ['pending', '2026-09-28T11:00:00+08:00', null],
       ['confirmed', '2026-09-28T11:06:00+08:00', null],
@@ -421,21 +421,52 @@ export const mockOrders: Order[] = seeds.map((seed) => {
 })
 
 /**
- * Total-integrity assertion. The schema docs recommend the backend enforce
- *   total = subtotal - discount + delivery_fee + tax
- * on every order. Run this in dev to prove the fixture data obeys it — if it
- * throws, a hand-edited record above has drifted.
+ * Total-integrity assertions. The schema docs recommend the backend enforce:
+ *
+ *   1. subtotal = Σ (order_items.unit_price × quantity)
+ *   2. total_amount = subtotal - discount_amount + delivery_fee + tax_amount
+ *
+ * ...with all four amount columns server-computed (see the migration, :24-28).
+ *
+ * Check 1 was MISSING originally and 10 of the 14 fixture orders silently
+ * disagreed with their own line items. Both are asserted here so a hand-edit
+ * fails on import in dev rather than shipping a wrong number to the backend.
  */
 for (const order of mockOrders) {
-  const expected =
-    Number(order.subtotal) -
+  const itemsTotal = (order.order_items ?? []).reduce(
+    (sum, item) => sum + Number(item.unit_price) * item.quantity,
+    0,
+  )
+  const declaredSubtotal = Number(order.subtotal)
+
+  if (Math.abs(itemsTotal - declaredSubtotal) > 0.005) {
+    throw new Error(
+      `Mock data integrity failure on ${order.order_number}: subtotal is ` +
+        `${declaredSubtotal.toFixed(2)} but its line items sum to ` +
+        `${itemsTotal.toFixed(2)}. Recompute subtotal from order_items.`,
+    )
+  }
+
+  const expectedTotal =
+    declaredSubtotal -
     Number(order.discount_amount) +
     Number(order.delivery_fee) +
     Number(order.tax_amount)
-  if (Math.abs(expected - Number(order.total_amount)) > 0.005) {
+  if (Math.abs(expectedTotal - Number(order.total_amount)) > 0.005) {
     throw new Error(
       `Mock data integrity failure on ${order.order_number}: expected total ` +
-        `${expected.toFixed(2)} but got ${order.total_amount}`,
+        `${expectedTotal.toFixed(2)} but got ${order.total_amount}`,
     )
+  }
+
+  for (const item of order.order_items ?? []) {
+    const expectedLine = Number(item.unit_price) * item.quantity
+    if (Math.abs(expectedLine - Number(item.subtotal)) > 0.005) {
+      throw new Error(
+        `Mock data integrity failure on ${order.order_number}, line "${item.item_name}": ` +
+          `subtotal is ${item.subtotal} but unit_price × quantity is ` +
+          `${expectedLine.toFixed(2)}`,
+      )
+    }
   }
 }

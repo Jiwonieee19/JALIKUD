@@ -2,7 +2,7 @@ import type { AdminOverview } from '../types'
 import { mockMenuItems } from './menu'
 import { mockOrders } from './orders'
 import { mockRiders } from './orders'
-import { mockCoupons, mockStoreSetting } from './store'
+import { mockStoreSetting } from './store'
 
 /**
  * MOCK DATA — stands in for:
@@ -55,9 +55,6 @@ export const mockRecentOrders = mockOrders.slice(0, 5)
 
 export const mockSoldOutItems = mockMenuItems.filter((item) => !item.is_available)
 
-/** Active coupons, surfaced on the Dashboard as "live promotions". */
-export const mockActiveCoupons = mockCoupons.filter((coupon) => coupon.is_active)
-
 /**
  * 7-day revenue series for the Dashboard bar chart.
  *
@@ -106,30 +103,6 @@ export const mockHourlyOrders: Array<{ hour: string; label: string; orders: numb
   { hour: '19', label: '7 PM', orders: 5 },
 ]
 
-/**
- * Average order value and completion rate — derived, used by the Dashboard's
- * secondary stat row. `aov` should be total revenue ÷ completed orders, computed
- * server-side so it stays consistent across devices.
- */
-export const mockDerivedMetrics = (() => {
-  const completed = mockOrders.filter((order) => order.status === 'completed')
-  const finished = mockOrders.filter((order) =>
-    ['completed', 'cancelled'].includes(order.status),
-  )
-  return {
-    average_order_value: completed.length
-      ? round2(sum(completed.map((o) => Number(o.total_amount))) / completed.length)
-      : '0.00',
-    completion_rate: finished.length
-      ? round2((completed.length / finished.length) * 100)
-      : '0.00',
-    delivered_by_riders: mockOrders.filter((o) => o.rider_id !== null).length,
-    avg_delivery_minutes: 24.5,
-    discounts_given: round2(
-      sum(mockOrders.map((order) => Number(order.discount_amount))),
-    ),
-  }
-})()
 
 /* ---------------------------------------------------------------------------
  * SELF-CHECK

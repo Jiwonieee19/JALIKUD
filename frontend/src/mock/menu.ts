@@ -1,4 +1,4 @@
-import type { Category, MenuItem, VariantGroup, VariantOption } from '../types'
+import type { Category, MenuItem } from '../types'
 
 /**
  * MOCK DATA — stands in for:
@@ -65,6 +65,29 @@ import type { Category, MenuItem, VariantGroup, VariantOption } from '../types'
  * real response carries an embedded `category` object rather than just the FK.
  * This fixture keeps `category_id` and resolves names via categoryName() below;
  * swap to `item.category?.name` once real data lands.
+ *
+ * ---------------------------------------------------------------------------
+ * image_url
+ * ---------------------------------------------------------------------------
+ * These are LOCAL SVG PLACEHOLDERS, not photography. JALIKUD has no product
+ * photos yet — and neither does the mobile app, which uses an `emoji` field
+ * (mobile/src/app/(tabs)/menu.tsx:33) and imports no <Image> at all. Copying
+ * assets from mobile was not an option: the only PNGs there are app icons and
+ * tab-bar glyphs.
+ *
+ * So the placeholders are generated locally by:
+ *     node scripts/generate-menu-placeholders.mjs
+ * → public/images/menu/<slug>.svg   (18 files, 0.48 KB each, 8.7 KB total)
+ *
+ * Each is a category-tinted rounded square with the item's emoji, using the
+ * mobile palette so both clients read as the same product.
+ *
+ * TO SWAP IN REAL PHOTOS: set `image_url` on each row to the uploaded URL,
+ * delete public/images/menu/ and the script. No component changes — every
+ * consumer renders whatever `image_url` holds.
+ *
+ * ⚠️ These are paths, not absolute URLs. The backend's `image_url` will hold
+ *    absolute URLs (or null), so treat this as design-time only.
  */
 
 const iso = (value: string): string => value
@@ -142,6 +165,18 @@ export const mockCategories: Category[] = [
     created_at: iso('2026-09-15T02:15:00+08:00'),
     updated_at: iso('2026-09-15T02:15:00+08:00'),
   },
+{
+    id: 7,
+    parent_id: null,
+    name: 'Desserts',
+    slug: 'desserts',
+    description: 'Sweet treats to finish the meal.',
+    image_url: null,
+    sort_order: 7,
+    is_active: true,
+    created_at: iso('2026-09-29T04:10:00+08:00'),
+    updated_at: iso('2026-09-29T04:10:00+08:00'),
+  },
 ]
 
 export const mockMenuItems: MenuItem[] = [
@@ -150,10 +185,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 1,
     name: 'Chickenjoy 1pc',
     slug: 'chickenjoy-1pc',
+    image_url: '/images/menu/chickenjoy-1pc.svg',
     description: 'One piece of our signature fried chicken with garlic dip.',
     sku: 'CJ-001',
     base_price: '109.00',
-    image_url: null,
+
     is_available: true,
     is_featured: false,
     preparation_time_minutes: 8,
@@ -167,10 +203,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 1,
     name: 'Chickenjoy 2pc',
     slug: 'chickenjoy-2pc',
+    image_url: '/images/menu/chickenjoy-2pc.svg',
     description: 'Two pieces with two garlic dips. Serves one.',
     sku: 'CJ-002',
     base_price: '199.00',
-    image_url: null,
+
     is_available: true,
     is_featured: true,
     preparation_time_minutes: 9,
@@ -184,10 +221,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 1,
     name: 'Chickenjoy 6pc',
     slug: 'chickenjoy-6pc',
+    image_url: '/images/menu/chickenjoy-6pc.svg',
     description: 'Family size bucket. Great for sharing.',
     sku: 'CJ-006',
     base_price: '549.00',
-    image_url: null,
+
     is_available: true,
     is_featured: true,
     preparation_time_minutes: 15,
@@ -201,10 +239,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 1,
     name: 'Chickenjoy 8pc Family',
     slug: 'chickenjoy-8pc-family',
+    image_url: '/images/menu/chickenjoy-8pc-family.svg',
     description: 'The whole crew. Eight pieces, four dips.',
     sku: 'CJ-008',
     base_price: '729.00',
-    image_url: null,
+
     is_available: false,
     is_featured: false,
     preparation_time_minutes: 18,
@@ -218,10 +257,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 2,
     name: 'Yumburger',
     slug: 'yumburger',
+    image_url: '/images/menu/yumburger.svg',
     description: 'Flame-grilled beef patty, cheese, lettuce, special sauce.',
     sku: 'BG-001',
     base_price: '89.00',
-    image_url: null,
+
     is_available: true,
     is_featured: false,
     preparation_time_minutes: 6,
@@ -235,10 +275,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 2,
     name: 'Champ Burger',
     slug: 'champ-burger',
+    image_url: '/images/menu/champ-burger.svg',
     description: 'Double patty, ham, cheese and barbecue sauce.',
     sku: 'BG-002',
     base_price: '179.00',
-    image_url: null,
+
     is_available: true,
     is_featured: true,
     preparation_time_minutes: 10,
@@ -252,10 +293,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 2,
     name: 'Chicken & Burger Combo',
     slug: 'chicken-burger-combo',
+    image_url: '/images/menu/chicken-burger-combo.svg',
     description: 'Chickenjoy 1pc and a Yumburger with a drink.',
     sku: 'BG-003',
     base_price: '249.00',
-    image_url: null,
+
     is_available: true,
     is_featured: true,
     preparation_time_minutes: 12,
@@ -269,10 +311,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 3,
     name: 'Burger Steak',
     slug: 'burger-steak',
+    image_url: '/images/menu/burger-steak.svg',
     description: 'Beef patty over garlic-flavoured rice.',
     sku: 'RM-001',
     base_price: '139.00',
-    image_url: null,
+
     is_available: true,
     is_featured: false,
     preparation_time_minutes: 9,
@@ -286,10 +329,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 3,
     name: '1pc Burger Steak Solo',
     slug: 'burger-steak-solo',
+    image_url: '/images/menu/burger-steak-solo.svg',
     description: 'Single serving with a side of rice.',
     sku: 'RM-002',
     base_price: '99.00',
-    image_url: null,
+
     is_available: true,
     is_featured: false,
     preparation_time_minutes: 8,
@@ -303,10 +347,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 3,
     name: 'Chickenjoy 2pc Rice Meal',
     slug: 'chickenjoy-2pc-rice-meal',
+    image_url: '/images/menu/chickenjoy-2pc-rice-meal.svg',
     description: 'Two pieces chicken with java rice.',
     sku: 'RM-003',
     base_price: '259.00',
-    image_url: null,
+
     is_available: false,
     is_featured: false,
     preparation_time_minutes: 13,
@@ -320,10 +365,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 4,
     name: 'Jolly Spaghetti',
     slug: 'jolly-spaghetti',
+    image_url: '/images/menu/jolly-spaghetti.svg',
     description: 'Sweet-style spaghetti with the iconic red sauce.',
     sku: 'PS-001',
     base_price: '99.00',
-    image_url: null,
+
     is_available: true,
     is_featured: true,
     preparation_time_minutes: 10,
@@ -337,10 +383,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 4,
     name: 'Spaghetti Aglio Olio',
     slug: 'spaghetti-agnolio',
+    image_url: '/images/menu/spaghetti-agnolio.svg',
     description: 'Garlic, olive oil, chilli flakes and parsley.',
     sku: 'PS-002',
     base_price: '119.00',
-    image_url: null,
+
     is_available: true,
     is_featured: false,
     preparation_time_minutes: 11,
@@ -354,10 +401,13 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 5,
     name: 'Crispy Fries',
     slug: 'crispy-fries',
+    image_url: '/images/menu/crispy-fries.svg',
     description: 'Seasoned fries with ketchup on the side.',
     sku: 'SD-001',
-    base_price: '59.00',
-    image_url: null,
+    // Priced to match mobile, which values "Free Regular Fries" at ₱79.00.
+    // Previously 59.00 here and ₱79 there — reconciled 2026-09-29.
+    base_price: '79.00',
+
     is_available: true,
     is_featured: false,
     preparation_time_minutes: 5,
@@ -371,10 +421,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 5,
     name: 'Jolly Fries Bucket',
     slug: 'jolly-fries-bucket',
+    image_url: '/images/menu/jolly-fries-bucket.svg',
     description: 'Sharing bucket with two dips.',
     sku: 'SD-002',
     base_price: '149.00',
-    image_url: null,
+
     is_available: true,
     is_featured: false,
     preparation_time_minutes: 7,
@@ -388,10 +439,11 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 6,
     name: 'Sotanghon',
     slug: 'sotanghon',
+    image_url: '/images/menu/sotanghon.svg',
     description: 'Classic Filipino egg noodle soup.',
     sku: 'DR-001',
     base_price: '49.00',
-    image_url: null,
+
     is_available: true,
     is_featured: false,
     preparation_time_minutes: 5,
@@ -405,16 +457,59 @@ export const mockMenuItems: MenuItem[] = [
     category_id: 6,
     name: 'Coke Float',
     slug: 'coke-float',
+    image_url: '/images/menu/coke-float.svg',
     description: 'Chilled soda with a scoop of vanilla ice cream.',
     sku: 'DR-002',
     base_price: '65.00',
-    image_url: null,
+
     is_available: true,
     is_featured: true,
     preparation_time_minutes: 4,
     calories: 310,
     created_at: iso('2026-09-15T02:35:00+08:00'),
     updated_at: iso('2026-09-15T02:35:00+08:00'),
+    deleted_at: null,
+  },
+
+  // ---- Added to back rewards 5 and 6 ----
+  // These two existed only as rewards on mobile
+  // (mobile/src/app/(tabs)/rewards.tsx:58-72) with no matching catalogue entry,
+  // so `free_item` rewards had a null menu_item_id. Added 2026-09-29 with the
+  // cash values mobile implied, so the redemption can be honoured.
+  {
+    id: 17,
+    category_id: 7,
+    name: 'Peach Mango Pie',
+    slug: 'peach-mango-pie',
+    image_url: '/images/menu/peach-mango-pie.svg',
+    description: 'Warm flaky crust with sweet mango filling.',
+    sku: 'DS-001',
+    base_price: '45.00',
+
+    is_available: true,
+    is_featured: true,
+    preparation_time_minutes: 3,
+    calories: 280,
+    created_at: iso('2026-09-29T04:10:00+08:00'),
+    updated_at: iso('2026-09-29T04:10:00+08:00'),
+    deleted_at: null,
+  },
+  {
+    id: 18,
+    category_id: 7,
+    name: 'Sundae Cup',
+    slug: 'sundae-cup',
+    image_url: '/images/menu/sundae-cup.svg',
+    description: 'Classic soft-serve in a cup.',
+    sku: 'DS-002',
+    base_price: '39.00',
+
+    is_available: true,
+    is_featured: false,
+    preparation_time_minutes: 2,
+    calories: 210,
+    created_at: iso('2026-09-29T04:11:00+08:00'),
+    updated_at: iso('2026-09-29T04:11:00+08:00'),
     deleted_at: null,
   },
 ]
@@ -448,72 +543,4 @@ export function categoryName(id: number): string {
  * customer must pick exactly one option; 'multiple' + min/max_select bounds it.
  * ---------------------------------------------------------------------- */
 
-export const mockVariantGroups: VariantGroup[] = [
-  {
-    id: 1, menu_item_id: 2, name: 'Rice choice', selection_type: 'single', is_required: true,
-    min_select: 1, max_select: 1, sort_order: 1,
-  },
-  {
-    id: 2, menu_item_id: 2, name: 'Pieces', selection_type: 'single', is_required: true,
-    min_select: 1, max_select: 1, sort_order: 2,
-  },
-  {
-    id: 3, menu_item_id: 8, name: 'Protein', selection_type: 'single', is_required: true,
-    min_select: 1, max_select: 1, sort_order: 1,
-  },
-  {
-    id: 4, menu_item_id: 16, name: 'Size', selection_type: 'single', is_required: false,
-    min_select: 1, max_select: 1, sort_order: 1,
-  },
-  {
-    id: 5, menu_item_id: 7, name: 'Extras', selection_type: 'multiple', is_required: false,
-    min_select: 0, max_select: 3, sort_order: 1,
-  },
-]
 
-export const mockVariantOptions: VariantOption[] = [
-  { id: 1, variant_group_id: 1, name: 'Java rice', price_delta: '0.00', is_default: true, is_available: true, sort_order: 1 },
-  { id: 2, variant_group_id: 1, name: 'Garlic rice', price_delta: '8.00', is_default: false, is_available: true, sort_order: 2 },
-  { id: 3, variant_group_id: 1, name: 'Pancit noodles', price_delta: '15.00', is_default: false, is_available: true, sort_order: 3 },
-  { id: 4, variant_group_id: 2, name: '2 pieces', price_delta: '0.00', is_default: true, is_available: true, sort_order: 1 },
-  { id: 5, variant_group_id: 2, name: '3 pieces', price_delta: '50.00', is_default: false, is_available: true, sort_order: 2 },
-  { id: 6, variant_group_id: 3, name: 'Beef patty', price_delta: '0.00', is_default: true, is_available: true, sort_order: 1 },
-  { id: 7, variant_group_id: 3, name: 'Chicken fillet', price_delta: '-15.00', is_default: false, is_available: true, sort_order: 2 },
-  { id: 8, variant_group_id: 3, name: 'Longganisa', price_delta: '12.00', is_default: false, is_available: true, sort_order: 3 },
-  { id: 9, variant_group_id: 4, name: 'Regular', price_delta: '0.00', is_default: true, is_available: true, sort_order: 1 },
-  { id: 10, variant_group_id: 4, name: 'Large', price_delta: '12.00', is_default: false, is_available: true, sort_order: 2 },
-  { id: 11, variant_group_id: 5, name: 'Cheese slice', price_delta: '18.00', is_default: false, is_available: true, sort_order: 1 },
-  { id: 12, variant_group_id: 5, name: 'Extra dip', price_delta: '8.00', is_default: false, is_available: true, sort_order: 2 },
-  { id: 13, variant_group_id: 5, name: 'Egg', price_delta: '15.00', is_default: false, is_available: true, sort_order: 3 },
-  { id: 14, variant_group_id: 5, name: 'Mashed potato', price_delta: '20.00', is_default: false, is_available: false, sort_order: 4 },
-]
-
-/** Resolves the nested shape `GET /api/menu` returns for a single item. */
-export function variantsFor(menuItemId: number): Array<VariantGroup & { options: VariantOption[] }> {
-  return mockVariantGroups
-    .filter((group) => group.menu_item_id === menuItemId)
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .map((group) => ({
-      ...group,
-      options: mockVariantOptions
-        .filter((option) => option.variant_group_id === group.id)
-        .sort((a, b) => a.sort_order - b.sort_order),
-    }))
-}
-
-/**
- * Effective unit price = base_price + Σ selected option deltas.
- * All deltas are strings, so everything stays in string arithmetic until the
- * final format() — this is why `number` coercion happens exactly once, here.
- */
-export function priceWith(basePrice: string, deltas: string[]): string {
-  const base = Number(basePrice)
-  return deltas.reduce((sum, delta) => sum + Number(delta), base).toFixed(2)
-}
-
-/** Cheap sanity check that every group referenced actually has options. */
-for (const group of mockVariantGroups) {
-  if (mockVariantOptions.every((option) => option.variant_group_id !== group.id)) {
-    throw new Error(`Mock data integrity failure: variant group ${group.id} has no options`)
-  }
-}

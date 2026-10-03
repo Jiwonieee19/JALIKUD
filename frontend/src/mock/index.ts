@@ -6,36 +6,28 @@
  * The frontend is being built design-first. Every screen is fed from this
  * folder so it renders with NO backend running. Whoever wires the real API
  * should replace the imports in src/pages/* with calls to src/services/api
- * (or the service layer) and can then delete this directory.
+ * and can then delete this directory.
  *
  * The mapping of mock -> real endpoint lives in docs/API_WIRING.md.
  *
  * ⚠️ Every mock object is typed against src/types.ts, which mirrors the
  * Laravel serialisers. If you change a shape here, change it there too, or
  * the real API will not line up on integration day.
+ *
+ * Only exports that a page actually consumes live here — if you add one, wire
+ * it up or leave it in its own module rather than re-exporting it here.
  */
 
 export { mockAdminUsers, mockCurrentUser, paginate, type Paginated } from './users'
-export {
-  mockCategories,
-  mockMenuItems,
-  categoryName,
-  findMenuItem,
-  mockVariantGroups,
-  mockVariantOptions,
-  variantsFor,
-  priceWith,
-} from './menu'
+export { mockCategories, mockMenuItems, categoryName, findMenuItem } from './menu'
 export { mockOrders, mockRiders } from './orders'
 export { mockCoupons, mockStoreSetting } from './store'
+export { mockRewards, mockRedemptions, rewardItemName } from './rewards'
 export {
   mockOverview,
   mockRecentOrders,
   mockRevenueSeries,
   mockSoldOutItems,
-  mockActiveCoupons,
-  mockHourlyOrders,
-  mockDerivedMetrics,
 } from './overview'
 
 /** Philippine peso formatting. Use this anywhere money is displayed. */
