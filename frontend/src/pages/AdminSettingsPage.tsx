@@ -21,6 +21,7 @@ import type { StoreSetting } from '../types'
  */
 
 type Draft = {
+  store_name: string
   is_open: boolean
   accepts_delivery: boolean
   accepts_pickup: boolean
@@ -34,6 +35,10 @@ type Draft = {
 function toDraft(setting: StoreSetting): Draft {
   const toTimeInput = (value: string | null) => (value ?? '08:00').slice(0, 5)
   return {
+    // StoreSettingController@update marks store_name REQUIRED
+    // (backend/app/Http/Controllers/StoreSettingController.php:24), so it has
+    // to be part of the submitted payload — not just an uncontrolled input.
+    store_name: setting.store_name,
     is_open: setting.is_open,
     accepts_delivery: setting.accepts_delivery,
     accepts_pickup: setting.accepts_pickup,
@@ -54,6 +59,31 @@ export default function AdminSettingsPage() {
     setSaved(false)
   }
 
+  /**
+   * TODO(next-dev): wire this to the real endpoint.
+   *
+   *   PUT /api/admin/store-setting      body: the full draft object
+   *
+   * StoreSettingController@update (backend/…/StoreSettingController.php:23-33)
+   * validates:
+   *   store_name       required, string, max:150
+   *   is_open          boolean
+   *   accepts_delivery boolean
+   *   accepts_pickup   boolean
+   *   min_order_amount nullable numeric min:0
+   *   delivery_fee     nullable numeric min:0
+   *   tax_rate_percent nullable numeric min:0
+   *   opening_time     nullable date_format:H:i   ← "HH:MM", not "HH:MM:SS"
+   *   closing_time     nullable date_format:H:i
+   *
+   * Note opening_time/closing_time use `date_format:H:i`, so the <input
+   * type="time"> values (already HH:MM) are correct as-is — do not append
+   * ":00" or the request 422s.
+   */
+  async function handleSave() {
+    setSaved(true)
+  }
+
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -67,7 +97,7 @@ export default function AdminSettingsPage() {
         </div>
         <div className="flex items-center gap-3">
           {saved && <Badge tone="success">Saved</Badge>}
-          <Button onClick={() => setSaved(true)}>Save changes</Button>
+          <Button onClick={() => void handleSave()}>Save changes</Button>
         </div>
       </header>
 
@@ -78,7 +108,11 @@ export default function AdminSettingsPage() {
               <Label htmlFor="st-name" className="mb-1.5">
                 Store name
               </Label>
-              <Input id="st-name" defaultValue={mockStoreSetting.store_name} />
+              <Input
+                id="st-name"
+                value={draft.store_name}
+                onChange={(event) => update('store_name', event.target.value)}
+              />
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               Last updated {formatDateTime(mockStoreSetting.updated_at)}

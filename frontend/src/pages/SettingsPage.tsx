@@ -8,6 +8,20 @@ import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
 import ThemeToggle from '../components/ui/ThemeToggle'
 
+/**
+ * ⚠️ THIS PAGE IS NOT MOCKED — it is the one remaining screen that calls the
+ * real API, because PUT /api/profile and PUT /api/password both exist on the
+ * backend and are worth exercising. Saving either form will fail while no
+ * backend is running on :8000.
+ *
+ * TODO(next-dev): if you want this page standalone like the others, add
+ * src/mock/accountApi.ts (see API_WIRING.md § "Auth") and swap the two calls
+ * below.
+ *
+ * `name` is a single field because the backend has a single `name` column —
+ * there is no first_name / last_name anywhere. See docs/ACCOUNT_LIFECYCLE.md.
+ */
+
 interface ValidationErrors {
   name?: string[]
   email?: string[]

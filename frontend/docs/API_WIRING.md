@@ -104,7 +104,7 @@ See §4 — **the endpoint does not exist yet.**
 
 ## 4. Endpoints that do not exist yet
 
-These three are invented for design purposes. They need backend work before the
+These are invented for design purposes. They need backend work before the
 matching screens can go live.
 
 ### `GET /api/admin/overview`
@@ -114,9 +114,9 @@ bottom of `src/types.ts`. There is no stats route in `backend/routes/api.php`.
 Suggested implementation: one aggregate query returning `revenue_today`,
 `orders_today`, `active_orders`, `completed_today`, `cancelled_today`,
 `pending_orders`, `sold_out_items`, `menu_items_total`, rider counts by status,
-and `store_open`. See the `sql` sketch in `backend/DATABASE_SCHEMA.md` if useful.
+and `store_open`. `mockRevenueSeries` needs a second aggregate grouped by date.
 
-`mockRevenueSeries` (7-day chart) needs a second aggregate grouped by date.
+Note revenue should exclude cancelled orders — refunded money is not revenue.
 
 ### `POST/PUT /api/admin/orders/{order}/rider`
 The "Assign a rider" modal on the Orders page is entirely mock. The schema
@@ -127,6 +127,14 @@ Needs:
 - `GET /admin/riders` — returns `RiderProfile[]` (`src/types.ts`), filterable by `status`
 - `PUT /admin/orders/{order}/rider` — body `{ rider_id }`, should also stamp `assigned_at`
 
+### Rider self-service — `GET /api/rider/deliveries`
+Riders currently have no endpoints whatsoever. `RiderProfile` has zero routes.
+
+Needs `GET /rider/deliveries`, `GET /rider/deliveries/{order}`, and
+`PUT /rider/deliveries/{order}/status`. Also needs an `EnsureRider` middleware —
+`User::isRider()` exists but is never called, and `bootstrap/app.php` registers no
+middleware aliases at all.
+
 ### Rewards / redemption — `/admin/rewards`
 **Nothing exists.** No `Reward` model, no migration, no endpoint. It is named in
 the project proposal three times, and `backend/DATABASE_SCHEMA.md` designs three
@@ -135,6 +143,106 @@ nothing is built. The route currently renders a placeholder.
 
 The mobile app has a static demo at `mobile/src/app/(tabs)/rewards.tsx`
 (2450 points, 6 redeemables) worth using as a starting point.
+
+### Variant groups — no write endpoints
+`MenuItemController@index` eager-loads `variantGroups.options`
+(`MenuItemController.php:21`) and the tables exist, but `VariantGroup` and
+`VariantOption` have **zero routes**. Variants are read-only today. Writing them
+needs `POST/PUT/DELETE /admin/menu-items/{item}/variant-groups` and
+`POST/PUT/DELETE /admin/variant-groups/{group}`.
+
+---
+
+## 4b. Existing endpoints that need changing
+
+These **do** exist but are too thin for the screens already built against them.
+Verified by reading the controllers, not inferred.
+
+### `GET /api/admin/orders` — missing eager loads
+```php
+// backend/app/Http/Controllers/OrderController.php:22-29
+$query = Order::query()->orderByDesc('placed_at');
+...
+$orders = $query->paginate($request->perPage(10));
+```
+Only `show()` calls `->with([...])` (`:40`). The Orders table renders the
+customer name and item count per row, both of which will be blank. Needs at
+minimum:
+```php
+->with(['user:id,name', 'rider:id,name', 'orderItems:id,order_id'])
+```
+
+### `GET /api/admin/orders` — no status/search filters
+`PaginationRequest` (`app/Http/Requests/General/PaginationRequest.php:20-21`)
+accepts **only** `page` and `per_page`. The Orders page filters status and search
+in the browser, which silently only ever filters page 1.
+
+Two options:
+- add `status` + `search` filters to `OrderController@index` **and** pagination
+  UI to the page, or
+- request `per_page=100` and keep client-side filtering — sensible if one
+  restaurant only handles hundreds of orders per year
+
+### `GET /api/menu` — no search, 15 per page
+```php
+// backend/app/Http/Controllers/MenuItemController.php:17-23
+```
+Supports `category_id`, `available`, `featured` and eager-loads `category` +
+`variantGroups.options`. But there is **no search term**, and it returns 15 per
+page. The Menu page has a free-text search and shows all rows at once.
+
+Same two options: add `search` + pagination UI, or `per_page=100` + client filter.
+
+### `POST /api/admin/menu-items` — `slug` is required
+```php
+// backend/app/Http/Controllers/MenuItemController.php:40
+'slug' => ['required', 'string', 'max:180', 'unique:menu_items,slug'],
+```
+The create/edit form has no slug input. Either add the field, slugify client-side,
+or have the backend derive it. Same for categories
+(`CategoryController.php:39`).
+
+### `orders.order_number` has no generator
+The migration declares `varchar(30) UNIQUE` and nothing more
+(`database/migrations/2026_09_15_000012_create_orders_table.php:14`). No
+generator exists anywhere. The fixtures use the mobile app's `JAL-2300NN`
+pattern — decide whether the backend keeps that format.
+
+### `users.name` width mismatch
+```php
+// database/migrations/…_000001_create_users_table.php:14
+$table->string('name', 150);
+// but RegisterRequest / UpdateProfileRequest / StoreUserRequest all say:
+'name' => ['required', 'string', 'max:255', 'min:2'],
+```
+Laravel will validate 200 characters and then Postgres will reject or truncate.
+Widen the column or tighten the rules. See also [`ACCOUNT_LIFECYCLE.md`](./ACCOUNT_LIFECYCLE.md).
+
+### `name` is a single field — do not split it
+There is **no** `first_name` / `last_name` column anywhere in the backend. All
+forms collect one "Full name" input and send one `name` value. A first/last split
+was tried and deliberately reverted to keep the forms aligned with the schema.
+
+Consequence worth knowing: you cannot sort or search users by surname, and
+"greeting by first name" is only a heuristic because `name` is a free string.
+
+### `PUT /api/admin/store-setting` requires `store_name`
+`store_name` is `required` (`StoreSettingController.php:24`) — easy to 422 if you
+build the payload from only the fields the form visibly changed. Already handled
+in `AdminSettingsPage`; noted so it isn't reintroduced.
+
+`store_settings` is a **singleton** — no `store_id`, no `branch_id`, and zero
+occurrences of `branch`/`tenant` anywhere in the backend. `StoreSettingController`
+uses `StoreSetting::first()`. So `store_name` is simply the display label the
+customer app shows in its header; there is exactly one store.
+
+⚠️ Mobile currently hardcodes this instead of reading it:
+`mobile/src/app/(tabs)/menu.tsx:114` (`"SM Lanang Premier"`) and
+`mobile/src/app/rider/deliveries.tsx:24` (`JALIKUD — SM Lanang Premier`). Those
+should come from `GET /store-setting`.
+
+Also: `opening_time` / `closing_time` use `date_format:H:i` (`:31-32`), so send
+`"08:00"`, never `"08:00:00"`.
 
 ---
 
@@ -195,3 +303,11 @@ because nobody wrote down what the swap was supposed to be.
 
 That is the only reason this file exists. Keep it updated as you wire things up,
 or the same thing will happen here.
+
+---
+
+## 8. See also
+
+- [`ACCOUNT_LIFECYCLE.md`](./ACCOUNT_LIFECYCLE.md) — who can create an account
+  with which role, plus three gaps in the current logic (mass-assignable `role`,
+  missing `rider_profiles` row, unused `isRider()`)

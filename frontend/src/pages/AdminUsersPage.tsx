@@ -4,6 +4,7 @@ import type { AdminUser } from '../types'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import Input from '../components/ui/Input'
+import Select from '../components/ui/Select'
 import Label from '../components/ui/Label'
 
 /**
@@ -118,7 +119,13 @@ export default function AdminUsersPage() {
           ...(form.password ? { password: form.password } : {}),
         })
       } else {
-        await mockAdminUsersApi.store(form)
+        await mockAdminUsersApi.store({
+          name: form.name,
+          email: form.email,
+          phone: form.phone || null,
+          role: form.role,
+          ...(form.password ? { password: form.password } : {}),
+        })
       }
       closeModal()
       await fetchUsers()
@@ -213,7 +220,7 @@ export default function AdminUsersPage() {
                         <span
                           className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
                             u.role === 'admin'
-                              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-400'
+                              ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400'
                               : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                           }`}
                         >
@@ -351,25 +358,24 @@ export default function AdminUsersPage() {
                   </p>
                 )}
               </div>
-              <div>
-                <Label htmlFor="au-role" className="mb-1.5">
-                  Role
-                </Label>
-                <select
-                  id="au-role"
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value as FormState['role'] })}
-                  className="block w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600 dark:bg-slate-800 dark:text-white dark:ring-slate-700"
-                >
-                                    <option value="customer">customer</option>
-                  <option value="staff">staff</option>
-                  <option value="admin">admin</option>
-                  <option value="rider">rider</option>
-                </select>
-                {formErrors.role && (
-                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.role}</p>
-                )}
-              </div>
+<div>
+                  <Label htmlFor="au-role" className="mb-1.5">
+                    Role
+                  </Label>
+                  <Select
+                    id="au-role"
+                    value={form.role}
+                    onChange={(e) => setForm({ ...form, role: e.target.value as FormState['role'] })}
+                  >
+                    <option value="customer">customer</option>
+                    <option value="staff">staff</option>
+                    <option value="admin">admin</option>
+                    <option value="rider">rider</option>
+                  </Select>
+                  {formErrors.role && (
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.role}</p>
+                  )}
+                </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="secondary" onClick={closeModal}>
                   Cancel

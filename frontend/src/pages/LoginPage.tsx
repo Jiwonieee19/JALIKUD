@@ -49,7 +49,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         <div className="rounded-2xl bg-white p-8 shadow-xl ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 sm:p-10">
           <div className="mb-8 text-center">
-            <h1 className="text-3xl font-bold tracking-widest text-indigo-600 dark:text-indigo-400">
+            <h1 className="text-3xl font-extrabold tracking-widest text-red-600 dark:text-red-400">
               JALIKUD
             </h1>
             <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
@@ -111,7 +111,7 @@ export default function LoginPage() {
             Don't have an account?{' '}
             <Link
               to="/register"
-              className="font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+              className="font-bold text-red-600 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300"
             >
               Sign up
             </Link>

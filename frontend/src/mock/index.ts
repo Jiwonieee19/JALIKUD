@@ -16,7 +16,16 @@
  */
 
 export { mockAdminUsers, mockCurrentUser, paginate, type Paginated } from './users'
-export { mockCategories, mockMenuItems, categoryName, findMenuItem } from './menu'
+export {
+  mockCategories,
+  mockMenuItems,
+  categoryName,
+  findMenuItem,
+  mockVariantGroups,
+  mockVariantOptions,
+  variantsFor,
+  priceWith,
+} from './menu'
 export { mockOrders, mockRiders } from './orders'
 export { mockCoupons, mockStoreSetting } from './store'
 export {
@@ -24,7 +33,9 @@ export {
   mockRecentOrders,
   mockRevenueSeries,
   mockSoldOutItems,
-  mockStaffAndAdmins,
+  mockActiveCoupons,
+  mockHourlyOrders,
+  mockDerivedMetrics,
 } from './overview'
 
 /** Philippine peso formatting. Use this anywhere money is displayed. */
