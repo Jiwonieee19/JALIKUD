@@ -1,14 +1,27 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import api from '../services/api'
+import { mockAdminUsersApi } from '../mock/adminUsersApi'
 import type { AdminUser } from '../types'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import Input from '../components/ui/Input'
+import Select from '../components/ui/Select'
 import Label from '../components/ui/Label'
 
-interface ListResponse {
-  data: AdminUser[]
-  meta: { current_page: number; last_page: number; per_page: number; total: number }
+/**
+ * Data now comes from src/mock/adminUsersApi.ts so this page renders with no
+ * backend. To go live, delete that import and restore `import api from
+ * '../services/api'` — the four call sites below are already written against
+ * the real endpoint contracts. See docs/API_WIRING.md.
+ *
+ * `meta` is kept typed against Laravel's paginator envelope
+ * ({ current_page, last_page, per_page, total }) so the swap is mechanical.
+ */
+
+interface PaginatorMeta {
+  current_page: number
+  last_page: number
+  per_page: number
+  total: number
 }
 
 interface FormState {
@@ -23,7 +36,7 @@ const emptyForm: FormState = { name: '', email: '', phone: '', password: '', rol
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
-  const [meta, setMeta] = useState<ListResponse['meta'] | null>(null)
+  const [meta, setMeta] = useState<PaginatorMeta | null>(null)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
@@ -38,11 +51,12 @@ export default function AdminUsersPage() {
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await api.get<ListResponse>('/admin/users', {
-        params: { search: search || undefined, page },
+      const response = await mockAdminUsersApi.list({
+        search: search || undefined,
+        page,
       })
-      setUsers(response.data.data)
-      setMeta(response.data.meta)
+      setUsers(response.data)
+      setMeta(response.meta)
       setError('')
     } catch {
       setError('Failed to load users.')
@@ -97,7 +111,7 @@ export default function AdminUsersPage() {
     setFormErrors({})
     try {
       if (editing) {
-        await api.put(`/admin/users/${editing.id}`, {
+        await mockAdminUsersApi.update(editing.id, {
           name: form.name,
           email: form.email,
           phone: form.phone || null,
@@ -105,7 +119,13 @@ export default function AdminUsersPage() {
           ...(form.password ? { password: form.password } : {}),
         })
       } else {
-        await api.post('/admin/users', form)
+        await mockAdminUsersApi.store({
+          name: form.name,
+          email: form.email,
+          phone: form.phone || null,
+          role: form.role,
+          ...(form.password ? { password: form.password } : {}),
+        })
       }
       closeModal()
       await fetchUsers()
@@ -120,7 +140,7 @@ export default function AdminUsersPage() {
     if (!window.confirm(`Delete ${user.email}? This cannot be undone.`)) return
     setDeletingId(user.id)
     try {
-      await api.delete(`/admin/users/${user.id}`)
+      await mockAdminUsersApi.destroy(user.id)
       await fetchUsers()
     } catch (err) {
       alert(extractFieldError(err).form)
@@ -200,7 +220,7 @@ export default function AdminUsersPage() {
                         <span
                           className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
                             u.role === 'admin'
-                              ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-400'
+                              ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400'
                               : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                           }`}
                         >
@@ -338,25 +358,24 @@ export default function AdminUsersPage() {
                   </p>
                 )}
               </div>
-              <div>
-                <Label htmlFor="au-role" className="mb-1.5">
-                  Role
-                </Label>
-                <select
-                  id="au-role"
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value as FormState['role'] })}
-                  className="block w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-indigo-600 dark:bg-slate-800 dark:text-white dark:ring-slate-700"
-                >
-                                    <option value="customer">customer</option>
-                  <option value="staff">staff</option>
-                  <option value="admin">admin</option>
-                  <option value="rider">rider</option>
-                </select>
-                {formErrors.role && (
-                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.role}</p>
-                )}
-              </div>
+<div>
+                  <Label htmlFor="au-role" className="mb-1.5">
+                    Role
+                  </Label>
+                  <Select
+                    id="au-role"
+                    value={form.role}
+                    onChange={(e) => setForm({ ...form, role: e.target.value as FormState['role'] })}
+                  >
+                    <option value="customer">customer</option>
+                    <option value="staff">staff</option>
+                    <option value="admin">admin</option>
+                    <option value="rider">rider</option>
+                  </Select>
+                  {formErrors.role && (
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.role}</p>
+                  )}
+                </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button type="button" variant="secondary" onClick={closeModal}>
                   Cancel

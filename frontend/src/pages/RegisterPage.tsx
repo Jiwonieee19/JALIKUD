@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
+import Logo from '../components/ui/Logo'
 
 interface ValidationErrors {
   name?: string[]
@@ -14,7 +15,8 @@ interface ValidationErrors {
 
 export default function RegisterPage() {
   const { register } = useAuth()
-    const [name, setName] = useState('')
+  const navigate = useNavigate()
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
@@ -35,9 +37,13 @@ export default function RegisterPage() {
 
     try {
       await register(name, email, password, passwordConfirmation, phone)
+      navigate('/dashboard', { replace: true })
     } catch (err: unknown) {
       type AxiosLikeError = {
-        response?: { status?: number; data?: { message?: string; errors?: ValidationErrors } }
+        response?: {
+          status?: number
+          data?: { message?: string; errors?: Record<string, string[]> }
+        }
       }
       const axiosError = err as AxiosLikeError
       if (axiosError?.response?.status === 422) {
@@ -57,11 +63,10 @@ export default function RegisterPage() {
     <div className="flex min-h-full items-center justify-center bg-slate-50 p-4 dark:bg-slate-950">
       <div className="w-full max-w-md">
         <div className="rounded-2xl bg-white p-8 shadow-xl ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800 sm:p-10">
-          <div className="mb-8 text-center">
-            <h1 className="text-3xl font-bold tracking-widest text-indigo-600 dark:text-indigo-400">
-              JALIKUD
-            </h1>
-            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+          <div className="mb-8 flex flex-col items-center text-center">
+            <Logo heightClass="h-16" />
+            <h1 className="sr-only">JALIKUD</h1>
+            <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
               Create a new account to get started
             </p>
           </div>
@@ -168,7 +173,7 @@ export default function RegisterPage() {
             Already have an account?{' '}
             <Link
               to="/login"
-              className="font-semibold text-indigo-600 hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+              className="font-bold text-red-600 hover:text-red-500 dark:text-red-400 dark:hover:text-red-300"
             >
               Sign in
             </Link>

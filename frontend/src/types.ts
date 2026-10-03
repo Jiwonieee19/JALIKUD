@@ -243,3 +243,114 @@ export interface Order {
   payments?: Payment[]
   reviews?: Review[]
 }
+
+/* -------------------------------------------------------------------------
+ * Types below have NO backend contract yet. They are defined here so the
+ * frontend can be designed against them; whoever wires the API should keep
+ * these shapes or update them in one place.
+ * See docs/API_WIRING.md.
+ * ---------------------------------------------------------------------- */
+
+export type RiderStatus = 'available' | 'on_delivery' | 'offline'
+
+export interface RiderProfile {
+  id: number
+  user_id: number
+  vehicle: string | null
+  license_plate: string | null
+  status: RiderStatus
+  is_active: boolean
+  completed_today: number
+  user?: User
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface RiderAssignment {
+  order_id: number
+  rider_id: number
+  assigned_at: string
+  rider?: RiderProfile
+}
+
+export interface AdminOverview {
+  revenue_today: string
+  orders_today: number
+  active_orders: number
+  completed_today: number
+  cancelled_today: number
+  pending_orders: number
+  sold_out_items: number
+  menu_items_total: number
+  riders_available: number
+  riders_on_delivery: number
+  riders_offline: number
+  store_open: boolean
+  generated_at: string
+}
+
+/* -------------------------------------------------------------------------
+ * REWARDS
+ *
+ * ⚠️ NO BACKEND SUPPORT EXISTS — no model, no migration, no endpoint. The
+ * previous schema draft (DATABASE_SCHEMA.md) was deleted in commit 14dd219 and
+ * README.md still links to it broken. These types are reconstructed from:
+ *   - the mobile catalogue at mobile/src/app/(tabs)/rewards.tsx:24-73
+ *   - what the deleted draft specified (rewards / reward_redemptions /
+ *     reward_point_transactions)
+ * Treat them as the proposal of record. See docs/API_WIRING.md.
+ * ---------------------------------------------------------------------- */
+
+/** `free_item` ships a menu item free, `voucher` is money off the order. */
+export type RewardType = 'free_item' | 'voucher'
+
+export type RewardRedemptionStatus = 'issued' | 'used' | 'expired' | 'revoked'
+
+export interface Reward {
+  id: number
+  title: string
+  description: string | null
+  type: RewardType
+  /** Mobile called this `points`. Points are an integer count, never money. */
+  points_required: number
+  /** Mobile called this `worth`. decimal(12,2) → STRING. Null for non-cash. */
+  monetary_value: string | null
+  /** Required when type === 'free_item'. FK menu_items, nullOnDelete. */
+  menu_item_id: number | null
+  /** null = unlimited. Decremented on redemption, must lock to avoid oversell. */
+  stock: number | null
+  /** Mobile renders emoji; optional since the web UI uses text + badges. */
+  emoji: string | null
+  is_active: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** One customer's redeemed reward. `code` is unique and what they present. */
+export interface RewardRedemption {
+  id: number
+  reward_id: number
+  user_id: number
+  code: string
+  status: RewardRedemptionStatus
+  points_spent: number
+  redeemed_at: string | null
+  used_at: string | null
+  expires_at: string | null
+  reward?: Reward
+  user?: User
+}
+
+/**
+ * Append-only signed ledger. One row per earn or spend.
+ * Positive = earned, negative = spent. Never UPDATE these rows.
+ */
+export interface RewardPointTransaction {
+  id: number
+  user_id: number
+  order_id: number | null
+  points: number
+  reason: 'earned' | 'spent' | 'reversed' | 'adjusted'
+  balance_after: number
+  created_at: string
+}
