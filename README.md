@@ -265,11 +265,30 @@ The database schema is managed by **Laravel migrations**:
 
 | Migration | What it creates |
 | --------- | --------------- |
-| `create_users_table` | users (name, email, password, remember token) |
-| `create_cache_table`  | cache store (Laravel cache is DB-backed) |
-| `create_jobs_table`   | queue jobs/failed jobs |
-| `create_personal_access_tokens_table` | Sanctum token storage |
-| `add_role_to_users_table` | adds `enum('user','admin')` role to users |
+| `create_users_table` | `users` — accounts and roles (`customer`/`staff`/`admin`/`rider`) |
+| `create_addresses_table` | `addresses` — saved delivery addresses |
+| `create_rider_profiles_table` | `rider_profiles` — vehicle/photo details per rider |
+| `create_categories_table` | `categories` — menu sections (self-referencing hierarchy) |
+| `create_menu_items_table` | `menu_items` — products with prices and availability |
+| `create_variant_groups_table`, `create_variant_options_table` | `variant_groups` / `variant_options` — Size, Add-ons, etc. |
+| `create_coupons_table` | `coupons` — discount codes and limits |
+| `create_carts_table`, `create_cart_items_table`, `create_cart_item_options_table` | `carts`, `cart_items`, `cart_item_options` |
+| `create_orders_table`, `create_order_items_table`, `create_order_item_options_table`, `create_order_status_history_table` | `orders`, `order_items`, `order_item_options`, `order_status_history` |
+| `create_coupon_redemptions_table` | `coupon_redemptions` — proof of coupon use per order |
+| `create_payments_table` | `payments` — payment attempts and gateway responses |
+| `create_reviews_table` | `reviews` — ratings/comments (1–5) |
+| `create_store_settings_table` | `store_settings` — single-row store configuration |
+| `create_personal_access_tokens_table` | Sanctum API token storage |
+| `create_framework_tables` | Laravel cache / queue / session tables |
+
+### Database design documents
+
+| Document | Content |
+| -------- | ------- |
+| [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md) | Complete data dictionary: every table, attribute, data type, length, PK/FK, nullability, purpose, keys/constraints, relationship map and normalization evidence |
+| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | Data model: Mermaid ERD, cardinality matrix, M—N resolution, normalization summary |
+| [`docs/DATA_MODEL.drawio`](docs/DATA_MODEL.drawio) | Editable diagram (draw.io): page 1 ERD with PK/FK and crow's-foot cardinality, page 2 normalization evidence |
+| [`DATABASE_SCHEMA.md`](DATABASE_SCHEMA.md) | Earlier design draft / ideas for not-yet-implemented features (branches, deals, rewards) |
 
 ---
 
@@ -531,6 +550,103 @@ Standard Laravel variables, notably:
 - [ ] Add automated tests to CI before pushing images
 
 ---
+
+# JALIKUD Mobile
+
+Expo (React Native) app for JALIKUD — a role-based food-ordering prototype with **Customer**, **Staff**, and **Rider** experiences. It runs on **in-memory demo data**, so no backend is required to try it.
+
+> Expo SDK 57 · React Native 0.86 · expo-router
+
+## 1. Get Expo Go
+
+Expo Go is the app you use to open this project on your phone.
+
+- **Android:** install from Google Play (search **"Expo Go"**)
+- **iOS:** install from the App Store (search **"Expo Go"**)
+- Or use the official page: **https://expo.dev/go**
+
+Expo Go supports SDK 57, so this project opens in it directly.
+
+## 2. Run the app
+
+1. Install **Node.js 22+** (<https://nodejs.org>) and check it: `node -v`
+2. In the `mobile` folder, install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+3. Start the dev server:
+
+   ```bash
+   npx expo start
+   ```
+
+4. Open it on your phone:
+   - **Android:** open **Expo Go** and scan the QR code in the terminal.
+   - **iOS:** open the **Camera** app, scan the QR code, then tap the banner.
+
+> Phone and computer must be on the **same Wi-Fi**. If the QR won't connect, run `npx expo start --tunnel`.
+
+## 3. Demo login accounts
+
+Tap any card on the login screen to autofill, or type the details. The password is the same for all: `demo1234`.
+
+| Role     | Email              | Password   |
+| -------- | ------------------ | ---------- |
+| Customer | `customer@demo.ph` | `demo1234` |
+| Staff    | `staff@demo.ph`    | `demo1234` |
+| Rider    | `rider@demo.ph`    | `demo1234` |
+
+You can also tap **Register** to create a new (temporary, in-memory) customer account.
+
+## 4. Using the app
+
+**Customer** — tabs: Menu, Deals, Rewards, Cart, Orders, Settings
+
+- Browse the menu and add items to the cart, then review it in **Cart**.
+- Check **Orders** for your order history.
+
+**Staff** — tabs: Orders, Menu Status, Riders, Activity
+
+- **Orders:** confirm, reject, or assign incoming orders to a rider.
+- **Menu Status:** toggle item availability. **Riders:** view riders. **Activity:** recent actions.
+
+**Rider** — tabs: Deliveries, History (plus a top-right availability switch and **Exit**)
+
+- Toggle availability on, then open **Deliveries** to see the route/map and update a delivery.
+- **History** shows past deliveries. **Exit** signs you out.
+
+## 5. Scripts
+
+| Command                 | What it does                                 |
+| ----------------------- | -------------------------------------------- |
+| `npm start`             | Start the Expo dev server                    |
+| `npm run android`       | Start and open on an Android device/emulator |
+| `npm run ios`           | Start and open on an iOS simulator           |
+| `npm run lint`          | Run ESLint                                   |
+| `npm run reset-project` | Reset to a blank starter `app/` folder       |
+
+## 6. Troubleshooting
+
+| Problem                                                 | Fix                                                    |
+| ------------------------------------------------------- | ------------------------------------------------------ |
+| QR won't connect                                        | Same Wi-Fi, or `npx expo start --tunnel`               |
+| "Project is incompatible with this version of Expo Go"  | Update Expo Go from the store                          |
+| Port 8081 in use                                        | Stop the other process, or press `y` for a new port    |
+| Stale/odd errors                                         | Restart with `npx expo start -c` (clear cache)         |
+| Native tabs / map look off                               | Use a development build (`npx expo run:android` / `run:ios`) |
+
+## Notes
+
+- All accounts, orders, and cart data are **in-memory only** — restarting the app resets everything.
+- The app is **not yet wired to the JALIKUD API** (`src/services` is empty).
+
+## Learn more
+
+- Expo SDK 57 docs: <https://docs.expo.dev/versions/v57.0.0/>
+- Expo Router: <https://docs.expo.dev/router/introduction>
+
 
 ## License
 

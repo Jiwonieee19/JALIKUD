@@ -7,6 +7,11 @@ import RegisterPage from './pages/RegisterPage'
 import DashboardPage from './pages/DashboardPage'
 import SettingsPage from './pages/SettingsPage'
 import AdminUsersPage from './pages/AdminUsersPage'
+import AdminMenuPage from './pages/AdminMenuPage'
+import AdminOrdersPage from './pages/AdminOrdersPage'
+import AdminCouponsPage from './pages/AdminCouponsPage'
+import AdminRewardsPage from './pages/AdminRewardsPage'
+import AdminSettingsPage from './pages/AdminSettingsPage'
 import type { ReactNode } from 'react'
 
 function Loading() {
@@ -77,6 +82,46 @@ export default function App() {
             >
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route
+                path="/admin/orders"
+                element={
+                  <RequireAdmin>
+                    <AdminOrdersPage />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/admin/menu"
+                element={
+                  <RequireAdmin>
+                    <AdminMenuPage />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/admin/coupons"
+                element={
+                  <RequireAdmin>
+                    <AdminCouponsPage />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/admin/rewards"
+                element={
+                  <RequireAdmin>
+                    <AdminRewardsPage />
+                  </RequireAdmin>
+                }
+              />
+              <Route
+                path="/admin/store-settings"
+                element={
+                  <RequireAdmin>
+                    <AdminSettingsPage />
+                  </RequireAdmin>
+                }
+              />
               <Route
                 path="/admin/users"
                 element={

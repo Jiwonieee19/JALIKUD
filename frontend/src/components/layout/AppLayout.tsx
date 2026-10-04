@@ -2,6 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import ThemeToggle from '../ui/ThemeToggle'
 import Button from '../ui/Button'
+import Logo from '../ui/Logo'
 
 const navItems = [
   {
@@ -34,6 +35,42 @@ const navItems = [
 
 const adminNavItems = [
   {
+    to: '/admin/orders',
+    label: 'Orders',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+        <path d="M3 5.5A1.5 1.5 0 0 1 4.5 4h11A1.5 1.5 0 0 1 17 5.5v9a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5v-9ZM5 6.5v1.5h4v-1.5H5Zm0 3v1.5h6v-1.5H5Zm0 3v1.5h4v-1.5H5Zm7-6v1.5h3v-1.5h-3Z" />
+      </svg>
+    ),
+  },
+  {
+    to: '/admin/menu',
+    label: 'Menu',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+        <path d="M4 3h12a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm1.5 2.5v1.5h9V5.5h-9Zm0 3v1.5h9V8.5h-9Zm0 3v2h4v-2h-4Zm5.5 0v2h3.5v-2h-3.5Z" />
+      </svg>
+    ),
+  },
+  {
+    to: '/admin/coupons',
+    label: 'Coupons',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+        <path d="M2.5 6A1.5 1.5 0 0 1 4 4.5h12A1.5 1.5 0 0 1 17.5 6v1.268a2 2 0 0 0 0 3.464V12a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12v-1.268a2 2 0 0 0 0-3.464V6Zm3 1.5v1.5H7V7.5H5.5Zm0 4v1.5H7v-1.5H5.5Zm6.5-2a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm2-2v1.5h1.5V7.5H14Zm0 4v1.5h1.5v-1.5H14Z" />
+      </svg>
+    ),
+  },
+  {
+    to: '/admin/rewards',
+    label: 'Rewards',
+    icon: (
+      <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+        <path d="M10 1.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Zm0 1.5a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM3 13.5a1 1 0 0 1 1.5-.87A5.49 5.49 0 0 0 10 14.5a5.49 5.49 0 0 0 5.5-1.87 1 1 0 1 1 1.5 1.32A7.49 7.49 0 0 1 10 16.5a7.49 7.49 0 0 1-7-2.55 1 1 0 0 1 0-1.32Z" />
+      </svg>
+    ),
+  },
+  {
     to: '/admin/users',
     label: 'Users',
     icon: (
@@ -56,9 +93,9 @@ export default function AppLayout() {
   const allItems = user?.role === 'admin' ? [...navItems, ...adminNavItems] : navItems
 
   const linkClasses = ({ isActive }: { isActive: boolean }) =>
-    `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+    `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-bold transition-colors ${
       isActive
-        ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400'
+        ? 'bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400'
         : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
     }`
 
@@ -66,8 +103,8 @@ export default function AppLayout() {
     <div className="flex h-full">
       {/* Desktop sidebar */}
       <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-200 bg-white px-4 py-6 dark:border-slate-800 dark:bg-slate-900 md:flex">
-        <div className="mb-8 px-2 text-xl font-bold tracking-wide text-slate-900 dark:text-white">
-          JALIKUD
+        <div className="mb-8 px-2">
+          <Logo heightClass="h-9" />
         </div>
         <nav className="flex flex-1 flex-col gap-1">
           {allItems.map((item) => (
@@ -104,9 +141,7 @@ export default function AppLayout() {
       <div className="flex min-w-0 flex-1 flex-col pb-16 md:pb-0">
         {/* Mobile top bar */}
         <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900 md:hidden">
-          <span className="text-lg font-bold tracking-wide text-slate-900 dark:text-white">
-            JALIKUD
-          </span>
+          <Logo heightClass="h-7" />
           <ThemeToggle />
         </header>
 
