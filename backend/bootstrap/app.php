@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -16,6 +17,16 @@ return Application::configure(basePath: dirname(__DIR__))
         // Apply the named 'api' rate limiter (AppServiceProvider) to all api routes.
         $middleware->throttleApi();
 
+        // This app is API-only and has no `login` route. Laravel's default
+        // guest redirect target is route('login'), which throws a
+        // RouteNotFoundException and turns every unauthenticated API call from
+        // a caller that does not send `Accept: application/json` (curl, a
+        // browser address bar, Postman with the header cleared) into a 500 that
+        // hides the real 401. API routes must answer with 401 JSON, so send
+        // guests to a path that does not exist instead — the JSON 401 below in
+        // withExceptions() is what they actually receive.
+        $middleware->redirectGuestsTo(fn () => '/');
+
         // Proxy trust is configured in AppServiceProvider::boot() instead of here.
         // This file is evaluated before Laravel boots dotenv, and under
         // `php artisan serve` the HTTP worker does not inherit $_SERVER, so
@@ -27,4 +38,20 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
         );
+
+        // An unauthenticated request to an API route must be answered with a
+        // 401 JSON body, never a redirect. Laravel's default handler decides
+        // with $request->expectsJson(), which ignores the shouldRenderJsonWhen()
+        // rule above, so a caller that omits `Accept: application/json`
+        // (curl, a browser address bar, Postman with the header cleared) falls
+        // through to redirect()->guest(route('login')). This app is API-only and
+        // defines no `login` route, so that throws and surfaces as a 500 that
+        // masks the real "you are not authenticated" 401.
+        $exceptions->render(function (AuthenticationException $e, Request $request) {
+            if ($request->is('api/*')) {
+                return response()->json(['message' => 'Unauthenticated.'], 401);
+            }
+
+            return null;
+        });
     })->create();
