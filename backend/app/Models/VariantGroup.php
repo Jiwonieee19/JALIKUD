@@ -39,4 +39,21 @@ class VariantGroup extends Model
     {
         return $this->hasMany(VariantOption::class);
     }
+
+    /**
+     * Alias for variantOptions().
+     *
+     * The public menu payload exposes each group's choices under the key
+     * `options`, and MenuItemController eager-loads `variantGroups.options`
+     * to match. Without this alias that eager-load throws
+     * RelationNotFoundException (HTTP 500 on /api/menu) as soon as a menu
+     * item actually has a variant group.
+     *
+     * Keep this name in sync with the documented API shape in
+     * backend/README.md and frontend/docs/API_WIRING.md.
+     */
+    public function options(): HasMany
+    {
+        return $this->variantOptions();
+    }
 }
