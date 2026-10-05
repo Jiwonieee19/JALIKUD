@@ -33,6 +33,15 @@ class AuthController extends Controller
             'password' => $data['password'],
         ]);
 
+        // 'role' is deliberately NOT mass-assignable (see User::$fillable), so
+        // the public registration path can never set it. Assign it explicitly so
+        // a new account is always a customer rather than relying on a nullable
+        // column default. Set ROLE_CUSTOMER here deliberately: if a rider or
+        // staff account is ever wanted, create it through /api/admin/users,
+        // which validates the role against the enum.
+        $user->role = User::ROLE_CUSTOMER;
+        $user->save();
+
         return response()->json([
             'message' => 'Registration successful.',
             'user' => $user,

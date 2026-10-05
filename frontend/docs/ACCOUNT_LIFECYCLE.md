@@ -115,6 +115,25 @@ as a last line of defence, but it only rejects invalid roles, it does not stop
 **Regression test to add:** `POST /api/register` with
 `{"role":"admin"}` must return a `customer`, not a `422` and not an admin.
 
+### 2.2 RESOLVED — `role` removed from `$fillable`
+
+`role` has been removed from `User::$fillable` (`backend/app/Models/User.php`), and
+all three legitimate call sites now assign it explicitly:
+
+- `AuthController@register` → hard-sets `User::ROLE_CUSTOMER`
+- `AdminUserController@store` → `$user->role = $data['role'] ?? User::ROLE_CUSTOMER`
+- `AdminUserController@update` → assigns after `$user->update()`, guarded by the
+  existing self-demotion check
+
+The third site mattered: it previously relied on `role` being fillable, so simply
+removing it would have silently broken admin role changes. Covered by
+`backend/tests/Feature/RoleEscalationTest.php` (7 tests), which asserts the model
+attribute, the public register path, every elevated role, and that the admin
+create/update paths still work.
+
+This matters more than it did when written: the API is now published publicly
+through a Cloudflare Tunnel.
+
 ---
 
 ## 3. Creating a rider does not create the `rider_profiles` row
