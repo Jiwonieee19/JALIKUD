@@ -77,4 +77,40 @@ class TrustedProxyTest extends TestCase
         $this->assertSame('198.51.100.9', request()->ip(),
             'A spoofed X-Forwarded-For from an untrusted peer must be ignored.');
     }
+
+    public function test_trust_list_covers_every_proxy_hop_in_front_of_the_api(): void
+    {
+        // Each entry below is a hop that can terminate in front of Laravel once
+        // the stack is published through tunnels. Omitting one collapses the
+        // rate-limit buckets of everyone arriving through that hop into a
+        // single bucket keyed on the proxy address.
+        $trusted = $this->trustedProxies();
+
+        $this->assertContains('172.30.0.1', $trusted,
+            'The docker bridge gateway must be trusted: an agent running OUTSIDE docker (ngrok) '
+            .'reaches the frontend through a published port, and nginx appends the gateway to '
+            .'X-Forwarded-For.');
+
+        $this->assertContains('172.30.0.20', $trusted,
+            'The nginx container proxies /api and must stay trusted.');
+
+        $cloudflared = env('CLOUDFLARE_IP', '172.30.0.30');
+        $this->assertContains($cloudflared, $trusted,
+            'The cloudflared container dials the backend directly, bypassing nginx, '
+            .'so its own address must be trusted.');
+    }
+
+    public function test_unauthenticated_api_request_without_json_accept_header_returns_401(): void
+    {
+        // Regression: this app has no `login` route, and Laravel's default
+        // unauthenticated handler redirects to route('login') whenever the
+        // request does not expect JSON. curl, a browser address bar, and Postman
+        // with the Accept header cleared all hit that path, which surfaced as a
+        // 500 instead of the correct 401.
+        $response = $this->withHeaders(['Accept' => 'text/html'])
+            ->get('/api/admin/users');
+
+        $response->assertStatus(401);
+        $this->assertSame('Unauthenticated.', $response->json('message'));
+    }
 }

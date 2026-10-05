@@ -33,5 +33,16 @@ Write-Host "Restarting containers..." -ForegroundColor Cyan
 docker compose up -d --no-build backend frontend
 if ($LASTEXITCODE -ne 0) { Write-Host "Restart failed." -ForegroundColor Red; exit 1 }
 
+# The cloudflared container is a token-based agent with no config file to
+# reload, but it must be restarted so it re-dials Cloudflare and re-resolves
+# the backend service IP after the backend container is recreated.
+if ($env:CLOUDFLARE_TUNNEL_TOKEN) {
+    Write-Host "Restarting Cloudflare tunnel..." -ForegroundColor Cyan
+    docker compose up -d cloudflared
+    if ($LASTEXITCODE -ne 0) { Write-Host "Tunnel restart failed." -ForegroundColor Red; exit 1 }
+} else {
+    Write-Host "CLOUDFLARE_TUNNEL_TOKEN not set; skipping Cloudflare tunnel." -ForegroundColor Yellow
+}
+
 docker image prune -f | Out-Null
 Write-Host "Deploy complete. Frontend: http://localhost:5173" -ForegroundColor Green
