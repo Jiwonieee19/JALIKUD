@@ -378,6 +378,38 @@ Both return:
 **Update profile body:** `{ "name": "...", "email": "..." }`
 **Change password body:** `{ "current_password": "...", "password": "...", "password_confirmation": "..." }`
 
+> **Role cannot be set here.** `role` is not mass-assignable on the `User` model, so
+> `POST /api/register` silently ignores a `role` key and always creates a **customer**.
+> Staff, rider, and admin accounts are created through `POST /api/admin/users`.
+> See [RoleEscalationTest.php](backend/tests/Feature/RoleEscalationTest.php).
+
+#### Addresses
+
+A customer's own delivery addresses. These routes are **required for delivery checkout**:
+`POST /api/orders` demands an `address_id` owned by the caller whenever `order_type` is
+`delivery`, so without them a customer who registered through the public API could only
+ever check out for **pickup**.
+
+| Method         | Path                       | Description                                |
+| -------------- | -------------------------- | ------------------------------------------ |
+| `GET`          | `/api/addresses`           | List own addresses (default first)         |
+| `POST`         | `/api/addresses`           | Create an address                          |
+| `PUT` / `PATCH` | `/api/addresses/{address}` | Update own address (PATCH-like, partial)   |
+| `DELETE`       | `/api/addresses/{address}` | Delete own address                         |
+
+**Create body:** `{ "label": "Home", "line1": "...", "line2": "...", "city": "...", "state": "...", "postal_code": "...", "country": "Philippines", "latitude": 14.6254, "longitude": 121.043, "is_default": false }`
+
+Only `line1` and `city` are required (and only on create). A few behaviours worth knowing:
+
+- The **first** address becomes the default automatically, so a checkout UI always has
+  something to pre-select.
+- Promoting an address **demotes** the previous default - a user never has two.
+- Deleting the default **promotes** the most recent survivor, so an account is never left
+  with no default.
+- `user_id` is never read from the request; ownership always comes from the token.
+- Addresses are private: another user's address id returns `422` and is left untouched.
+
+
 ### Admin endpoints (require a user with `role = admin`)
 
 | Method  | Path                 | Description                              |
@@ -717,7 +749,12 @@ Standard Laravel variables, notably:
 ## Roadmap / What's Next
 
 - [x] Add feature tests for auth + admin, and trusted-proxy regression coverage
+- [x] Address CRUD so **delivery** checkout is reachable for public-API customers
+- [x] Remove `role` from `User::$fillable` (was only safe by accident)
 - [ ] Put a **Cloudflare Access** policy in front of the public API hostname
+- [ ] Rider assignment (`PUT /api/admin/orders/{order}/rider`) + `GET /api/admin/riders`
+- [ ] Staff / rider role capabilities (queues) - `isRider()` and `isStaff()` are still unused
+- [ ] Variant-group admin CRUD, reviews, and payments endpoints (tables exist, no routes)
 - [ ] Wire the Expo mobile app to the live API (absolute base URL + `expo-secure-store` tokens)
 - [ ] Replace the web dashboard's `frontend/src/mock/` data with real API calls
 - [ ] Add automated tests to CI before pushing images
