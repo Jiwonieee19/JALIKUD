@@ -12,27 +12,6 @@ const INPUT_BORDER = '#E4E4E9';
 const PLACEHOLDER = '#B3B3BA';
 const TEXT_DARK = '#1C1C1E';
 
-const DEMO_ACCOUNTS = [
-  {
-    role: 'Customer' as const,
-    icon: '🛍️',
-    email: DEMO_CREDENTIALS.customerEmail,
-    subtitle: 'Browse menu, cart and orders',
-  },
-  {
-    role: 'Staff' as const,
-    icon: '🏪',
-    email: DEMO_CREDENTIALS.staffEmail,
-    subtitle: 'Manage orders and menu availability',
-  },
-  {
-    role: 'Delivery Rider' as const,
-    icon: '🛵',
-    email: DEMO_CREDENTIALS.riderEmail,
-    subtitle: 'Deliver orders to customers',
-  },
-];
-
 export default function LoginScreen() {
   const router = useRouter();
   const { signIn } = useAuthDemo();
@@ -60,12 +39,6 @@ export default function LoginScreen() {
       return;
     }
     router.replace('/(tabs)/menu');
-  };
-
-  const fillDemoAccount = (demoEmail: string) => {
-    setEmail(demoEmail);
-    setPassword(DEMO_CREDENTIALS.password);
-    setError('');
   };
 
   return (
@@ -136,43 +109,6 @@ export default function LoginScreen() {
                 style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}
                 onPress={handleSignIn}>
                 <Text style={styles.submitText}>Sign In</Text>
-              </Pressable>
-
-              {/* Temporary prototype accounts — tap to autofill */}
-              <View style={styles.demoCard}>
-                <View style={styles.demoHeader}>
-                  <Text style={styles.demoTitle}>Demo accounts</Text>
-                  <Text style={styles.demoHint}>Tap to autofill · password: {DEMO_CREDENTIALS.password}</Text>
-                </View>
-                {DEMO_ACCOUNTS.map((account) => (
-                  <Pressable
-                    key={account.email}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Fill ${account.role} demo account`}
-                    style={({ pressed }) => [styles.demoRow, pressed && styles.pressed]}
-                    onPress={() => fillDemoAccount(account.email)}>
-                    <Text style={styles.demoIcon}>{account.icon}</Text>
-                    <View style={styles.demoCopy}>
-                      <Text style={styles.demoRole}>{account.role}</Text>
-                      <Text style={styles.demoEmail}>{account.email}</Text>
-                      <Text style={styles.demoSubtitle}>{account.subtitle}</Text>
-                    </View>
-                    <Text style={styles.demoChevron}>›</Text>
-                  </Pressable>
-                ))}
-              </View>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Preview staff workspace demo"
-                style={({ pressed }) => [styles.staffButton, pressed && styles.pressed]}
-                onPress={() => router.push('/staff/orders')}>
-                <Text style={styles.staffButtonIcon}>🏪</Text>
-                <View style={styles.staffButtonCopy}>
-                  <Text style={styles.staffButtonTitle}>Preview Staff Workspace</Text>
-                  <Text style={styles.staffButtonSubtitle}>Manage orders and menu availability</Text>
-                </View>
-                <Text style={styles.staffButtonChevron}>›</Text>
               </Pressable>
 
               <Link href="/register" style={styles.registerLink}>
@@ -312,79 +248,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  demoCard: {
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: '#D8D8DE',
-    borderRadius: 14,
-    backgroundColor: '#FFFFFF',
-    padding: 12,
-    gap: 8,
-  },
-  demoHeader: {
-    gap: 2,
-  },
-  demoTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: TEXT_DARK,
-  },
-  demoHint: {
-    fontSize: 11,
-    color: '#8E8E93',
-  },
-  demoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderWidth: 1,
-    borderColor: '#E4E4E9',
-    borderRadius: 12,
-    padding: 10,
-    backgroundColor: '#FAFAFB',
-  },
-  demoIcon: {
-    fontSize: 22,
-  },
-  demoCopy: {
-    flex: 1,
-    gap: 1,
-  },
-  demoRole: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: TEXT_DARK,
-  },
-  demoEmail: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: RED,
-  },
-  demoSubtitle: {
-    fontSize: 11,
-    color: '#8E8E93',
-  },
-  demoChevron: {
-    fontSize: 22,
-    lineHeight: 24,
-    color: '#C7C7CC',
-  },
-  staffButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#F2B8B8',
-    borderRadius: 12,
-    backgroundColor: '#FFF5F5',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  staffButtonIcon: { fontSize: 22 },
-  staffButtonCopy: { flex: 1, gap: 2 },
-  staffButtonTitle: { fontSize: 14, fontWeight: '800', color: RED },
-  staffButtonSubtitle: { fontSize: 11, color: '#8E5A5A' },
-  staffButtonChevron: { fontSize: 24, color: RED },
   registerLink: {
     alignSelf: 'center',
     marginTop: 8,

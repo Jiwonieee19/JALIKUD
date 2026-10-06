@@ -1,4 +1,4 @@
-import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -11,13 +11,13 @@ const TEXT = '#1C1C1E';
 const GRAY = '#74747C';
 
 const STATUS_META: Record<RiderStatus, { label: string; dot: string; chipBg: string; chipText: string }> = {
-  available: { label: 'Available', dot: '#16A34A', chipBg: '#DCFCE7', chipText: '#15803D' },
-  on_delivery: { label: 'On delivery', dot: '#F59E0B', chipBg: '#FEF3C7', chipText: '#B45309' },
-  offline: { label: 'Offline', dot: '#9CA3AF', chipBg: '#F3F4F6', chipText: '#6B7280' },
+  available: { label: 'On Duty', dot: '#16A34A', chipBg: '#DCFCE7', chipText: '#15803D' },
+  on_delivery: { label: 'On Delivery', dot: '#F59E0B', chipBg: '#FEF3C7', chipText: '#B45309' },
+  offline: { label: 'Unavailable', dot: '#9CA3AF', chipBg: '#F3F4F6', chipText: '#6B7280' },
 };
 
 export default function StaffRidersScreen() {
-  const { riders, deliveries, setRiderAvailability } = useDeliveryDemo();
+  const { riders, deliveries } = useDeliveryDemo();
   const readyCount = deliveries.filter((delivery) => delivery.status === 'ready').length;
   const activeCount = deliveries.filter((delivery) => delivery.status === 'assigned' || delivery.status === 'picked_up').length;
 
@@ -47,7 +47,6 @@ export default function StaffRidersScreen() {
         <Text style={styles.sectionTitle}>Delivery team</Text>
         {riders.map((rider) => {
           const meta = STATUS_META[rider.status];
-          const online = rider.status !== 'offline';
           return (
             <View key={rider.id} style={styles.card}>
               <View style={styles.cardTop}>
@@ -61,16 +60,6 @@ export default function StaffRidersScreen() {
                   <View style={[styles.statusDot, { backgroundColor: meta.dot }]} />
                   <Text style={[styles.statusText, { color: meta.chipText }]}>{meta.label}</Text>
                 </View>
-              </View>
-              <View style={styles.toggleRow}>
-                <Text style={styles.toggleLabel}>On duty</Text>
-                <Switch
-                  accessibilityLabel={`Toggle availability for ${rider.name}`}
-                  value={online}
-                  onValueChange={(value) => setRiderAvailability(rider.id, value ? 'available' : 'offline')}
-                  trackColor={{ false: '#D9D9DE', true: RED }}
-                  thumbColor="#FFFFFF"
-                />
               </View>
             </View>
           );
@@ -103,6 +92,4 @@ const styles = StyleSheet.create({
   statusChip: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999 },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
   statusText: { fontSize: 9, fontWeight: '800' },
-  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 11, paddingTop: 11, borderTopWidth: 1, borderColor: '#EEEEF1' },
-  toggleLabel: { color: TEXT, fontSize: 12, fontWeight: '800' },
 });

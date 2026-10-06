@@ -2,7 +2,8 @@ import { NativeTabs } from 'expo-router/unstable-native-tabs';
 
 const RIDER_TABS = [
   { name: 'deliveries', label: 'Deliveries', icon: require('@/assets/images/tabIcons/orders.png') },
-  { name: 'history', label: 'History', icon: require('@/assets/images/tabIcons/more.png') },
+  { name: 'history', label: 'History', icon: require('@/assets/images/tabIcons/activity.png') },
+  { name: 'settings', label: 'Settings', icon: require('@/assets/images/tabIcons/more.png') },
 ] as const;
 
 export default function RiderTabs() {

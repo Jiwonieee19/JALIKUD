@@ -1,4 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+
+import { useCustomerOrder } from '@/context/customer-order-context';
 
 export type StaffOrderStatus = 'incoming' | 'confirmed' | 'rejected';
 export type MenuAvailability = 'available' | 'sold_out' | 'unavailable';
@@ -19,6 +21,10 @@ export type StaffOrder = {
   items: StaffOrderItem[];
   total: number;
   status: StaffOrderStatus;
+  phone?: string;
+  address?: string;
+  destinationName?: string;
+  isSessionOrder?: boolean;
   rejectionReason?: string;
   staffNote?: string;
 };
@@ -158,9 +164,38 @@ function currentTime(): string {
 }
 
 export function StaffDemoProvider({ children }: { children: ReactNode }) {
-  const [orders, setOrders] = useState(INITIAL_ORDERS);
+  const { orders: customerOrders, updateOrderStatus } = useCustomerOrder();
+  const [seededOrders, setSeededOrders] = useState(INITIAL_ORDERS);
   const [menuItems, setMenuItems] = useState(INITIAL_MENU);
   const [activities, setActivities] = useState(INITIAL_ACTIVITY);
+
+  const sessionOrders = useMemo<StaffOrder[]>(
+    () =>
+      customerOrders
+        .filter((order) => order.isSessionOrder)
+        .map((order) => ({
+          id: `customer-${order.id}`,
+          orderNumber: order.orderNumber,
+          receivedAt: order.date,
+          customer: order.customerName ?? 'Demo Customer',
+          type: order.deliveryType === 'delivery' ? 'Delivery' : 'Pickup',
+          items: order.lineItems ?? [],
+          total: order.total,
+          status:
+            order.status === 'pending'
+              ? 'incoming'
+              : order.status === 'canceled'
+                ? 'rejected'
+                : 'confirmed',
+          phone: order.customerPhone,
+          address: order.deliveryAddress,
+          destinationName: order.destinationName,
+          isSessionOrder: true,
+          rejectionReason: order.cancelReason,
+        })),
+    [customerOrders],
+  );
+  const orders = useMemo(() => [...sessionOrders, ...seededOrders], [sessionOrders, seededOrders]);
 
   const addActivity = (activity: Omit<StaffActivity, 'id' | 'time'>) => {
     setActivities((current) => [
@@ -173,11 +208,12 @@ export function StaffDemoProvider({ children }: { children: ReactNode }) {
     const order = orders.find((candidate) => candidate.id === orderId);
     if (!order || order.status !== 'incoming') return;
 
-    setOrders((current) =>
+    setSeededOrders((current) =>
       current.map((candidate) =>
         candidate.id === orderId ? { ...candidate, status: 'confirmed' } : candidate,
       ),
     );
+    updateOrderStatus(order.orderNumber, 'preparing');
     addActivity({
       kind: 'order_confirmed',
       title: `Order ${order.orderNumber} confirmed`,
@@ -189,13 +225,14 @@ export function StaffDemoProvider({ children }: { children: ReactNode }) {
     const order = orders.find((candidate) => candidate.id === orderId);
     if (!order || order.status !== 'incoming') return;
 
-    setOrders((current) =>
+    setSeededOrders((current) =>
       current.map((candidate) =>
         candidate.id === orderId
           ? { ...candidate, status: 'rejected', rejectionReason: reason, staffNote: note.trim() || undefined }
           : candidate,
       ),
     );
+    updateOrderStatus(order.orderNumber, 'canceled', note.trim() || reason);
     addActivity({
       kind: 'order_rejected',
       title: `Order ${order.orderNumber} rejected`,

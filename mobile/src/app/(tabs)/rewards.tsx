@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
+import { useCustomerOrder } from '@/context/customer-order-context';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -18,6 +19,8 @@ type Reward = {
   points: number;
   worth: number;
   emoji: string;
+  type: 'free_item' | 'voucher';
+  cartName?: string;
 };
 
 // Static rewards for now — will be replaced by the backend API later.
@@ -29,6 +32,8 @@ const REWARDS: Reward[] = [
     points: 500,
     worth: 109,
     emoji: '🍗',
+    type: 'free_item',
+    cartName: 'Chickenjoy 1pc',
   },
   {
     id: '2',
@@ -37,6 +42,8 @@ const REWARDS: Reward[] = [
     points: 350,
     worth: 89,
     emoji: '🍔',
+    type: 'free_item',
+    cartName: 'Yumburger',
   },
   {
     id: '3',
@@ -45,6 +52,8 @@ const REWARDS: Reward[] = [
     points: 200,
     worth: 79,
     emoji: '🍟',
+    type: 'free_item',
+    cartName: 'Regular Fries',
   },
   {
     id: '4',
@@ -53,6 +62,7 @@ const REWARDS: Reward[] = [
     points: 750,
     worth: 100,
     emoji: '🎫',
+    type: 'voucher',
   },
   {
     id: '5',
@@ -61,6 +71,8 @@ const REWARDS: Reward[] = [
     points: 150,
     worth: 45,
     emoji: '🥧',
+    type: 'free_item',
+    cartName: 'Peach Mango Pie',
   },
   {
     id: '6',
@@ -69,16 +81,60 @@ const REWARDS: Reward[] = [
     points: 100,
     worth: 39,
     emoji: '🍨',
+    type: 'free_item',
+    cartName: 'Sundae Cup',
   },
 ];
 
 export default function RewardsScreen() {
-  // Static points balance for now — will come from the backend API later.
-  const [pointsBalance] = useState(2450);
-  const [redeemed, setRedeemed] = useState<Set<string>>(new Set());
+  const router = useRouter();
+  const { addToCart, pointsBalance, pointsHistory, redeemedRewardIds, redeemReward } = useCustomerOrder();
 
   const handleRedeem = (reward: Reward) => {
-    setRedeemed((prev) => new Set(prev).add(reward.id));
+    if (redeemedRewardIds.has(reward.id) || reward.points > pointsBalance) return;
+
+    const remainingPoints = pointsBalance - reward.points;
+    const destinationMessage =
+      reward.type === 'free_item'
+        ? 'The free item will be added to your cart.'
+        : 'The voucher will be saved for later use.';
+
+    Alert.alert(
+      'Confirm Redemption',
+      `${reward.title}\n\nRedeem for ${reward.points.toLocaleString('en-PH')} points?\nRemaining balance: ${remainingPoints.toLocaleString('en-PH')} points\n\n${destinationMessage}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Confirm Redeem',
+          onPress: () => {
+            if (!redeemReward(reward.id, reward.points)) return;
+
+            if (reward.type === 'free_item' && reward.cartName) {
+              addToCart({
+                id: `reward-${reward.id}`,
+                name: reward.cartName,
+                unitPrice: 0,
+                emoji: reward.emoji,
+                variant: 'Redeemed Reward',
+                source: 'reward',
+                maxQuantity: 1,
+              });
+              router.replace('/(tabs)/cart');
+              setTimeout(
+                () => Alert.alert('Reward Redeemed', `${reward.cartName} was added to your cart.`),
+                250,
+              );
+              return;
+            }
+
+            setTimeout(
+              () => Alert.alert('Voucher Redeemed', `${reward.title} was saved for later use.`),
+              250,
+            );
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -104,6 +160,7 @@ export default function RewardsScreen() {
               <Text style={styles.balanceUnit}>pts</Text>
             </View>
             <Text style={styles.balanceHint}>⭐ Earn 1 point for every ₱10 spent</Text>
+            <Text style={styles.balanceSubHint}>Points are credited when your order is delivered</Text>
           </View>
         </View>
       </SafeAreaView>
@@ -116,7 +173,8 @@ export default function RewardsScreen() {
         <Text style={styles.sectionTitle}>AVAILABLE REWARDS</Text>
 
         {REWARDS.map((reward) => {
-          const isRedeemed = redeemed.has(reward.id);
+          const isRedeemed = redeemedRewardIds.has(reward.id);
+          const cannotAfford = reward.points > pointsBalance;
           return (
             <View key={reward.id} style={styles.card}>
               <View style={styles.cardImageBox}>
@@ -137,19 +195,42 @@ export default function RewardsScreen() {
               </View>
 
               <Pressable
-                disabled={isRedeemed}
+                disabled={isRedeemed || cannotAfford}
                 onPress={() => handleRedeem(reward)}
                 style={({ pressed }) => [
                   styles.redeemButton,
                   isRedeemed && styles.redeemButtonDone,
-                  pressed && !isRedeemed && styles.pressed,
+                  cannotAfford && styles.redeemButtonDisabled,
+                  pressed && !isRedeemed && !cannotAfford && styles.pressed,
                 ]}>
-                <Text style={styles.redeemText}>{isRedeemed ? 'Redeemed' : 'Redeem'}</Text>
+                <Text style={styles.redeemText}>
+                  {isRedeemed ? 'Redeemed' : cannotAfford ? 'Not enough points' : 'Redeem'}
+                </Text>
               </Pressable>
             </View>
           );
         })}
+
+        {pointsHistory.length > 0 && (
+          <>
+            <Text style={[styles.sectionTitle, styles.historyTitle]}>POINTS HISTORY</Text>
+            {pointsHistory.map((entry) => (
+              <View key={entry.id} style={styles.historyCard}>
+                <Text style={styles.historyIcon}>{entry.kind === 'earned' ? '⭐' : '🎁'}</Text>
+                <View style={styles.historyInfo}>
+                  <Text style={styles.historyLabel}>{entry.label}</Text>
+                  <Text style={styles.historyDate}>{entry.date}</Text>
+                </View>
+                <Text style={[styles.historyPoints, entry.kind === 'redeemed' && styles.historySpent]}>
+                  {entry.kind === 'earned' ? '+' : '−'}
+                  {entry.points.toLocaleString('en-PH')} pts
+                </Text>
+              </View>
+            ))}
+          </>
+        )}
       </ScrollView>
+
     </View>
   );
 }
@@ -218,6 +299,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontSize: 12,
     color: 'rgba(255, 255, 255, 0.85)',
+  },
+  balanceSubHint: {
+    fontSize: 11,
+    color: 'rgba(255, 255, 255, 0.7)',
   },
   scroll: {
     flex: 1,
@@ -289,11 +374,30 @@ const styles = StyleSheet.create({
   redeemButtonDone: {
     backgroundColor: '#16A34A',
   },
+  redeemButtonDisabled: {
+    backgroundColor: '#A1A1AA',
+  },
   redeemText: {
     fontSize: 13,
     fontWeight: '700',
     color: '#FFFFFF',
   },
+  historyTitle: { marginTop: 8 },
+  historyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: CARD,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 8,
+    gap: 10,
+  },
+  historyIcon: { fontSize: 20 },
+  historyInfo: { flex: 1, gap: 2 },
+  historyLabel: { fontSize: 13, fontWeight: '700', color: TEXT_DARK },
+  historyDate: { fontSize: 11, color: TEXT_GRAY },
+  historyPoints: { fontSize: 13, fontWeight: '800', color: '#16A34A' },
+  historySpent: { color: RED },
   pressed: {
     opacity: 0.8,
   },
