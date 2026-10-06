@@ -29,10 +29,40 @@ interface FormState {
   email: string
   phone: string
   password: string
+  password_confirmation: string
   role: 'customer' | 'staff' | 'admin' | 'rider'
 }
 
-const emptyForm: FormState = { name: '', email: '', phone: '', password: '', role: 'customer' }
+const emptyForm: FormState = {
+  name: '',
+  email: '',
+  phone: '',
+  password: '',
+  password_confirmation: '',
+  role: 'customer',
+}
+
+/**
+ * Client-side mirror of the backend's App\Rules\StrongPassword, which requires
+ * 8+ characters with at least one lowercase, one uppercase and one digit
+ * ($requireSpecial defaults to false, so no symbol is needed).
+ *
+ * Without this the form only enforced length, so a weak password passed the
+ * client and came back as a 422 round-trip. Kept in sync with
+ * backend/app/Rules/StrongPassword.php.
+ *
+ * Returns null for an empty string so the same helper serves both the create
+ * form (where blank is an error) and the edit form (where blank means "keep the
+ * current password").
+ */
+function passwordProblem(password: string): string | null {
+  if (password.length === 0) return null
+  if (password.length < 8) return 'Must be at least 8 characters.'
+  if (!/[a-z]/.test(password)) return 'Must contain at least one lowercase letter.'
+  if (!/[A-Z]/.test(password)) return 'Must contain at least one uppercase letter.'
+  if (!/[0-9]/.test(password)) return 'Must contain at least one number.'
+  return null
+}
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
@@ -77,7 +107,14 @@ export default function AdminUsersPage() {
   }
 
   const openEdit = (user: AdminUser) => {
-    setForm({ name: user.name, email: user.email, phone: user.phone ?? '', password: '', role: user.role })
+    setForm({
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? '',
+      password: '',
+      password_confirmation: '',
+      role: user.role,
+    })
     setFormErrors({})
     setCreating(false)
     setEditing(user)
@@ -107,6 +144,28 @@ export default function AdminUsersPage() {
 
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    // Password rules are enforced here as well as on the inputs, because the
+    // complexity and confirmation rules have no native HTML equivalent. Without
+    // this the request would go out and come back as a 422.
+    const localErrors: Record<string, string> = {}
+    const weak = passwordProblem(form.password)
+
+    if (!editing && form.password.length === 0) {
+      localErrors.password = 'A password is required.'
+    } else if (weak) {
+      localErrors.password = weak
+    }
+
+    if (form.password.length > 0 && form.password_confirmation !== form.password) {
+      localErrors.password_confirmation = 'Passwords do not match.'
+    }
+
+    if (Object.keys(localErrors).length > 0) {
+      setFormErrors(localErrors)
+      return
+    }
+
     setSaving(true)
     setFormErrors({})
     try {
@@ -116,6 +175,8 @@ export default function AdminUsersPage() {
           email: form.email,
           phone: form.phone || null,
           role: form.role,
+          // Omitted entirely when blank so the API leaves the stored hash alone
+          // ('password' is 'sometimes' on UpdateUserRequest).
           ...(form.password ? { password: form.password } : {}),
         })
       } else {
@@ -351,12 +412,50 @@ export default function AdminUsersPage() {
                   required={!editing}
                   minLength={editing ? undefined : 8}
                   autoComplete="new-password"
+                  aria-invalid={Boolean(formErrors.password)}
+                  className={formErrors.password ? 'border-red-500 dark:border-red-500' : ''}
                 />
-                {formErrors.password && (
-                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                    {formErrors.password}
-                  </p>
-                )}
+                <p
+                  className={`mt-1 text-xs ${
+                    formErrors.password
+                      ? 'font-semibold text-red-600 dark:text-red-400'
+                      : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {formErrors.password ?? 'At least 8 characters, with an uppercase letter, a lowercase letter and a number.'}
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="au-password-confirm" className="mb-1.5">
+                  Confirm password
+                </Label>
+                <Input
+                  id="au-password-confirm"
+                  type="password"
+                  value={form.password_confirmation}
+                  onChange={(e) => setForm({ ...form, password_confirmation: e.target.value })}
+                  // Only mandatory once a password has actually been typed, so
+                  // the edit form stays usable when leaving the password alone.
+                  required={form.password.length > 0}
+                  autoComplete="new-password"
+                  aria-invalid={Boolean(formErrors.password_confirmation)}
+                  className={
+                    formErrors.password_confirmation ? 'border-red-500 dark:border-red-500' : ''
+                  }
+                />
+                <p
+                  className={`mt-1 text-xs ${
+                    formErrors.password_confirmation
+                      ? 'font-semibold text-red-600 dark:text-red-400'
+                      : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {formErrors.password_confirmation ??
+                    (form.password.length > 0
+                      ? 'Re-enter the password exactly as typed above.'
+                      : 'Only needed if you are setting a new password.')}
+                </p>
               </div>
 <div>
                   <Label htmlFor="au-role" className="mb-1.5">
