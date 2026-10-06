@@ -1,26 +1,21 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { clearToken, getToken, setToken } from '../services/api'
-import { mockCurrentUser } from '../mock/users'
+import api, { clearToken, getToken, setToken } from '../services/api'
 import type { AuthResponse, User } from '../types'
 
 /**
- * MOCK AUTH — the frontend is being built design-first, so this provider does
- * NOT talk to the backend. Any password of 8+ characters containing an
- * uppercase letter and a digit is accepted, and the session user is always
- * `mockCurrentUser` (an admin).
+ * Real authentication against the Laravel API.
  *
- * TODO(next-dev): restore the real implementation. It is preserved below and
- * only needs the `api` import restored plus the bodies of login/register/
- * logout uncommented. See docs/API_WIRING.md → "Auth".
+ *   POST /api/register  -> 201 { message, user, token }   (role forced to customer)
+ *   POST /api/login     -> 200 { message, user, token }
+ *   GET  /api/user      -> 200 { user }                   (auth:sanctum)
+ *   POST /api/logout    -> 200 { message }                (revokes the token)
  *
- *   import api from '../services/api'
- *   const response = await api.post<AuthResponse>('/login', { email, password })
- *   setToken(response.data.token!)
- *   setUser(response.data.user)
+ * Errors are thrown as real axios errors so callers can use `fieldError(err)`
+ * from services/api to map Laravel's 422 `errors` bag onto form fields.
  *
- * The token bootstrap (GET /api/user on mount) should come back too.
- *
- * The real backend seeds NO users — the first admin must be promoted manually.
+ * RegisterRequest requires `password_confirmation` (Laravel's `confirmed` rule),
+ * so it must be sent. LoginRequest only wants email + password; bad credentials
+ * come back as a 422 keyed on `email`, never a 401.
  */
 
 interface AuthContextValue {
@@ -40,55 +35,66 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-/** Mirrors App\Rules\StrongPassword on the backend. */
-const STRONG = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Restore the mock session on mount if a token exists.
-    const bootstrap = () => {
+    // Restore the session on mount: a token in localStorage is only a claim, so
+    // it has to be verified against GET /api/user before we trust it.
+    let cancelled = false
+
+    const bootstrap = async () => {
       if (!getToken()) {
         setLoading(false)
         return
       }
-      setUser(mockCurrentUser)
-      setLoading(false)
-    }
-    bootstrap()
-  }, [])
 
-  const login = async (_email: string, password: string) => {
-    if (!STRONG.test(password)) {
-      throw {
-        response: {
-          status: 422,
-          data: {
-            message: 'The given data was invalid.',
-            errors: { password: ['Password must be at least 8 characters and include an uppercase letter and a digit.'] },
-          },
-        },
+      try {
+        const response = await api.get<{ user: User }>('/user')
+        if (!cancelled) setUser(response.data.user)
+      } catch {
+        // Expired or revoked — drop it so the app shows the login screen.
+        clearToken()
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     }
-    const response: AuthResponse = {
-      message: 'Login successful.',
-      user: mockCurrentUser,
-      token: 'mock-token-not-real',
+
+    void bootstrap()
+
+    return () => {
+      cancelled = true
     }
-    setToken(response.token!)
-    setUser(response.user)
+  }, [])
+
+  const login = async (email: string, password: string) => {
+    const response = await api.post<AuthResponse>('/login', {
+      email: email.trim(),
+      password,
+    })
+
+    setToken(response.data.token!)
+    setUser(response.data.user)
   }
 
-  const register = async (name: string, email: string, _password: string, _passwordConfirmation: string, phone?: string) => {
-    const response: AuthResponse = {
-      message: 'Registration successful.',
-      user: { ...mockCurrentUser, id: 99, name, email, phone: phone ?? null, role: 'customer' },
-      token: 'mock-token-not-real',
-    }
-    setToken(response.token!)
-    setUser(response.user)
+  const register = async (
+    name: string,
+    email: string,
+    password: string,
+    passwordConfirmation: string,
+    phone?: string,
+  ) => {
+    const response = await api.post<AuthResponse>('/register', {
+      name: name.trim(),
+      email: email.trim(),
+      password,
+      password_confirmation: passwordConfirmation,
+      ...(phone?.trim() ? { phone: phone.trim() } : {}),
+    })
+
+    setToken(response.data.token!)
+    setUser(response.data.user)
   }
 
   const updateUser = (updated: User) => {
@@ -96,6 +102,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = async () => {
+    try {
+      await api.post('/logout')
+    } catch {
+      // Revoking server-side is best effort; the local token must still go.
+    }
     clearToken()
     setUser(null)
   }

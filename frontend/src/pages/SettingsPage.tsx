@@ -1,46 +1,40 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
-import api from '../services/api'
-import type { User } from '../types'
+import api, { fieldError } from '../services/api'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
 import ThemeToggle from '../components/ui/ThemeToggle'
+import type { User } from '../types'
 
 /**
- * ⚠️ THIS PAGE IS NOT MOCKED — it is the one remaining screen that calls the
- * real API, because PUT /api/profile and PUT /api/password both exist on the
- * backend and are worth exercising. Saving either form will fail while no
- * backend is running on :8000.
+ * Talks to the real API:
+ *   GET  /api/user      (via the AuthProvider bootstrap, not here)
+ *   PUT  /api/profile   { name, email }                        -> { user }
+ *   PUT  /api/password  { current_password, password, password_confirmation }
  *
- * TODO(next-dev): if you want this page standalone like the others, add
- * src/mock/accountApi.ts (see API_WIRING.md § "Auth") and swap the two calls
- * below.
+ * All three need a Sanctum token; api.ts attaches it from localStorage.
  *
  * `name` is a single field because the backend has a single `name` column —
- * there is no first_name / last_name anywhere. See docs/ACCOUNT_LIFECYCLE.md.
+ * there is no first_name / last_name anywhere. See docs/ACCOUNT_LIFECYCLE.md §4.1.
+ *
+ * Note PUT /api/password is throttled (`throttle:password`), so a run of failed
+ * attempts answers 429; that surfaces through the generic `form` feedback below.
+ *
+ * The route also revokes every *other* token for the user, and api.ts clears the
+ * stored token on any 401 — so if this page's own session is ever invalidated
+ * mid-flight the app drops to the login screen rather than looping.
  */
 
 interface ValidationErrors {
-  name?: string[]
-  email?: string[]
-  current_password?: string[]
-  password?: string[]
+  name?: string
+  email?: string
+  current_password?: string
+  password?: string
 }
 
 type Feedback = { type: 'success' | 'error'; message: string } | null
-
-function extractErrors(err: unknown): [ValidationErrors, string] {
-  type AxiosLikeError = {
-    response?: { status?: number; data?: { message?: string; errors?: ValidationErrors } }
-  }
-  const axiosError = err as AxiosLikeError
-  if (axiosError?.response?.status === 422) {
-    return [axiosError.response.data?.errors ?? {}, '']
-  }
-  return [{}, axiosError?.response?.data?.message ?? 'Something went wrong. Please try again.']
-}
 
 const feedbackClass = (type: 'success' | 'error') =>
   type === 'success'
@@ -71,9 +65,11 @@ export default function SettingsPage() {
       updateUser(response.data.user)
       setProfileFeedback({ type: 'success', message: 'Profile updated successfully.' })
     } catch (err) {
-      const [errors, general] = extractErrors(err)
+      // Laravel's 422 carries one message per field; anything else (401, 429,
+      // network) collapses into `form`.
+      const errors = fieldError(err)
       setProfileErrors(errors)
-      if (general) setProfileFeedback({ type: 'error', message: general })
+      if (errors.form) setProfileFeedback({ type: 'error', message: errors.form })
     } finally {
       setSavingProfile(false)
     }
@@ -82,7 +78,7 @@ export default function SettingsPage() {
   const handlePasswordSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (newPassword !== newPasswordConfirmation) {
-      setPasswordErrors({ password: ['Password confirmation does not match.'] })
+      setPasswordErrors({ password: 'Password confirmation does not match.' })
       return
     }
     setPasswordErrors({})
@@ -99,9 +95,9 @@ export default function SettingsPage() {
       setNewPassword('')
       setNewPasswordConfirmation('')
     } catch (err) {
-      const [errors, general] = extractErrors(err)
+      const errors = fieldError(err)
       setPasswordErrors(errors)
-      if (general) setPasswordFeedback({ type: 'error', message: general })
+      if (errors.form) setPasswordFeedback({ type: 'error', message: errors.form })
     } finally {
       setSavingPassword(false)
     }
@@ -126,7 +122,7 @@ export default function SettingsPage() {
               <Label htmlFor="settings-name" className="mb-1.5">Full name</Label>
               <Input id="settings-name" value={name} onChange={(e) => setName(e.target.value)} required />
               {profileErrors.name && (
-                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{profileErrors.name[0]}</p>
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{profileErrors.name}</p>
               )}
             </div>
             <div>
@@ -139,7 +135,7 @@ export default function SettingsPage() {
                 required
               />
               {profileErrors.email && (
-                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{profileErrors.email[0]}</p>
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{profileErrors.email}</p>
               )}
             </div>
             <div className="flex justify-end">
@@ -169,7 +165,7 @@ export default function SettingsPage() {
               />
               {passwordErrors.current_password && (
                 <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
-                  {passwordErrors.current_password[0]}
+                  {passwordErrors.current_password}
                 </p>
               )}
             </div>
@@ -186,7 +182,7 @@ export default function SettingsPage() {
               />
               {passwordErrors.password && (
                 <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
-                  {passwordErrors.password[0]}
+                  {passwordErrors.password}
                 </p>
               )}
             </div>

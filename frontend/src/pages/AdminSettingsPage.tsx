@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
+import Toggle from '../components/ui/Toggle'
+import api, { fieldError } from '../services/api'
 import { formatDateTime, mockStoreSetting, peso } from '../mock'
 import type { StoreSetting } from '../types'
 
@@ -52,17 +54,49 @@ function toDraft(setting: StoreSetting): Draft {
 
 export default function AdminSettingsPage() {
   const [draft, setDraft] = useState<Draft>(() => toDraft(mockStoreSetting))
+  const [updatedAt, setUpdatedAt] = useState<string | null>(mockStoreSetting.updated_at)
   const [saved, setSaved] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+
+  // Seeded from the fixture so the form has a defined shape on first paint,
+  // then replaced by GET /store-setting. That endpoint is public (no token), so
+  // this resolves even if the session has expired.
+  useEffect(() => {
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        const response = await api.get<{ data: StoreSetting }>('/store-setting')
+        if (cancelled) return
+        if (response.data.data) {
+          setDraft(toDraft(response.data.data))
+          setUpdatedAt(response.data.data.updated_at)
+        }
+      } catch {
+        if (!cancelled) setError('Could not load store settings. Showing default values.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    void load()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function update<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((current) => ({ ...current, [key]: value }))
     setSaved(false)
+    setFieldErrors((current) => (current[key] ? { ...current, [key]: '' } : current))
   }
 
   /**
-   * TODO(next-dev): wire this to the real endpoint.
-   *
-   *   PUT /api/admin/store-setting      body: the full draft object
+   * PUT /api/admin/store-setting      body: the full draft object
    *
    * StoreSettingController@update (backend/…/StoreSettingController.php:23-33)
    * validates:
@@ -73,15 +107,34 @@ export default function AdminSettingsPage() {
    *   min_order_amount nullable numeric min:0
    *   delivery_fee     nullable numeric min:0
    *   tax_rate_percent nullable numeric min:0
-   *   opening_time     nullable date_format:H:i   ← "HH:MM", not "HH:MM:SS"
+   *   opening_time     nullable date_format:H:i   <- "HH:MM", not "HH:MM:SS"
    *   closing_time     nullable date_format:H:i
    *
    * Note opening_time/closing_time use `date_format:H:i`, so the <input
-   * type="time"> values (already HH:MM) are correct as-is — do not append
+   * type="time"> values (already HH:MM) are correct as-is -- do not append
    * ":00" or the request 422s.
+   *
+   * `store_name` is required, so the whole draft is always sent rather than a
+   * diff. The controller upserts: it updates the existing row, or creates one if
+   * the table is empty.
    */
   async function handleSave() {
-    setSaved(true)
+    setSaving(true)
+    setError('')
+    setFieldErrors({})
+
+    try {
+      const response = await api.put<{ data: StoreSetting }>('/admin/store-setting', draft)
+      setDraft(toDraft(response.data.data))
+      setUpdatedAt(response.data.data.updated_at)
+      setSaved(true)
+    } catch (err) {
+      const errors = fieldError(err)
+      setFieldErrors(errors)
+      setError(errors.form ?? 'Could not save store settings.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -97,9 +150,17 @@ export default function AdminSettingsPage() {
         </div>
         <div className="flex items-center gap-3">
           {saved && <Badge tone="success">Saved</Badge>}
-          <Button onClick={() => void handleSave()}>Save changes</Button>
+          <Button onClick={() => void handleSave()} disabled={saving || loading}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </Button>
         </div>
       </header>
+
+      {error && (
+        <p className="rounded-lg bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">
+          {error}
+        </p>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card title="Store identity" description="Shown in the customer app header.">
@@ -112,10 +173,19 @@ export default function AdminSettingsPage() {
                 id="st-name"
                 value={draft.store_name}
                 onChange={(event) => update('store_name', event.target.value)}
+                required
+                maxLength={150}
+                aria-invalid={Boolean(fieldErrors.store_name)}
+                className={fieldErrors.store_name ? 'border-red-500 dark:border-red-500' : ''}
               />
+              {fieldErrors.store_name && (
+                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                  {fieldErrors.store_name}
+                </p>
+              )}
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Last updated {formatDateTime(mockStoreSetting.updated_at)}
+              Last updated {formatDateTime(updatedAt)}
             </p>
           </div>
         </Card>
@@ -235,46 +305,4 @@ export default function AdminSettingsPage() {
   )
 }
 
-function Toggle({
-  id,
-  label,
-  description,
-  checked,
-  onChange,
-  disabled,
-}: {
-  id: string
-  label: string
-  description: string
-  checked: boolean
-  onChange: (value: boolean) => void
-  disabled?: boolean
-}) {
-  return (
-    <label
-      htmlFor={id}
-      className={`flex items-start justify-between gap-4 rounded-xl px-4 py-3 ring-1 ring-inset transition-colors ${
-        disabled
-          ? 'cursor-not-allowed opacity-50 ring-slate-200 dark:ring-slate-800'
-          : 'cursor-pointer ring-slate-200 hover:bg-slate-50 dark:ring-slate-700 dark:hover:bg-slate-800/50'
-      }`}
-    >
-      <span className="min-w-0">
-        <span className="block text-sm font-bold text-slate-900 dark:text-white">{label}</span>
-        <span className="block text-xs text-slate-500 dark:text-slate-400">{description}</span>
-      </span>
-      <span className="relative mt-0.5 shrink-0">
-        <input
-          id={id}
-          type="checkbox"
-          checked={checked}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.checked)}
-          className="peer sr-only"
-        />
-        <span className="block h-6 w-11 rounded-full bg-slate-300 transition-colors peer-checked:bg-red-600 peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-red-600 dark:bg-slate-700" />
-        <span className="absolute top-0.5 left-0.5 block h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
-      </span>
-    </label>
-  )
-}
+

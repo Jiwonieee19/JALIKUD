@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { mockAdminUsersApi } from '../mock/adminUsersApi'
+import api, { fieldError } from '../services/api'
 import type { AdminUser } from '../types'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -8,13 +8,22 @@ import Select from '../components/ui/Select'
 import Label from '../components/ui/Label'
 
 /**
- * Data now comes from src/mock/adminUsersApi.ts so this page renders with no
- * backend. To go live, delete that import and restore `import api from
- * '../services/api'` — the four call sites below are already written against
- * the real endpoint contracts. See docs/API_WIRING.md.
+ * Talks to the real API:
+ *   GET    /api/admin/users            ?search=&page=&per_page=
+ *   POST   /api/admin/users
+ *   PUT    /api/admin/users/{user}
+ *   DELETE /api/admin/users/{user}
  *
- * `meta` is kept typed against Laravel's paginator envelope
- * ({ current_page, last_page, per_page, total }) so the swap is mechanical.
+ * This is the one list endpoint whose envelope is already `{data, meta}` —
+ * AdminUserController builds it by hand rather than returning a raw paginator —
+ * so no unwrapList() is needed here. See services/lists.ts for the other four.
+ *
+ * Backend guards that surface as 422 rather than a crash:
+ *   - an admin cannot change their own role (AdminUserController.php:94)
+ *   - an admin cannot delete their own account (:134)
+ * Both are keyed on non-form fields ('role', 'user'), so `fieldError()` returns
+ * them verbatim and the role message renders on the role input; the delete one
+ * needs the fallback in handleDelete below.
  */
 
 interface PaginatorMeta {
@@ -29,10 +38,40 @@ interface FormState {
   email: string
   phone: string
   password: string
+  password_confirmation: string
   role: 'customer' | 'staff' | 'admin' | 'rider'
 }
 
-const emptyForm: FormState = { name: '', email: '', phone: '', password: '', role: 'customer' }
+const emptyForm: FormState = {
+  name: '',
+  email: '',
+  phone: '',
+  password: '',
+  password_confirmation: '',
+  role: 'customer',
+}
+
+/**
+ * Client-side mirror of the backend's App\Rules\StrongPassword, which requires
+ * 8+ characters with at least one lowercase, one uppercase and one digit
+ * ($requireSpecial defaults to false, so no symbol is needed).
+ *
+ * Without this the form only enforced length, so a weak password passed the
+ * client and came back as a 422 round-trip. Kept in sync with
+ * backend/app/Rules/StrongPassword.php.
+ *
+ * Returns null for an empty string so the same helper serves both the create
+ * form (where blank is an error) and the edit form (where blank means "keep the
+ * current password").
+ */
+function passwordProblem(password: string): string | null {
+  if (password.length === 0) return null
+  if (password.length < 8) return 'Must be at least 8 characters.'
+  if (!/[a-z]/.test(password)) return 'Must contain at least one lowercase letter.'
+  if (!/[A-Z]/.test(password)) return 'Must contain at least one uppercase letter.'
+  if (!/[0-9]/.test(password)) return 'Must contain at least one number.'
+  return null
+}
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUser[]>([])
@@ -51,15 +90,18 @@ export default function AdminUsersPage() {
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await mockAdminUsersApi.list({
-        search: search || undefined,
-        page,
+      const response = await api.get<{ data: AdminUser[]; meta: PaginatorMeta }>('/admin/users', {
+        params: { search: search || undefined, page },
       })
-      setUsers(response.data)
-      setMeta(response.meta)
+      setUsers(response.data.data)
+      setMeta(response.data.meta)
       setError('')
-    } catch {
-      setError('Failed to load users.')
+    } catch (err) {
+      // Preserve the backend's reason. EnsureAdmin answers 403 with
+      // "Forbidden. Administrator access required." and a dead server answers
+      // with no response at all; collapsing both to one string hides which.
+      const errors = fieldError(err)
+      setError(errors.form ?? 'Failed to load users.')
     } finally {
       setLoading(false)
     }
@@ -77,7 +119,14 @@ export default function AdminUsersPage() {
   }
 
   const openEdit = (user: AdminUser) => {
-    setForm({ name: user.name, email: user.email, phone: user.phone ?? '', password: '', role: user.role })
+    setForm({
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? '',
+      password: '',
+      password_confirmation: '',
+      role: user.role,
+    })
     setFormErrors({})
     setCreating(false)
     setEditing(user)
@@ -89,37 +138,46 @@ export default function AdminUsersPage() {
     setFormErrors({})
   }
 
-  const extractFieldError = (err: unknown): Record<string, string> => {
-    type AxiosLikeError = {
-      response?: {
-        status?: number
-        data?: { message?: string; errors?: Record<string, string[]> }
-      }
-    }
-    const axiosError = err as AxiosLikeError
-    if (axiosError?.response?.status === 422 && axiosError.response.data?.errors) {
-      return Object.fromEntries(
-        Object.entries(axiosError.response.data.errors).map(([k, v]) => [k, v[0]]),
-      )
-    }
-    return { form: axiosError?.response?.data?.message ?? 'Request failed.' }
-  }
-
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    // Password rules are enforced here as well as on the inputs, because the
+    // complexity and confirmation rules have no native HTML equivalent. Without
+    // this the request would go out and come back as a 422.
+    const localErrors: Record<string, string> = {}
+    const weak = passwordProblem(form.password)
+
+    if (!editing && form.password.length === 0) {
+      localErrors.password = 'A password is required.'
+    } else if (weak) {
+      localErrors.password = weak
+    }
+
+    if (form.password.length > 0 && form.password_confirmation !== form.password) {
+      localErrors.password_confirmation = 'Passwords do not match.'
+    }
+
+    if (Object.keys(localErrors).length > 0) {
+      setFormErrors(localErrors)
+      return
+    }
+
     setSaving(true)
     setFormErrors({})
     try {
       if (editing) {
-        await mockAdminUsersApi.update(editing.id, {
+        await api.put(`/admin/users/${editing.id}`, {
           name: form.name,
           email: form.email,
           phone: form.phone || null,
           role: form.role,
+          // Omitted entirely when blank so the API leaves the stored hash alone
+          // ('password' is 'sometimes' on UpdateUserRequest). 'role' is not
+          // mass-assignable, so it is applied explicitly server-side.
           ...(form.password ? { password: form.password } : {}),
         })
       } else {
-        await mockAdminUsersApi.store({
+        await api.post('/admin/users', {
           name: form.name,
           email: form.email,
           phone: form.phone || null,
@@ -130,7 +188,7 @@ export default function AdminUsersPage() {
       closeModal()
       await fetchUsers()
     } catch (err) {
-      setFormErrors(extractFieldError(err))
+      setFormErrors(fieldError(err))
     } finally {
       setSaving(false)
     }
@@ -140,10 +198,14 @@ export default function AdminUsersPage() {
     if (!window.confirm(`Delete ${user.email}? This cannot be undone.`)) return
     setDeletingId(user.id)
     try {
-      await mockAdminUsersApi.destroy(user.id)
+      await api.delete(`/admin/users/${user.id}`)
       await fetchUsers()
     } catch (err) {
-      alert(extractFieldError(err).form)
+      // Deleting your own account is a 422 keyed on 'user', not on a form field,
+      // so fieldError() returns { user: '...' } with no `form` key. Reading
+      // `.form` alone here would alert(undefined); fall back to the first value.
+      const errors = fieldError(err)
+      alert(errors.form ?? Object.values(errors)[0] ?? 'Could not delete this user.')
     } finally {
       setDeletingId(null)
     }
@@ -351,12 +413,50 @@ export default function AdminUsersPage() {
                   required={!editing}
                   minLength={editing ? undefined : 8}
                   autoComplete="new-password"
+                  aria-invalid={Boolean(formErrors.password)}
+                  className={formErrors.password ? 'border-red-500 dark:border-red-500' : ''}
                 />
-                {formErrors.password && (
-                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                    {formErrors.password}
-                  </p>
-                )}
+                <p
+                  className={`mt-1 text-xs ${
+                    formErrors.password
+                      ? 'font-semibold text-red-600 dark:text-red-400'
+                      : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {formErrors.password ?? 'At least 8 characters, with an uppercase letter, a lowercase letter and a number.'}
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="au-password-confirm" className="mb-1.5">
+                  Confirm password
+                </Label>
+                <Input
+                  id="au-password-confirm"
+                  type="password"
+                  value={form.password_confirmation}
+                  onChange={(e) => setForm({ ...form, password_confirmation: e.target.value })}
+                  // Only mandatory once a password has actually been typed, so
+                  // the edit form stays usable when leaving the password alone.
+                  required={form.password.length > 0}
+                  autoComplete="new-password"
+                  aria-invalid={Boolean(formErrors.password_confirmation)}
+                  className={
+                    formErrors.password_confirmation ? 'border-red-500 dark:border-red-500' : ''
+                  }
+                />
+                <p
+                  className={`mt-1 text-xs ${
+                    formErrors.password_confirmation
+                      ? 'font-semibold text-red-600 dark:text-red-400'
+                      : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {formErrors.password_confirmation ??
+                    (form.password.length > 0
+                      ? 'Re-enter the password exactly as typed above.'
+                      : 'Only needed if you are setting a new password.')}
+                </p>
               </div>
 <div>
                   <Label htmlFor="au-role" className="mb-1.5">
