@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { mockAdminUsersApi } from '../mock/adminUsersApi'
+import api, { fieldError } from '../services/api'
 import type { AdminUser } from '../types'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -8,13 +8,22 @@ import Select from '../components/ui/Select'
 import Label from '../components/ui/Label'
 
 /**
- * Data now comes from src/mock/adminUsersApi.ts so this page renders with no
- * backend. To go live, delete that import and restore `import api from
- * '../services/api'` — the four call sites below are already written against
- * the real endpoint contracts. See docs/API_WIRING.md.
+ * Talks to the real API:
+ *   GET    /api/admin/users            ?search=&page=&per_page=
+ *   POST   /api/admin/users
+ *   PUT    /api/admin/users/{user}
+ *   DELETE /api/admin/users/{user}
  *
- * `meta` is kept typed against Laravel's paginator envelope
- * ({ current_page, last_page, per_page, total }) so the swap is mechanical.
+ * This is the one list endpoint whose envelope is already `{data, meta}` —
+ * AdminUserController builds it by hand rather than returning a raw paginator —
+ * so no unwrapList() is needed here. See services/lists.ts for the other four.
+ *
+ * Backend guards that surface as 422 rather than a crash:
+ *   - an admin cannot change their own role (AdminUserController.php:94)
+ *   - an admin cannot delete their own account (:134)
+ * Both are keyed on non-form fields ('role', 'user'), so `fieldError()` returns
+ * them verbatim and the role message renders on the role input; the delete one
+ * needs the fallback in handleDelete below.
  */
 
 interface PaginatorMeta {
@@ -81,15 +90,18 @@ export default function AdminUsersPage() {
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await mockAdminUsersApi.list({
-        search: search || undefined,
-        page,
+      const response = await api.get<{ data: AdminUser[]; meta: PaginatorMeta }>('/admin/users', {
+        params: { search: search || undefined, page },
       })
-      setUsers(response.data)
-      setMeta(response.meta)
+      setUsers(response.data.data)
+      setMeta(response.data.meta)
       setError('')
-    } catch {
-      setError('Failed to load users.')
+    } catch (err) {
+      // Preserve the backend's reason. EnsureAdmin answers 403 with
+      // "Forbidden. Administrator access required." and a dead server answers
+      // with no response at all; collapsing both to one string hides which.
+      const errors = fieldError(err)
+      setError(errors.form ?? 'Failed to load users.')
     } finally {
       setLoading(false)
     }
@@ -126,22 +138,6 @@ export default function AdminUsersPage() {
     setFormErrors({})
   }
 
-  const extractFieldError = (err: unknown): Record<string, string> => {
-    type AxiosLikeError = {
-      response?: {
-        status?: number
-        data?: { message?: string; errors?: Record<string, string[]> }
-      }
-    }
-    const axiosError = err as AxiosLikeError
-    if (axiosError?.response?.status === 422 && axiosError.response.data?.errors) {
-      return Object.fromEntries(
-        Object.entries(axiosError.response.data.errors).map(([k, v]) => [k, v[0]]),
-      )
-    }
-    return { form: axiosError?.response?.data?.message ?? 'Request failed.' }
-  }
-
   const handleSave = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
@@ -170,17 +166,18 @@ export default function AdminUsersPage() {
     setFormErrors({})
     try {
       if (editing) {
-        await mockAdminUsersApi.update(editing.id, {
+        await api.put(`/admin/users/${editing.id}`, {
           name: form.name,
           email: form.email,
           phone: form.phone || null,
           role: form.role,
           // Omitted entirely when blank so the API leaves the stored hash alone
-          // ('password' is 'sometimes' on UpdateUserRequest).
+          // ('password' is 'sometimes' on UpdateUserRequest). 'role' is not
+          // mass-assignable, so it is applied explicitly server-side.
           ...(form.password ? { password: form.password } : {}),
         })
       } else {
-        await mockAdminUsersApi.store({
+        await api.post('/admin/users', {
           name: form.name,
           email: form.email,
           phone: form.phone || null,
@@ -191,7 +188,7 @@ export default function AdminUsersPage() {
       closeModal()
       await fetchUsers()
     } catch (err) {
-      setFormErrors(extractFieldError(err))
+      setFormErrors(fieldError(err))
     } finally {
       setSaving(false)
     }
@@ -201,10 +198,14 @@ export default function AdminUsersPage() {
     if (!window.confirm(`Delete ${user.email}? This cannot be undone.`)) return
     setDeletingId(user.id)
     try {
-      await mockAdminUsersApi.destroy(user.id)
+      await api.delete(`/admin/users/${user.id}`)
       await fetchUsers()
     } catch (err) {
-      alert(extractFieldError(err).form)
+      // Deleting your own account is a 422 keyed on 'user', not on a form field,
+      // so fieldError() returns { user: '...' } with no `form` key. Reading
+      // `.form` alone here would alert(undefined); fall back to the first value.
+      const errors = fieldError(err)
+      alert(errors.form ?? Object.values(errors)[0] ?? 'Could not delete this user.')
     } finally {
       setDeletingId(null)
     }

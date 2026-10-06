@@ -11,13 +11,18 @@ import Textarea from './ui/Textarea'
 import Toggle from './ui/Toggle'
 
 /**
- * Derives a slug from a category name: lowercase, URL-safe, capped at the 120
- * characters `categories.slug` allows (2026_09_15_000004_create_categories_table.php:17).
+ * Derives a slug from a name: lowercase, URL-safe, capped at 120 characters.
+ *
+ * Exported because AdminMenuPage needs it too — `menu_items.slug` is equally
+ * `required` and `unique` (MenuItemController@store) with no server-side
+ * derivation, and its form does not expose the field either.
+ *
+ * The category column is also `string(120)` (2026_09_15_000004_create_categories_table.php:17).
  *
  * Not a bare `strtolower` — spaces and symbols become hyphens and accents are
  * dropped, because a slug containing them cannot be used in a link.
  */
-function slugify(value: string): string {
+export function slugify(value: string): string {
   return value
     .toLowerCase()
     .trim()

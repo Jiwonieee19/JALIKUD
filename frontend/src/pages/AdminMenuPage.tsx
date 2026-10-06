@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react'
-import CategoryModal, { type CategoryPayload } from '../components/CategoryModal'
+import CategoryModal, { slugify, type CategoryPayload } from '../components/CategoryModal'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -11,7 +10,10 @@ import Modal from '../components/ui/Modal'
 import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Textarea from '../components/ui/Textarea'
-import { mockCategories, mockMenuItems, paginate, peso } from '../mock'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { paginate, peso } from '../mock'
+import api, { fieldError } from '../services/api'
+import { unwrapList } from '../services/lists'
 import type { Category, MenuItem } from '../types'
 
 /**
@@ -22,17 +24,41 @@ import type { Category, MenuItem } from '../types'
 const PER_PAGE = 10
 
 /**
- * MOCK-DATA PAGE — stands in for:
- *   GET  /api/menu
- *   GET  /api/categories
- *   POST|PUT|PATCH|DELETE /api/admin/menu-items[/{menu_item}]
- *   POST|PUT|PATCH|DELETE /api/admin/categories[/{category}]
+ * Upper bound accepted by PaginationRequest (min:1, max:100).
  *
- * TODO(next-dev): replace the mock imports with api calls, e.g.
- *   const { data } = await api.get('/menu')
- *   await api.put(`/admin/menu-items/${id}`, payload)
+ * Fetched in one request so the category counts and the client-side search box
+ * cover the whole catalogue rather than the first page only. Fine at menu scale;
+ * if the catalogue outgrows one request this becomes a server-side search
+ * (backend ticket Task 2) plus a real paginator.
+ */
+const MAX_PER_PAGE = 100
+
+/**
+ * Talks to the real API:
+ *   GET    /api/menu           ?category_id=&per_page=
+ *   GET    /api/categories     ?per_page=
+ *   POST   /api/admin/menu-items
+ *   PUT    /api/admin/menu-items/{menuItem}
+ *   DELETE /api/admin/menu-items/{menuItem}
+ *   POST   /api/admin/categories
+ *   PUT    /api/admin/categories/{category}
+ *   DELETE /api/admin/categories/{category}
  *
- * Auth: the two GETs are public. All writes require an admin token.
+ * Both GETs are public; every write needs an admin token.
+ *
+ * Both list endpoints currently return a raw LengthAwarePaginator, so their rows
+ * land at `data.data`. unwrapList() reads either that or the flat
+ * `{data, meta}` shape, so this page keeps working after backend ticket Task 1
+ * normalises the envelope. See services/lists.ts.
+ *
+ * KNOWN GAP: GET /api/menu accepts `category_id`, `available` and `featured`
+ * but NOT `search`, so the search box filters the fetched page in memory. That
+ * is honest rather than faked — once ticket Task 2 adds the param, move the
+ * term into the query string and drop the local filter.
+ *
+ * `DELETE /api/admin/categories/{id}` on a category that still has items is a
+ * 500 (restrictOnDelete with no guard) until ticket Task 3. The modal's
+ * empty-gate keeps that unreachable from here.
  *
  * Note: money is a decimal(10,2) column on the backend, hence strings.
  */
@@ -55,15 +81,15 @@ export default function AdminMenuPage() {
   })
   const [toast, setToast] = useState<string | null>(null)
 
-  // Categories and items are held in component state rather than read straight
-  // from the fixture, because the category modal can now *move* meals between
-  // categories. Without local state the reassignment has nowhere to land and
-  // every count on the page would still read the unedited mock. The mock
-  // modules stay as the seed values; `categoryName()` from mock/menu.ts is no
-  // longer used since it also resolves against the fixture and would ignore a
-  // rename.
-  const [categories, setCategories] = useState<Category[]>(mockCategories)
-  const [items, setItems] = useState<MenuItem[]>(mockMenuItems)
+  // Categories and items live in component state because the category modal
+  // *moves* meals between categories; local state is where that reassignment
+  // lands before the list is refetched, so the counts never flicker stale.
+  const [categories, setCategories] = useState<Category[]>([])
+  const [items, setItems] = useState<MenuItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   const [categoryModal, setCategoryModal] = useState<{ open: boolean; category: Category | null }>({
     open: false,
@@ -73,6 +99,32 @@ export default function AdminMenuPage() {
   function nameOfCategory(id: number): string {
     return categories.find((category) => category.id === id)?.name ?? 'Uncategorised'
   }
+
+  /**
+   * Refetches both lists after any write so the table reflects what the
+   * database actually holds, rather than trusting optimistic local state.
+   */
+  const refresh = useCallback(async () => {
+    try {
+      const [menuResponse, categoryResponse] = await Promise.all([
+        api.get('/menu', { params: { per_page: MAX_PER_PAGE } }),
+        api.get('/categories', { params: { per_page: MAX_PER_PAGE } }),
+      ])
+
+      setItems(unwrapList<MenuItem>(menuResponse.data).data)
+      setCategories(unwrapList<Category>(categoryResponse.data).data)
+      setLoadError('')
+    } catch (err) {
+      const errors = fieldError(err)
+      setLoadError(errors.form ?? 'Could not load the menu.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -106,8 +158,25 @@ export default function AdminMenuPage() {
     window.setTimeout(() => setToast(null), 2600)
   }
 
-  function applyMoves(movingIds: number[], moveTargetId: number | null) {
+  /**
+   * Reassigns meals in one request each.
+   *
+   * `menu_items.category_id` is NOT NULL, so an item can never be left
+   * uncategorised — this always supplies a concrete destination. Each is a
+   * separate PUT because the endpoint takes one menu item at a time; they are
+   * issued together with Promise.all so the modal does not wait on a chain.
+   */
+  async function applyMoves(movingIds: number[], moveTargetId: number | null) {
     if (movingIds.length === 0 || moveTargetId === null) return
+
+    await Promise.all(
+      movingIds.map((id) =>
+        api.put(`/admin/menu-items/${id}`, { category_id: moveTargetId }),
+      ),
+    )
+
+    // Reflect the move locally so the modal's remaining count stays correct
+    // before the refetch lands.
     setItems((current) =>
       current.map((item) => (movingIds.includes(item.id) ? { ...item, category_id: moveTargetId } : item)),
     )
@@ -123,6 +192,7 @@ export default function AdminMenuPage() {
       base_price: '',
       preparation_time_minutes: '10',
     })
+    setFormErrors({})
     setCreating(true)
   }
 
@@ -138,51 +208,156 @@ export default function AdminMenuPage() {
     setCategoryModal({ open: false, category: null })
   }
 
-  function saveCategory(payload: CategoryPayload, movingIds: number[], moveTargetId: number | null) {
+  /**
+   * POST /api/admin/categories when creating, PUT when editing.
+   *
+   * `slug` is not editable in the modal — the API requires it and derives
+   * nothing, so the modal computes it from the name and disambiguates
+   * collisions itself. See components/CategoryModal.tsx.
+   *
+   * `sort_order` is preserved on edit (the modal no longer exposes it, so an
+   * absent key must not clobber the stored value) and appended as max+1 on
+   * create, which matches CategoryController@index's `orderBy('sort_order')`.
+   */
+  async function saveCategory(
+    payload: CategoryPayload,
+    movingIds: number[],
+    moveTargetId: number | null,
+  ) {
     const target = categoryModal.category
+    setSaving(true)
 
-    applyMoves(movingIds, moveTargetId)
+    try {
+      if (target) {
+        await applyMoves(movingIds, moveTargetId)
+        await api.put(`/admin/categories/${target.id}`, payload)
+      } else {
+        const nextSortOrder = categories.reduce((max, c) => Math.max(max, c.sort_order), 0) + 1
+        await api.post('/admin/categories', { ...payload, sort_order: nextSortOrder })
+      }
 
-    if (target) {
-      // sort_order is preserved on edit: the modal no longer exposes it, so it
-      // must not be clobbered by an absent key.
-      setCategories((current) =>
-        current.map((category) => (category.id === target.id ? { ...category, ...payload } : category)),
-      )
+      await refresh()
+      closeCategoryModal()
+
       const moved = movingIds.length
       flash(
-        moved > 0
+        target && moved > 0
           ? `${payload.name} updated · ${moved} meal${moved === 1 ? '' : 's'} moved to ${nameOfCategory(moveTargetId!)}`
-          : `${payload.name} updated`,
+          : target
+            ? `${payload.name} updated`
+            : `${payload.name} created`,
       )
-    } else {
-      const nextId = categories.reduce((max, category) => Math.max(max, category.id), 0) + 1
-      const nextSortOrder = categories.reduce((max, category) => Math.max(max, category.sort_order), 0) + 1
-      setCategories((current) => [
-        ...current,
-        {
-          id: nextId,
-          parent_id: null,
-          created_at: null,
-          updated_at: null,
-          image_url: null,
-          sort_order: nextSortOrder,
-          ...payload,
-        },
-      ])
-      flash(`${payload.name} created`)
+    } catch (err) {
+      const errors = fieldError(err)
+      flash(errors.form ?? Object.values(errors)[0] ?? 'Could not save the category.')
+    } finally {
+      setSaving(false)
     }
-
-    closeCategoryModal()
   }
 
-  function deleteCategory(category: Category, movingIds: number[], moveTargetId: number | null) {
-    // Moves are applied in the same action so "uncheck everything, then delete"
-    // does not silently discard the reassignment the admin just made.
-    applyMoves(movingIds, moveTargetId)
-    setCategories((current) => current.filter((candidate) => candidate.id !== category.id))
-    flash(`${category.name} deleted`)
-    closeCategoryModal()
+  /**
+   * DELETE /api/admin/categories/{id}, with any pending meal moves applied first
+   * so "uncheck everything, then delete" does not discard the reassignment the
+   * admin just made in the same dialog.
+   *
+   * The backend still answers 500 here if anything references the category
+   * (restrictOnDelete with no guard) — see ticket Task 3. The modal only
+   * enables Delete at zero items, so that path is unreachable from this UI.
+   */
+  async function deleteCategory(
+    category: Category,
+    movingIds: number[],
+    moveTargetId: number | null,
+  ) {
+    setSaving(true)
+
+    try {
+      await applyMoves(movingIds, moveTargetId)
+      await api.delete(`/admin/categories/${category.id}`)
+      await refresh()
+      closeCategoryModal()
+      flash(`${category.name} deleted`)
+    } catch (err) {
+      const errors = fieldError(err)
+      flash(errors.form ?? Object.values(errors)[0] ?? 'Could not delete the category.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /**
+   * POST /api/admin/menu-items when creating, PUT /{id} when editing.
+   *
+   * `slug` is required and unique on MenuItemController but is not part of this
+   * form, so it is derived from the name the same way the category modal does.
+   */
+  async function saveItem() {
+    setSaving(true)
+    setFormErrors({})
+
+    const name = draft.name.trim()
+    const slug = slugify(name)
+
+    if (!name || !slug) {
+      setFormErrors({ name: 'Enter a name using at least one letter or number.' })
+      setSaving(false)
+      return
+    }
+
+    const payload = {
+      name,
+      slug,
+      category_id: Number(draft.category_id),
+      description: draft.description.trim() === '' ? null : draft.description.trim(),
+      sku: draft.sku.trim() === '' ? null : draft.sku.trim(),
+      base_price: draft.base_price,
+      preparation_time_minutes: Number(draft.preparation_time_minutes),
+      ...(draft.image_url ? { image_url: draft.image_url } : {}),
+    }
+
+    try {
+      if (editing) {
+        await api.put(`/admin/menu-items/${editing.id}`, payload)
+      } else {
+        await api.post('/admin/menu-items', payload)
+      }
+
+      await refresh()
+      setCreating(false)
+      setEditing(null)
+      flash(editing ? `${payload.name} updated` : `${payload.name} created`)
+    } catch (err) {
+      const errors = fieldError(err)
+      setFormErrors(errors)
+      flash(errors.form ?? Object.values(errors)[0] ?? 'Could not save the item.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /** PUT /api/admin/menu-items/{id} { is_available } — the sold-out toggle. */
+  async function toggleAvailability(item: MenuItem) {
+    const next = !item.is_available
+
+    setItems((current) =>
+      current.map((candidate) =>
+        candidate.id === item.id ? { ...candidate, is_available: next } : candidate,
+      ),
+    )
+
+    try {
+      await api.put(`/admin/menu-items/${item.id}`, { is_available: next })
+      flash(`${item.name} marked ${next ? 'available' : 'sold out'}`)
+    } catch (err) {
+      // Roll the optimistic flip back so the table never disagrees with the API.
+      setItems((current) =>
+        current.map((candidate) =>
+          candidate.id === item.id ? { ...candidate, is_available: item.is_available } : candidate,
+        ),
+      )
+      const errors = fieldError(err)
+      flash(errors.form ?? Object.values(errors)[0] ?? 'Could not update availability.')
+    }
   }
 
   function openEdit(item: MenuItem) {
@@ -195,6 +370,7 @@ export default function AdminMenuPage() {
       base_price: item.base_price,
       preparation_time_minutes: String(item.preparation_time_minutes),
     })
+    setFormErrors({})
     setEditing(item)
   }
 
@@ -211,11 +387,47 @@ export default function AdminMenuPage() {
           </p>
         </div>
         {tab === 'items' ? (
-          <Button onClick={openCreate}>Add menu item</Button>
+          <Button onClick={openCreate} disabled={loading || categories.length === 0}>
+            Add menu item
+          </Button>
         ) : (
           <Button onClick={openCreateCategory}>Add category</Button>
         )}
       </header>
+
+      {loadError && (
+        <p className="rounded-lg bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">
+          {loadError}
+        </p>
+      )}
+
+      {tab === 'items' && categories.length === 0 && !loading && (
+        <Card>
+          <EmptyState
+            title="Add a category first"
+            description="Every menu item belongs to a category, so create one before adding items."
+          />
+          <div className="mt-4 flex justify-center">
+            <Button
+              onClick={() => {
+                setTab('categories')
+                openCreateCategory()
+              }}
+            >
+              Add category
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {tab === 'categories' && categories.length === 0 && !loading && !loadError && (
+        <Card>
+          <EmptyState
+            title="No categories yet"
+            description="Categories group the menu into sections customers browse."
+          />
+        </Card>
+      )}
 
       <div className="flex gap-2">
         {(['items', 'categories'] as const).map((value) => (
@@ -329,7 +541,7 @@ export default function AdminMenuPage() {
                       <Button
                         variant="secondary"
                         className="px-2.5 py-1 text-xs"
-                        onClick={() => flash(`${item.name} marked ${item.is_available ? 'sold out' : 'available'}`)}
+                        onClick={() => void toggleAvailability(item)}
                       >
                         {item.is_available ? 'Sold out' : 'Restore'}
                       </Button>
@@ -443,14 +655,8 @@ export default function AdminMenuPage() {
             >
               Cancel
             </Button>
-            <Button
-              onClick={() => {
-                flash(editing ? `${editing.name} updated` : `${draft.name || 'Item'} created`)
-                setCreating(false)
-                setEditing(null)
-              }}
-            >
-              {editing ? 'Save changes' : 'Create item'}
+            <Button onClick={() => void saveItem()} disabled={saving}>
+              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create item'}
             </Button>
           </>
         }
@@ -490,7 +696,19 @@ export default function AdminMenuPage() {
                 value={draft.name}
                 onChange={(event) => setDraft({ ...draft, name: event.target.value })}
                 placeholder="Chickenjoy 1pc"
+                required
+                aria-invalid={Boolean(formErrors.name)}
+                className={formErrors.name ? 'border-red-500 dark:border-red-500' : ''}
               />
+              <p
+                className={`mt-1 text-xs ${
+                  formErrors.name
+                    ? 'font-semibold text-red-600 dark:text-red-400'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              >
+                {formErrors.name ?? 'Up to 150 characters. This is what customers see in the menu.'}
+              </p>
             </div>
           <div>
             <Label htmlFor="mi-category" className="mb-1.5">
