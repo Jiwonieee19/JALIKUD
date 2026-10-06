@@ -73,7 +73,7 @@ export function AuthDemoProvider({ children }: { children: ReactNode }) {
     const signIn = (email: string, password: string): SignInResult => {
       const candidate = accounts.find((account) => account.email === normalizeEmail(email));
       if (!candidate || candidate.password !== password) {
-        return { ok: false, error: 'Incorrect email or password. Try a demo account below.' };
+        return { ok: false, error: 'Incorrect email or password.' };
       }
       setCurrent(candidate);
       return { ok: true };

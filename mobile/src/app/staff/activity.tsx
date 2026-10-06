@@ -1,10 +1,8 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
-import { useAuthDemo } from '@/context/auth-demo-context';
 import { useStaffDemo, type StaffActivity } from '@/context/staff-demo-context';
 
 const RED = '#DC2626';
@@ -22,33 +20,15 @@ const ACTIVITY_APPEARANCE: Record<StaffActivity['kind'], { icon: string; bg: str
 
 export default function StaffActivityScreen() {
   const { activities } = useStaffDemo();
-  const { signOut } = useAuthDemo();
-  const router = useRouter();
   const adminNotifications = activities.filter((activity) => activity.recipient === 'Admin').length;
-
-  const handleExitDemo = () => {
-    signOut();
-    router.replace('/login');
-  };
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
       <SafeAreaView edges={['top']} style={styles.headerSafe}>
         <View style={styles.header}>
-          <View style={styles.headerRow}>
-            <View>
-              <Text style={styles.eyebrow}>STAFF WORKSPACE</Text>
-              <Text style={styles.title}>Activity</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Sign out and exit staff demo"
-              onPress={handleExitDemo}
-              style={({ pressed }) => [styles.exitButton, pressed && styles.pressed]}>
-              <Text style={styles.exitText}>Exit Demo</Text>
-            </Pressable>
-          </View>
+          <Text style={styles.eyebrow}>STAFF WORKSPACE</Text>
+          <Text style={styles.title}>Activity</Text>
           <Text style={styles.subtitle}>A local record of order decisions and menu reports.</Text>
         </View>
       </SafeAreaView>
@@ -109,12 +89,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: BG },
   headerSafe: { backgroundColor: RED },
   header: { paddingHorizontal: 16, paddingBottom: 17 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   eyebrow: { color: 'rgba(255,255,255,0.72)', fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
   title: { color: '#FFFFFF', fontSize: 25, fontWeight: '900', marginTop: 3 },
   subtitle: { color: 'rgba(255,255,255,0.76)', fontSize: 11, marginTop: 4 },
-  exitButton: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 9, backgroundColor: 'rgba(0,0,0,0.17)' },
-  exitText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },
   content: { padding: 14, paddingBottom: BottomTabInset + 24 },
   demoNotice: { flexDirection: 'row', gap: 10, padding: 12, borderRadius: 13, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE' },
   demoNoticeIcon: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#2563EB', alignItems: 'center', justifyContent: 'center' },
@@ -144,5 +121,4 @@ const styles = StyleSheet.create({
   recipientBadge: { alignSelf: 'flex-start', flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 4, paddingHorizontal: 7, borderRadius: 999, backgroundColor: '#FEF3C7', marginTop: 8 },
   recipientIcon: { fontSize: 9 },
   recipientText: { color: '#B45309', fontSize: 8, fontWeight: '800' },
-  pressed: { opacity: 0.7 },
 });

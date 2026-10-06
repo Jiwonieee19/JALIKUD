@@ -11,6 +11,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
+import { useCustomerOrder } from '@/context/customer-order-context';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -89,6 +90,7 @@ function discountPercent(item: MenuItem): number | null {
 
 // The first screen a customer sees after logging in.
 export default function HomeScreen() {
+  const { addToCart, quantityInCart } = useCustomerOrder();
   const [activeCategory, setActiveCategory] = useState<Category>('All');
   const [search, setSearch] = useState('');
 
@@ -182,6 +184,7 @@ export default function HomeScreen() {
         <View style={styles.grid}>
           {items.map((item) => {
             const discount = discountPercent(item);
+            const cartQuantity = quantityInCart(item.id);
             return (
               <View key={item.id} style={styles.card}>
                 <View style={styles.cardImageWrap}>
@@ -206,8 +209,18 @@ export default function HomeScreen() {
                     {item.oldPrice != null && <Text style={styles.oldPrice}>₱{item.oldPrice}</Text>}
                   </View>
                   <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add ${item.name} to cart`}
+                    onPress={() =>
+                      addToCart({
+                        id: item.id,
+                        name: item.name,
+                        unitPrice: item.price,
+                        emoji: item.emoji,
+                      })
+                    }
                     style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
-                    <Text style={styles.addButtonText}>+</Text>
+                    <Text style={styles.addButtonText}>{cartQuantity > 0 ? cartQuantity : '+'}</Text>
                   </Pressable>
                 </View>
               </View>

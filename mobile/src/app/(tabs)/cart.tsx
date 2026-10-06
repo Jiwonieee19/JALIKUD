@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { useRouter } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
+import { useCustomerOrder, pointsForTotal } from '@/context/customer-order-context';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -12,77 +14,36 @@ const TEXT_DARK = '#1C1C1E';
 const TEXT_GRAY = '#8E8E93';
 const GREEN = '#16A34A';
 
-type CartItem = {
-  id: string;
-  name: string;
-  variant: string;
-  addOns?: string;
-  instructions?: string;
-  quantity: number;
-  unitPrice: number;
-  emoji: string;
-};
-
-// Static cart for now — will be replaced by cart state from the menu tab.
-const INITIAL_CART: CartItem[] = [
-  {
-    id: '1',
-    name: 'Chickenjoy 1pc',
-    variant: 'Regular · Coke Regular',
-    addOns: 'Extra Rice (+₱30)',
-    quantity: 2,
-    unitPrice: 139,
-    emoji: '🍗',
-  },
-  {
-    id: '2',
-    name: 'Jolly Spaghetti',
-    variant: 'Regular',
-    instructions: '"no cheese please"',
-    quantity: 1,
-    unitPrice: 99,
-    emoji: '🍝',
-  },
-  {
-    id: '3',
-    name: 'Champ Burger',
-    variant: 'Large · Iced Tea',
-    addOns: 'Extra Cheese (+₱20), Coleslaw (+₱35)',
-    quantity: 1,
-    unitPrice: 234,
-    emoji: '🍔',
-  },
-];
-
 function peso(value: number): string {
   return `₱${value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
 }
 
-// UI only — checkout flow is not implemented yet.
 export default function CartScreen() {
-  const [items, setItems] = useState<CartItem[]>(INITIAL_CART);
+  const router = useRouter();
+  const { cartItems, changeQuantity, removeFromCart, placeOrder } = useCustomerOrder();
   const [voucherInput, setVoucherInput] = useState('');
   const [voucherApplied, setVoucherApplied] = useState(false);
 
-  const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+  const subtotal = cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
   const discount = voucherApplied ? Math.floor(subtotal * 0.5) : 0;
-  const deliveryFee = 49;
+  const deliveryFee = cartItems.length > 0 ? 49 : 0;
   const total = subtotal - discount + deliveryFee;
-  const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
-
-  const changeQuantity = (id: string, delta: number) => {
-    setItems((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, quantity: Math.max(1, item.quantity + delta) } : item,
-      ),
-    );
-  };
+  const totalQty = cartItems.reduce((sum, item) => sum + item.quantity, 0);
 
   const applyVoucher = () => {
     if (voucherInput.trim().toUpperCase() === 'JALI50') {
       setVoucherApplied(true);
     }
   };
+
+  const handlePlaceOrder = () => {
+    const order = placeOrder(total);
+    if (!order) return;
+    setVoucherApplied(false);
+    setVoucherInput('');
+    router.replace('/(tabs)/orders');
+  };
+  const earnPreview = pointsForTotal(total);
 
   return (
     <View style={styles.container}>
@@ -108,120 +69,156 @@ export default function CartScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
         {/* Cart items */}
-        {items.map((item) => (
-          <View key={item.id} style={styles.cardRow}>
-            <View style={styles.itemImageBox}>
-              <Text style={styles.itemEmoji}>{item.emoji}</Text>
-            </View>
-            <View style={styles.itemInfo}>
-              <View style={styles.itemTopRow}>
-                <Text style={styles.itemName}>{item.name}</Text>
-                <Pressable
-                  onPress={() => setItems((prev) => prev.filter((i) => i.id !== item.id))}
-                  style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}>
-                  <Text style={styles.removeIcon}>✕</Text>
-                </Pressable>
+        {cartItems.length === 0 ? (
+          <View style={styles.emptyBox}>
+            <Text style={styles.emptyIcon}>🛒</Text>
+            <Text style={styles.emptyTitle}>Your cart is empty</Text>
+            <Text style={styles.emptyMessage}>Add items from the menu to place an order.</Text>
+          </View>
+        ) : (
+          cartItems.map((item) => (
+            <View key={item.id} style={styles.cardRow}>
+              <View style={styles.itemImageBox}>
+                <Text style={styles.itemEmoji}>{item.emoji}</Text>
               </View>
-              <Text style={styles.itemVariant}>{item.variant}</Text>
-              {item.addOns != null && <Text style={styles.itemMeta}>{item.addOns}</Text>}
-              {item.instructions != null && (
-                <Text style={styles.itemInstructions}>{item.instructions}</Text>
-              )}
-              <View style={styles.itemBottomRow}>
-                <View style={styles.qtyRow}>
+              <View style={styles.itemInfo}>
+                <View style={styles.itemTopRow}>
+                  <View style={styles.itemNameWrap}>
+                    <Text style={styles.itemName}>{item.name}</Text>
+                    {item.source === 'reward' && (
+                      <View style={styles.rewardBadge}>
+                        <Text style={styles.rewardBadgeText}>REWARD</Text>
+                      </View>
+                    )}
+                    {item.source === 'deal' && (
+                      <View style={styles.dealBadge}>
+                        <Text style={styles.dealBadgeText}>DEAL</Text>
+                      </View>
+                    )}
+                  </View>
                   <Pressable
-                    onPress={() => changeQuantity(item.id, -1)}
-                    style={({ pressed }) => [styles.qtyButton, pressed && styles.qtyPressed]}>
-                    <Text style={styles.qtyButtonText}>−</Text>
-                  </Pressable>
-                  <Text style={styles.qtyValue}>{item.quantity}</Text>
-                  <Pressable
-                    onPress={() => changeQuantity(item.id, 1)}
-                    style={({ pressed }) => [styles.qtyButton, pressed && styles.qtyPressed]}>
-                    <Text style={styles.qtyButtonText}>+</Text>
+                    onPress={() => removeFromCart(item.id)}
+                    style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}>
+                    <Text style={styles.removeIcon}>✕</Text>
                   </Pressable>
                 </View>
-                <Text style={styles.itemPrice}>{peso(item.unitPrice * item.quantity)}</Text>
+                <Text style={styles.itemVariant}>{item.variant}</Text>
+                <View style={styles.itemBottomRow}>
+                  <View style={styles.qtyRow}>
+                    <Pressable
+                      onPress={() => changeQuantity(item.id, -1)}
+                      style={({ pressed }) => [styles.qtyButton, pressed && styles.qtyPressed]}>
+                      <Text style={styles.qtyButtonText}>−</Text>
+                    </Pressable>
+                    <Text style={styles.qtyValue}>{item.quantity}</Text>
+                    <Pressable
+                      disabled={item.maxQuantity != null && item.quantity >= item.maxQuantity}
+                      onPress={() => changeQuantity(item.id, 1)}
+                      style={({ pressed }) => [
+                        styles.qtyButton,
+                        item.maxQuantity != null && item.quantity >= item.maxQuantity && styles.qtyButtonDisabled,
+                        pressed && styles.qtyPressed,
+                      ]}>
+                      <Text style={styles.qtyButtonText}>+</Text>
+                    </Pressable>
+                  </View>
+                  <Text style={styles.itemPrice}>{peso(item.unitPrice * item.quantity)}</Text>
+                </View>
               </View>
             </View>
-          </View>
-        ))}
+          ))
+        )}
 
-        {/* Voucher */}
-        <View style={styles.card}>
-          <View style={styles.voucherTitleRow}>
-            <Text style={styles.voucherIcon}>🏷️</Text>
-            <Text style={styles.voucherTitle}>Voucher Code</Text>
-          </View>
-          {voucherApplied ? (
-            <View style={styles.voucherAppliedBox}>
-              <Text style={styles.voucherAppliedIcon}>✓</Text>
-              <Text style={styles.voucherAppliedText}>JALI50 – 50% Off Applied!</Text>
-              <Pressable
-                onPress={() => {
-                  setVoucherApplied(false);
-                  setVoucherInput('');
-                }}
-                style={({ pressed }) => [styles.voucherClear, pressed && styles.pressed]}>
-                <Text style={styles.removeIcon}>✕</Text>
-              </Pressable>
+        {cartItems.length > 0 && (
+          <>
+            {/* Voucher */}
+            <View style={styles.card}>
+              <View style={styles.voucherTitleRow}>
+                <Text style={styles.voucherIcon}>🏷️</Text>
+                <Text style={styles.voucherTitle}>Voucher Code</Text>
+              </View>
+              {voucherApplied ? (
+                <View style={styles.voucherAppliedBox}>
+                  <Text style={styles.voucherAppliedIcon}>✓</Text>
+                  <Text style={styles.voucherAppliedText}>JALI50 – 50% Off Applied!</Text>
+                  <Pressable
+                    onPress={() => {
+                      setVoucherApplied(false);
+                      setVoucherInput('');
+                    }}
+                    style={({ pressed }) => [styles.voucherClear, pressed && styles.pressed]}>
+                    <Text style={styles.removeIcon}>✕</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View style={styles.voucherInputRow}>
+                  <TextInput
+                    value={voucherInput}
+                    onChangeText={(text) => setVoucherInput(text.toUpperCase())}
+                    placeholder="Enter voucher code"
+                    placeholderTextColor="#C7C7CC"
+                    style={styles.voucherInput}
+                    autoCapitalize="characters"
+                  />
+                  <Pressable
+                    onPress={applyVoucher}
+                    style={({ pressed }) => [styles.voucherApplyButton, pressed && styles.pressed]}>
+                    <Text style={styles.voucherApplyText}>Apply</Text>
+                  </Pressable>
+                </View>
+              )}
+              {!voucherApplied && (
+                <Text style={styles.voucherHint}>Try JALI50 for 50% off your order!</Text>
+              )}
             </View>
-          ) : (
-            <View style={styles.voucherInputRow}>
-              <TextInput
-                value={voucherInput}
-                onChangeText={(text) => setVoucherInput(text.toUpperCase())}
-                placeholder="Enter voucher code"
-                placeholderTextColor="#C7C7CC"
-                style={styles.voucherInput}
-                autoCapitalize="characters"
-              />
-              <Pressable
-                onPress={applyVoucher}
-                style={({ pressed }) => [styles.voucherApplyButton, pressed && styles.pressed]}>
-                <Text style={styles.voucherApplyText}>Apply</Text>
-              </Pressable>
-            </View>
-          )}
-          {!voucherApplied && (
-            <Text style={styles.voucherHint}>Try JALI50 for 50% off your order!</Text>
-          )}
-        </View>
 
-        {/* Order summary */}
-        <View style={styles.card}>
-          <View style={styles.summaryTitleRow}>
-            <Text style={styles.summaryIcon}>🧾</Text>
-            <Text style={styles.summaryTitle}>Order Summary</Text>
-          </View>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryLabel}>Subtotal</Text>
-            <Text style={styles.summaryValue}>{peso(subtotal)}</Text>
-          </View>
-          {discount > 0 && (
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryDiscountLabel}>Voucher Discount</Text>
-              <Text style={styles.summaryDiscountValue}>−{peso(discount)}</Text>
+            {/* Order summary */}
+            <View style={styles.card}>
+              <View style={styles.summaryTitleRow}>
+                <Text style={styles.summaryIcon}>🧾</Text>
+                <Text style={styles.summaryTitle}>Order Summary</Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Subtotal</Text>
+                <Text style={styles.summaryValue}>{peso(subtotal)}</Text>
+              </View>
+              {discount > 0 && (
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryDiscountLabel}>Voucher Discount</Text>
+                  <Text style={styles.summaryDiscountValue}>−{peso(discount)}</Text>
+                </View>
+              )}
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryFeeLabel}>Delivery Fee</Text>
+                <Text style={styles.summaryFeeValue}>+{peso(deliveryFee)} (est.)</Text>
+              </View>
+              <View style={[styles.summaryRow, styles.summaryTotalRow]}>
+                <Text style={styles.summaryTotalLabel}>Total</Text>
+                <Text style={styles.summaryTotalValue}>{peso(total)}</Text>
+              </View>
+              {earnPreview > 0 && (
+                <View style={styles.summaryRow}>
+                  <Text style={styles.earnLabel}>⭐ You&apos;ll earn {earnPreview} pts on delivery</Text>
+                </View>
+              )}
             </View>
-          )}
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryFeeLabel}>Delivery Fee</Text>
-            <Text style={styles.summaryFeeValue}>+{peso(deliveryFee)} (est.)</Text>
-          </View>
-          <View style={[styles.summaryRow, styles.summaryTotalRow]}>
-            <Text style={styles.summaryTotalLabel}>Total</Text>
-            <Text style={styles.summaryTotalValue}>{peso(total)}</Text>
-          </View>
-        </View>
+          </>
+        )}
       </ScrollView>
 
       {/* Sticky checkout button */}
-      <View style={styles.checkoutBar}>
-        <Pressable style={({ pressed }) => [styles.checkoutButton, pressed && styles.pressed]}>
-          <Text style={styles.checkoutText}>Checkout · {peso(total)}</Text>
-          <Text style={styles.checkoutArrow}>›</Text>
-        </Pressable>
-      </View>
+      {cartItems.length > 0 && (
+        <View style={styles.checkoutBar}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Place order for ${peso(total)}`}
+            onPress={handlePlaceOrder}
+            style={({ pressed }) => [styles.checkoutButton, pressed && styles.pressed]}>
+            <Text style={styles.checkoutText}>Place Order · {peso(total)}</Text>
+            <Text style={styles.checkoutArrow}>›</Text>
+          </Pressable>
+        </View>
+      )}
     </View>
   );
 }
@@ -246,6 +243,10 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { padding: 16, paddingBottom: BottomTabInset + 100, gap: 12 },
   pressed: { opacity: 0.8 },
+  emptyBox: { alignItems: 'center', paddingVertical: 72, gap: 6 },
+  emptyIcon: { fontSize: 56 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: TEXT_DARK },
+  emptyMessage: { fontSize: 13, color: TEXT_GRAY, textAlign: 'center' },
   card: { backgroundColor: CARD, borderRadius: 14, padding: 12 },
   cardRow: {
     flexDirection: 'row',
@@ -270,12 +271,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
   },
-  itemName: { flex: 1, fontSize: 15, fontWeight: '700', color: TEXT_DARK },
+  itemNameWrap: { flex: 1, alignItems: 'flex-start', gap: 4 },
+  itemName: { fontSize: 15, fontWeight: '700', color: TEXT_DARK },
+  rewardBadge: { backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  rewardBadgeText: { fontSize: 9, fontWeight: '800', color: '#15803D' },
+  dealBadge: { backgroundColor: '#FFEDD5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  dealBadgeText: { fontSize: 9, fontWeight: '800', color: '#C2410C' },
   removeButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
   removeIcon: { fontSize: 14, color: '#C7C7CC' },
   itemVariant: { fontSize: 12, color: TEXT_GRAY },
-  itemMeta: { fontSize: 12, color: TEXT_GRAY },
-  itemInstructions: { fontSize: 12, fontStyle: 'italic', color: TEXT_GRAY },
   itemBottomRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -291,6 +295,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  qtyButtonDisabled: { backgroundColor: '#C7C7CC' },
   qtyPressed: { opacity: 0.8, transform: [{ scale: 0.95 }] },
   qtyButtonText: { fontSize: 16, lineHeight: 18, fontWeight: '700', color: '#FFFFFF' },
   qtyValue: { minWidth: 18, textAlign: 'center', fontSize: 14, fontWeight: '700', color: TEXT_DARK },
@@ -352,6 +357,7 @@ const styles = StyleSheet.create({
   },
   summaryTotalLabel: { fontSize: 15, fontWeight: '800', color: TEXT_DARK },
   summaryTotalValue: { fontSize: 16, fontWeight: '800', color: RED },
+  earnLabel: { fontSize: 12, fontWeight: '700', color: GREEN },
   checkoutBar: {
     paddingHorizontal: 16,
     paddingVertical: 12,
