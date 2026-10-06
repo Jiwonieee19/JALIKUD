@@ -1,17 +1,25 @@
 import { useMemo, useState } from 'react'
+import CategoryModal, { type CategoryPayload } from '../components/CategoryModal'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import EmptyState from '../components/ui/EmptyState'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
+import MenuThumb from '../components/ui/MenuThumb'
 import Modal from '../components/ui/Modal'
 import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Textarea from '../components/ui/Textarea'
-import { categoryName, mockCategories, mockMenuItems, peso } from '../mock'
-import MenuThumb from '../components/ui/MenuThumb'
-import type { MenuItem } from '../types'
+import { mockCategories, mockMenuItems, paginate, peso } from '../mock'
+import type { Category, MenuItem } from '../types'
+
+/**
+ * Rows per page. `GET /api/menu` defaults to `per_page(15)`
+ * (MenuItemController.php:23), so pass this as `per_page` on integration —
+ * `PaginationRequest` caps it at 100.
+ */
+const PER_PAGE = 10
 
 /**
  * MOCK-DATA PAGE — stands in for:
@@ -33,6 +41,7 @@ export default function AdminMenuPage() {
   const [tab, setTab] = useState<'items' | 'categories'>('items')
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<'all' | string>('all')
+  const [page, setPage] = useState(1)
   const [editing, setEditing] = useState<MenuItem | null>(null)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState({
@@ -46,9 +55,28 @@ export default function AdminMenuPage() {
   })
   const [toast, setToast] = useState<string | null>(null)
 
-  const rows = useMemo(() => {
+  // Categories and items are held in component state rather than read straight
+  // from the fixture, because the category modal can now *move* meals between
+  // categories. Without local state the reassignment has nowhere to land and
+  // every count on the page would still read the unedited mock. The mock
+  // modules stay as the seed values; `categoryName()` from mock/menu.ts is no
+  // longer used since it also resolves against the fixture and would ignore a
+  // rename.
+  const [categories, setCategories] = useState<Category[]>(mockCategories)
+  const [items, setItems] = useState<MenuItem[]>(mockMenuItems)
+
+  const [categoryModal, setCategoryModal] = useState<{ open: boolean; category: Category | null }>({
+    open: false,
+    category: null,
+  })
+
+  function nameOfCategory(id: number): string {
+    return categories.find((category) => category.id === id)?.name ?? 'Uncategorised'
+  }
+
+  const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
-    return mockMenuItems.filter((item) => {
+    return items.filter((item) => {
       const matchesCategory = categoryFilter === 'all' || item.category_id === Number(categoryFilter)
       const matchesSearch =
         term.length === 0 ||
@@ -56,19 +84,39 @@ export default function AdminMenuPage() {
         (item.sku ?? '').toLowerCase().includes(term)
       return matchesCategory && matchesSearch
     })
-  }, [search, categoryFilter])
+  }, [items, search, categoryFilter])
 
-  const soldOut = mockMenuItems.filter((item) => !item.is_available).length
+  // Pagination is client-side against the fixture, but shaped exactly like
+  // Laravel's paginator envelope so wiring GET /menu is a one-line swap:
+  // replace paginate(filtered, clamped, PER_PAGE) with the API response and read
+  // response.data / response.meta. See mock/users.ts -> paginate().
+  //
+  // `clamped` guards a real failure mode: paginate() floors page at 1 but does
+  // not cap it, so page 2 of a 1-page set returns zero rows. Unreachable today
+  // (Next is disabled at the last page and filters reset to 1), but one guard
+  // away from a blank table if either is changed.
+  const lastPage = Math.max(1, Math.ceil(filtered.length / PER_PAGE))
+  const clamped = Math.min(page, lastPage)
+  const { data: rows, meta } = paginate(filtered, clamped, PER_PAGE)
+
+  const soldOut = items.filter((item) => !item.is_available).length
 
   function flash(message: string) {
     setToast(message)
     window.setTimeout(() => setToast(null), 2600)
   }
 
+  function applyMoves(movingIds: number[], moveTargetId: number | null) {
+    if (movingIds.length === 0 || moveTargetId === null) return
+    setItems((current) =>
+      current.map((item) => (movingIds.includes(item.id) ? { ...item, category_id: moveTargetId } : item)),
+    )
+  }
+
   function openCreate() {
     setDraft({
       name: '',
-      category_id: String(mockCategories[0]?.id ?? 1),
+      category_id: String(categories[0]?.id ?? 1),
       description: '',
       sku: '',
       image_url: null,
@@ -76,6 +124,65 @@ export default function AdminMenuPage() {
       preparation_time_minutes: '10',
     })
     setCreating(true)
+  }
+
+  function openCreateCategory() {
+    setCategoryModal({ open: true, category: null })
+  }
+
+  function openEditCategory(category: Category) {
+    setCategoryModal({ open: true, category })
+  }
+
+  function closeCategoryModal() {
+    setCategoryModal({ open: false, category: null })
+  }
+
+  function saveCategory(payload: CategoryPayload, movingIds: number[], moveTargetId: number | null) {
+    const target = categoryModal.category
+
+    applyMoves(movingIds, moveTargetId)
+
+    if (target) {
+      // sort_order is preserved on edit: the modal no longer exposes it, so it
+      // must not be clobbered by an absent key.
+      setCategories((current) =>
+        current.map((category) => (category.id === target.id ? { ...category, ...payload } : category)),
+      )
+      const moved = movingIds.length
+      flash(
+        moved > 0
+          ? `${payload.name} updated · ${moved} meal${moved === 1 ? '' : 's'} moved to ${nameOfCategory(moveTargetId!)}`
+          : `${payload.name} updated`,
+      )
+    } else {
+      const nextId = categories.reduce((max, category) => Math.max(max, category.id), 0) + 1
+      const nextSortOrder = categories.reduce((max, category) => Math.max(max, category.sort_order), 0) + 1
+      setCategories((current) => [
+        ...current,
+        {
+          id: nextId,
+          parent_id: null,
+          created_at: null,
+          updated_at: null,
+          image_url: null,
+          sort_order: nextSortOrder,
+          ...payload,
+        },
+      ])
+      flash(`${payload.name} created`)
+    }
+
+    closeCategoryModal()
+  }
+
+  function deleteCategory(category: Category, movingIds: number[], moveTargetId: number | null) {
+    // Moves are applied in the same action so "uncheck everything, then delete"
+    // does not silently discard the reassignment the admin just made.
+    applyMoves(movingIds, moveTargetId)
+    setCategories((current) => current.filter((candidate) => candidate.id !== category.id))
+    flash(`${category.name} deleted`)
+    closeCategoryModal()
   }
 
   function openEdit(item: MenuItem) {
@@ -97,13 +204,17 @@ export default function AdminMenuPage() {
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">Menu</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {mockMenuItems.length} items across {mockCategories.length} categories ·{' '}
+            {items.length} items across {categories.length} categories ·{' '}
             <span className={soldOut > 0 ? 'font-bold text-red-600 dark:text-red-400' : ''}>
               {soldOut} sold out
             </span>
           </p>
         </div>
-        <Button onClick={openCreate}>Add menu item</Button>
+        {tab === 'items' ? (
+          <Button onClick={openCreate}>Add menu item</Button>
+        ) : (
+          <Button onClick={openCreateCategory}>Add category</Button>
+        )}
       </header>
 
       <div className="flex gap-2">
@@ -129,24 +240,36 @@ export default function AdminMenuPage() {
             <Input
               type="search"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value)
+                setPage(1)
+              }}
               placeholder="Search name or SKU…"
               aria-label="Search menu items"
               className="max-w-xs"
             />
-            <Select
-              aria-label="Filter by category"
-              value={categoryFilter}
-              onChange={(event) => setCategoryFilter(event.target.value)}
-              className="w-52"
-            >
-              <option value="all">All categories</option>
-              {mockCategories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
-            </Select>
+            <div className="w-52">
+              <Select
+                aria-label="Filter by category"
+                value={categoryFilter}
+                onChange={(event) => {
+                  setCategoryFilter(event.target.value)
+                  setPage(1)
+                }}
+              >
+                <option value="all">All categories</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <p className="ml-auto self-center text-sm text-slate-500 dark:text-slate-400">
+              Showing <span className="font-bold tabular-nums">{rows.length}</span> of{' '}
+              <span className="font-bold tabular-nums">{filtered.length}</span> item
+              {filtered.length === 1 ? '' : 's'}
+            </p>
           </div>
 
           {rows.length === 0 ? (
@@ -174,7 +297,7 @@ export default function AdminMenuPage() {
                 {
                   key: 'category',
                   header: 'Category',
-                  render: (item: MenuItem) => categoryName(item.category_id),
+                  render: (item: MenuItem) => nameOfCategory(item.category_id),
                 },
                 {
                   key: 'price',
@@ -219,11 +342,35 @@ export default function AdminMenuPage() {
               ]}
             />
           )}
+
+          {meta.last_page > 1 && (
+            <div className="flex items-center justify-between border-t border-slate-100 pt-4 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
+              <span>
+                Page {meta.current_page} of {meta.last_page}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  disabled={meta.current_page <= 1}
+                  onClick={() => setPage((current) => current - 1)}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={meta.current_page >= meta.last_page}
+                  onClick={() => setPage((current) => current + 1)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
       ) : (
         <Card>
           <Table
-            rows={mockCategories}
+            rows={categories}
             rowKey={(category) => category.id}
             columns={[
 {
@@ -232,12 +379,9 @@ export default function AdminMenuPage() {
                   render: (category) => (
                     <div className="flex items-center gap-3">
                       <MenuThumb src={category.image_url} name={category.name} size="sm" />
-                      <div className="min-w-0">
-                        <p className="font-extrabold text-slate-900 dark:text-white">
-                          {category.name}
-                        </p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">{category.slug}</p>
-                      </div>
+                      <p className="min-w-0 truncate font-extrabold text-slate-900 dark:text-white">
+                        {category.name}
+                      </p>
                     </div>
                   ),
                 },
@@ -245,8 +389,7 @@ export default function AdminMenuPage() {
                 key: 'count',
                 header: 'Items',
                 align: 'center',
-                render: (category) =>
-                  mockMenuItems.filter((item) => item.category_id === category.id).length,
+                render: (category) => items.filter((item) => item.category_id === category.id).length,
               },
               {
                 key: 'order',
@@ -265,7 +408,11 @@ export default function AdminMenuPage() {
                 header: '',
                 align: 'right',
                 render: (category) => (
-                  <Button variant="ghost" className="px-2.5 py-1 text-xs" onClick={() => flash(`Editing ${category.name}`)}>
+                  <Button
+                    variant="ghost"
+                    className="px-2.5 py-1 text-xs"
+                    onClick={() => openEditCategory(category)}
+                  >
                     Edit
                   </Button>
                 ),
@@ -354,7 +501,7 @@ export default function AdminMenuPage() {
               value={draft.category_id}
               onChange={(event) => setDraft({ ...draft, category_id: event.target.value })}
             >
-              {mockCategories.map((category) => (
+              {categories.map((category) => (
                 <option key={category.id} value={category.id}>
                   {category.name}
                 </option>
@@ -412,6 +559,17 @@ export default function AdminMenuPage() {
           </div>
         </div>
       </Modal>
+
+      {categoryModal.open && (
+        <CategoryModal
+          category={categoryModal.category}
+          categories={categories}
+          items={items}
+          onClose={closeCategoryModal}
+          onSave={saveCategory}
+          onDelete={deleteCategory}
+        />
+      )}
 
       {toast && (
         <div

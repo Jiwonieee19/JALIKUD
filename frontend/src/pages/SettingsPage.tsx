@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../context/AuthContext'
-import api from '../services/api'
-import type { User } from '../types'
+import * as mockAccountApi from '../mock/accountApi'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
 import Input from '../components/ui/Input'
@@ -9,17 +8,15 @@ import Label from '../components/ui/Label'
 import ThemeToggle from '../components/ui/ThemeToggle'
 
 /**
- * ⚠️ THIS PAGE IS NOT MOCKED — it is the one remaining screen that calls the
- * real API, because PUT /api/profile and PUT /api/password both exist on the
- * backend and are worth exercising. Saving either form will fail while no
- * backend is running on :8000.
+ * Data comes from src/mock/accountApi.ts so this page renders with no backend,
+ * like every other screen. It was previously the only page hitting the real API.
  *
- * TODO(next-dev): if you want this page standalone like the others, add
- * src/mock/accountApi.ts (see API_WIRING.md § "Auth") and swap the two calls
- * below.
+ * TODO(next-dev): delete that mock, restore `import api from '../services/api'`,
+ * and uncomment the two real calls inside handleProfileSubmit / handlePasswordSubmit.
+ * See docs/API_WIRING.md → "Auth".
  *
  * `name` is a single field because the backend has a single `name` column —
- * there is no first_name / last_name anywhere. See docs/ACCOUNT_LIFECYCLE.md.
+ * there is no first_name / last_name anywhere. See docs/ACCOUNT_LIFECYCLE.md §4.1.
  */
 
 interface ValidationErrors {
@@ -67,8 +64,10 @@ export default function SettingsPage() {
     setProfileFeedback(null)
     setSavingProfile(true)
     try {
-      const response = await api.put<{ user: User }>('/profile', { name, email })
-      updateUser(response.data.user)
+      // TODO(next-dev): restore the real call, then delete mock/accountApi.ts
+      //   const response = await api.put<{ user: User }>('/profile', { name, email })
+      const response = await mockAccountApi.updateProfile({ name, email })
+      updateUser(response.user)
       setProfileFeedback({ type: 'success', message: 'Profile updated successfully.' })
     } catch (err) {
       const [errors, general] = extractErrors(err)
@@ -89,7 +88,13 @@ export default function SettingsPage() {
     setPasswordFeedback(null)
     setSavingPassword(true)
     try {
-      await api.put('/password', {
+      // TODO(next-dev): restore the real call, then delete mock/accountApi.ts
+      //   await api.put('/password', {
+      //     current_password: currentPassword,
+      //     password: newPassword,
+      //     password_confirmation: newPasswordConfirmation,
+      //   })
+      await mockAccountApi.updatePassword({
         current_password: currentPassword,
         password: newPassword,
         password_confirmation: newPasswordConfirmation,

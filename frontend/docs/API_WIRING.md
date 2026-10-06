@@ -53,6 +53,26 @@ before any `/admin/users` call will succeed:
 UPDATE users SET role='admin', updated_at=now() WHERE email='you@email.com';
 ```
 
+### Profile & password — `src/mock/accountApi.ts`
+| Method | Real call | Auth |
+|---|---|---|
+| `updateProfile()` | `PUT /api/profile` `{ name, email }` | `auth:sanctum` |
+| `updatePassword()` | `PUT /api/password` `{ current_password, password, password_confirmation }` | `auth:sanctum` |
+
+Both endpoints exist and work on the backend today. The mock mirrors
+`UpdateProfileRequest` and `UpdatePasswordRequest` exactly, including the
+`current_password:sanctum` check and `App\Rules\StrongPassword`, so the form's
+validation and error states behave identically once swapped.
+
+Mock password for `current_password` is `Password123` (defined in the module —
+`mockCurrentUser` carries no password, since it's the shape `GET /api/user`
+returns).
+
+This was the **last page calling the live API**. As of 2026-09-29 the frontend
+has **zero executable network calls** — every screen reads from `src/mock/`, and
+every `services/api` reference in the repo is either a `localStorage` helper or a
+`TODO(next-dev)` comment.
+
 ### Admin users — `src/mock/adminUsersApi.ts`
 | Method | Real call |
 |---|---|
