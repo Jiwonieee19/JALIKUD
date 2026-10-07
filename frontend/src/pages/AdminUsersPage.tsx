@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import api, { fieldError } from '../services/api'
+import Pagination from '../components/ui/Pagination'
 import type { AdminUser } from '../types'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -32,6 +33,13 @@ interface PaginatorMeta {
   per_page: number
   total: number
 }
+
+/**
+ * Rows per page. Sent as `per_page` so the server does the slicing; the endpoint
+ * defaults to 15 (AdminUserController.php:26) and PaginationRequest caps it at
+ * 100.
+ */
+const PER_PAGE = 7
 
 interface FormState {
   name: string
@@ -123,7 +131,7 @@ export default function AdminUsersPage() {
     setLoading(true)
     try {
       const response = await api.get<{ data: AdminUser[]; meta: PaginatorMeta }>('/admin/users', {
-        params: { search: search || undefined, page },
+        params: { search: search || undefined, page, per_page: PER_PAGE },
       })
       setUsers(response.data.data)
       setMeta(response.data.meta)
@@ -344,23 +352,16 @@ export default function AdminUsersPage() {
             </table>
           </div>
 
-          {meta && meta.last_page > 1 && (
-            <div className="flex items-center justify-between pt-4 text-sm text-slate-500 dark:text-slate-400">
-              <span>
-                Page {meta.current_page} of {meta.last_page}
-              </span>
-              <div className="flex gap-2">
-                <Button variant="secondary" disabled={meta.current_page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  Previous
-                </Button>
-                <Button
-                  variant="secondary"
-                  disabled={meta.current_page >= meta.last_page}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
+          {meta && (
+            <div className="pt-4">
+              <Pagination
+                page={meta.current_page}
+                lastPage={meta.last_page}
+                total={meta.total}
+                perPage={meta.per_page}
+                itemLabel="users"
+                onPageChange={setPage}
+              />
             </div>
           )}
         </Card>

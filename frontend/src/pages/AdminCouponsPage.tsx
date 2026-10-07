@@ -6,10 +6,11 @@ import EmptyState from '../components/ui/EmptyState'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
 import Modal from '../components/ui/Modal'
+import Pagination from '../components/ui/Pagination'
 import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Tabs from '../components/ui/Tabs'
-import { formatDate, peso } from '../mock'
+import { formatDate, paginate, peso } from '../mock'
 import api, { fieldError } from '../services/api'
 import { unwrapList } from '../services/lists'
 import type { Coupon } from '../types'
@@ -43,6 +44,9 @@ import type { Coupon } from '../types'
  * reason to allow it, so the cap sits below it rather than at it.
  */
 const PERCENT_MAX = 90
+
+/** Rows per page in the coupon table. */
+const PER_PAGE = 7
 
 /** Below this a percentage is not worth a coupon row, so it is not accepted. */
 const PERCENT_MIN = 5
@@ -93,6 +97,7 @@ function expiryLabel(coupon: Coupon): string {
 export default function AdminCouponsPage() {
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [editing, setEditing] = useState<Coupon | null>(null)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState({
@@ -145,6 +150,14 @@ export default function AdminCouponsPage() {
   }, [coupons, filter, search])
 
   const activeCount = coupons.filter((coupon) => coupon.is_active).length
+
+  // Paged client-side: the endpoint has no search/status params yet, so the whole
+  // set is fetched at the API's 100-row cap and filtered here first.
+  const { data: pagedRows, meta } = paginate(
+    rows,
+    Math.min(page, Math.max(1, Math.ceil(rows.length / PER_PAGE))),
+    PER_PAGE,
+  )
 
   function flash(message: string) {
     setToast(message)
@@ -482,7 +495,10 @@ export default function AdminCouponsPage() {
 
       <Tabs
         value={filter}
-        onChange={setFilter}
+        onChange={(next) => {
+          setFilter(next)
+          setPage(1)
+        }}
         options={[
           { value: 'all', label: 'All', count: coupons.length },
           { value: 'active', label: 'Active', count: activeCount },
@@ -495,7 +511,10 @@ export default function AdminCouponsPage() {
           <Input
             type="search"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value)
+              setPage(1)
+            }}
             placeholder="Search by code…"
             aria-label="Search coupons"
             className="max-w-xs"
@@ -512,7 +531,7 @@ export default function AdminCouponsPage() {
           <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">Loading…</p>
         ) : (
           <Table
-            rows={rows}
+            rows={pagedRows}
             rowKey={(coupon) => coupon.id}
             columns={[
               {
@@ -603,6 +622,17 @@ export default function AdminCouponsPage() {
             ]}
           />
         )}
+
+        <div className="mt-4">
+          <Pagination
+            page={meta.current_page}
+            lastPage={meta.last_page}
+            total={meta.total}
+            perPage={meta.per_page}
+            itemLabel="coupons"
+            onPageChange={setPage}
+          />
+        </div>
       </Card>
 
       <Modal

@@ -1,4 +1,5 @@
 import CategoryModal, { slugify, type CategoryPayload } from '../components/CategoryModal'
+import Pagination from '../components/ui/Pagination'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -21,7 +22,9 @@ import type { Category, MenuItem } from '../types'
  * (MenuItemController.php:23), so pass this as `per_page` on integration —
  * `PaginationRequest` caps it at 100.
  */
-const PER_PAGE = 10
+const PER_PAGE = 7
+
+const CATEGORY_PER_PAGE = 7
 
 /**
  * Upper bound accepted by PaginationRequest (min:1, max:100).
@@ -68,6 +71,7 @@ export default function AdminMenuPage() {
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<'all' | string>('all')
   const [page, setPage] = useState(1)
+  const [categoryPage, setCategoryPage] = useState(1)
   const [editing, setEditing] = useState<MenuItem | null>(null)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState({
@@ -150,6 +154,13 @@ export default function AdminMenuPage() {
   const lastPage = Math.max(1, Math.ceil(filtered.length / PER_PAGE))
   const clamped = Math.min(page, lastPage)
   const { data: rows, meta } = paginate(filtered, clamped, PER_PAGE)
+
+  // Categories get their own pager; the two tabs are never on screen at once.
+  const { data: categoryRows, meta: categoryMeta } = paginate(
+    categories,
+    Math.min(categoryPage, Math.max(1, Math.ceil(categories.length / CATEGORY_PER_PAGE))),
+    CATEGORY_PER_PAGE,
+  )
 
   const soldOut = items.filter((item) => !item.is_available).length
 
@@ -580,37 +591,24 @@ export default function AdminMenuPage() {
             />
           )}
 
-          {meta.last_page > 1 && (
-            <div className="flex items-center justify-between border-t border-slate-100 pt-4 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
-              <span>
-                Page {meta.current_page} of {meta.last_page}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={meta.current_page <= 1}
-                  onClick={() => setPage((current) => current - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="secondary"
-                  disabled={meta.current_page >= meta.last_page}
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
+          <div className="mt-4">
+            <Pagination
+              page={meta.current_page}
+              lastPage={meta.last_page}
+              total={meta.total}
+              perPage={meta.per_page}
+              itemLabel="items"
+              onPageChange={setPage}
+            />
+          </div>
         </Card>
       ) : (
         <Card>
           <Table
-            rows={categories}
+            rows={categoryRows}
             rowKey={(category) => category.id}
             columns={[
-{
+              {
                   key: 'name',
                   header: 'Category',
                   render: (category) => (
@@ -656,6 +654,16 @@ export default function AdminMenuPage() {
               },
             ]}
           />
+          <div className="mt-4">
+            <Pagination
+              page={categoryMeta.current_page}
+              lastPage={categoryMeta.last_page}
+              total={categoryMeta.total}
+              perPage={categoryMeta.per_page}
+              itemLabel="categories"
+              onPageChange={setCategoryPage}
+            />
+          </div>
         </Card>
       )}
 
