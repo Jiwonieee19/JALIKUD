@@ -1,9 +1,10 @@
 import { Link, Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { DEMO_CREDENTIALS, useAuthDemo } from '@/context/auth-demo-context';
+import { routeForRole, useAuth } from '@/context/auth-context';
+import { errorMessage } from '@/lib/api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -14,31 +15,26 @@ const TEXT_DARK = '#1C1C1E';
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { signIn } = useAuthDemo();
+  const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleSignIn = () => {
-    const result = signIn(email, password);
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
+  const handleSignIn = async () => {
+    if (submitting) return;
     setError('');
-    setPassword('');
-    // Route by the signed-in account's role.
-    const normalized = email.trim().toLowerCase();
-    if (normalized === DEMO_CREDENTIALS.staffEmail) {
-      router.replace('/staff/orders');
-      return;
+    setSubmitting(true);
+    try {
+      const user = await login({ email, password });
+      setPassword('');
+      router.replace(routeForRole(user.role));
+    } catch (caught) {
+      setError(errorMessage(caught, 'Unable to sign in. Please try again.'));
+    } finally {
+      setSubmitting(false);
     }
-    if (normalized === DEMO_CREDENTIALS.riderEmail) {
-      router.replace('/rider/deliveries');
-      return;
-    }
-    router.replace('/(tabs)/menu');
   };
 
   return (
@@ -106,9 +102,11 @@ export default function LoginScreen() {
               )}
 
               <Pressable
-                style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}
-                onPress={handleSignIn}>
-                <Text style={styles.submitText}>Sign In</Text>
+                accessibilityRole="button"
+                disabled={submitting}
+                style={({ pressed }) => [styles.submitButton, (pressed || submitting) && styles.pressed]}
+                onPress={() => void handleSignIn()}>
+                {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.submitText}>Sign In</Text>}
               </Pressable>
 
               <Link href="/register" style={styles.registerLink}>

@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,12 +10,13 @@ import {
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 
 import { BottomTabInset } from '@/constants/theme';
-import { useAuthDemo } from '@/context/auth-demo-context';
-import { useDeliveryDemo } from '@/context/delivery-demo-context';
-import { useStaffDemo, type StaffOrder, type StaffOrderStatus } from '@/context/staff-demo-context';
+import { useAuth } from '@/context/auth-context';
+import { errorMessage } from '@/lib/api';
+import { staffApi, type OrderStatus, type StaffOrder } from '@/lib/staff-api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -22,96 +24,180 @@ const TEXT = '#1C1C1E';
 const GRAY = '#74747C';
 const REJECTION_REASONS = ['Item sold out', 'Item temporarily unavailable', 'Store too busy', 'Other'];
 
-const FILTERS: { value: StaffOrderStatus; label: string }[] = [
+type QueueFilter = 'incoming' | 'active' | 'completed' | 'cancelled';
+
+const FILTERS: { value: QueueFilter; label: string }[] = [
   { value: 'incoming', label: 'Incoming' },
-  { value: 'confirmed', label: 'Confirmed' },
-  { value: 'rejected', label: 'Rejected' },
+  { value: 'active', label: 'Active' },
+  { value: 'completed', label: 'Done' },
+  { value: 'cancelled', label: 'Cancelled' },
 ];
+
+const NEXT_STATUS: Partial<Record<OrderStatus, { status: OrderStatus; label: string }>> = {
+  confirmed: { status: 'preparing', label: 'Start preparing' },
+  preparing: { status: 'ready', label: 'Mark ready' },
+};
 
 function peso(value: number): string {
   return `₱${value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
 }
 
+function queueOf(status: OrderStatus): QueueFilter {
+  if (status === 'pending') return 'incoming';
+  if (status === 'completed') return 'completed';
+  if (status === 'cancelled') return 'cancelled';
+  return 'active';
+}
+
+function formatMeta(order: StaffOrder): string {
+  const date = new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(
+    new Date(order.placed_at),
+  );
+  return `${date} · ${order.user?.name ?? 'Customer'}`;
+}
+
 function OrderCard({
   order,
+  busy,
   onConfirm,
   onReject,
+  onAdvance,
   onAssign,
+  onMarkPaid,
 }: {
   order: StaffOrder;
+  busy: boolean;
   onConfirm: () => void;
   onReject: () => void;
+  onAdvance: (next: OrderStatus, label: string) => void;
   onAssign?: () => void;
+  onMarkPaid: () => void;
 }) {
+  const isDelivery = order.order_type === 'delivery';
+  const advance = NEXT_STATUS[order.status];
+  const items = order.order_items ?? [];
   return (
     <View style={styles.card}>
       <View style={styles.orderHeader}>
         <View style={styles.orderHeaderCopy}>
-          <Text style={styles.orderNumber}>{order.orderNumber}</Text>
-          <Text style={styles.orderMeta}>{order.receivedAt} · {order.customer}</Text>
+          <Text style={styles.orderNumber}>{order.order_number}</Text>
+          <Text style={styles.orderMeta}>{formatMeta(order)}</Text>
         </View>
-        <View style={[styles.typeBadge, order.type === 'Pickup' && styles.pickupBadge]}>
-          <Text style={[styles.typeText, order.type === 'Pickup' && styles.pickupText]}>
-            {order.type === 'Delivery' ? '🛵 ' : '🏪 '}{order.type}
+        <View style={[styles.typeBadge, !isDelivery && styles.pickupBadge]}>
+          <Text style={[styles.typeText, !isDelivery && styles.pickupText]}>
+            {isDelivery ? '🛵 ' : '🏪 '}{isDelivery ? 'Delivery' : 'Pickup'}
           </Text>
         </View>
       </View>
 
       <View style={styles.itemsBox}>
-        {order.items.map((item) => (
-          <View key={`${order.id}-${item.name}`} style={styles.itemRow}>
+        {items.map((item) => (
+          <View key={`${order.id}-${item.id}`} style={styles.itemRow}>
             <Text style={styles.itemQuantity}>{item.quantity}×</Text>
             <View style={styles.itemCopy}>
-              <Text style={styles.itemName}>{item.name}</Text>
-              {item.note && <Text style={styles.itemNote}>Note: {item.note}</Text>}
+              <Text style={styles.itemName}>{item.item_name}</Text>
             </View>
           </View>
         ))}
       </View>
 
-      {order.status === 'rejected' && (
+      {order.status === 'cancelled' && (
         <View style={styles.rejectedBox}>
-          <Text style={styles.rejectedTitle}>Rejected: {order.rejectionReason}</Text>
-          {order.staffNote && <Text style={styles.rejectedNote}>{order.staffNote}</Text>}
+          <Text style={styles.rejectedTitle}>Cancelled</Text>
         </View>
       )}
+
+      {!!order.rider && (
+        <Text style={styles.riderChip}>🛵 Rider: {order.rider.name}</Text>
+      )}
+
+      <View style={styles.paymentRow}>
+        <Text style={styles.paymentLabel}>
+          {order.payment_method === 'gcash' ? '📱 GCash' : '💵 COD'} · {order.payment_status === 'paid' ? 'Paid ✓' : 'Unpaid'}
+        </Text>
+        {order.payment_status !== 'paid' && order.status !== 'cancelled' && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Confirm payment for ${order.order_number}`}
+            disabled={busy}
+            onPress={onMarkPaid}
+            style={({ pressed }) => [styles.payButton, pressed && styles.pressed]}>
+            <Text style={styles.payButtonText}>Mark paid</Text>
+          </Pressable>
+        )}
+      </View>
 
       <View style={styles.footer}>
         <View>
           <Text style={styles.totalLabel}>Order total</Text>
-          <Text style={styles.total}>{peso(order.total)}</Text>
+          <Text style={styles.total}>{peso(Number(order.total_amount))}</Text>
         </View>
-        {order.status === 'incoming' ? (
+        {order.status === 'pending' ? (
           <View style={styles.actions}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Reject order ${order.orderNumber}`}
+              accessibilityLabel={`Reject order ${order.order_number}`}
+              disabled={busy}
               onPress={onReject}
               style={({ pressed }) => [styles.rejectButton, pressed && styles.pressed]}>
               <Text style={styles.rejectButtonText}>Reject</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Confirm order ${order.orderNumber}`}
+              accessibilityLabel={`Confirm order ${order.order_number}`}
+              disabled={busy}
               onPress={onConfirm}
               style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed]}>
               <Text style={styles.confirmButtonText}>✓ Confirm</Text>
             </Pressable>
           </View>
+        ) : advance ? (
+          <View style={styles.actions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${advance.label} for ${order.order_number}`}
+              disabled={busy}
+              onPress={() => onAdvance(advance.status, advance.label)}
+              style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed]}>
+              <Text style={styles.confirmButtonText}>{advance.label}</Text>
+            </Pressable>
+          </View>
+        ) : order.status === 'ready' && isDelivery ? (
+          <View style={[styles.statusBadge, styles.statusReady]}>
+            <Text style={[styles.statusBadgeText, styles.statusReadyText]}>Ready for rider</Text>
+          </View>
+        ) : order.status === 'ready' ? (
+          <View style={styles.actions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Complete pickup ${order.order_number}`}
+              disabled={busy}
+              onPress={() => onAdvance('completed', 'Complete pickup')}
+              style={({ pressed }) => [styles.confirmButton, pressed && styles.pressed]}>
+              <Text style={styles.confirmButtonText}>✓ Complete pickup</Text>
+            </Pressable>
+          </View>
+        ) : order.status === 'out_for_delivery' ? (
+          <View style={[styles.statusBadge, styles.statusTransit]}>
+            <Text style={[styles.statusBadgeText, styles.statusTransitText]}>On the way</Text>
+          </View>
+        ) : order.status === 'completed' ? (
+          <View style={[styles.statusBadge, styles.statusDone]}>
+            <Text style={[styles.statusBadgeText, styles.statusDoneText]}>✓ Done</Text>
+          </View>
         ) : (
-          <View style={[styles.statusBadge, order.status === 'rejected' && styles.statusRejected]}>
-            <Text style={[styles.statusBadgeText, order.status === 'rejected' && styles.statusRejectedText]}>
-              {order.status === 'confirmed' ? '✓ Confirmed' : '✕ Rejected'}
-            </Text>
+          <View style={[styles.statusBadge, styles.statusRejected]}>
+            <Text style={[styles.statusBadgeText, styles.statusRejectedText]}>✕ Cancelled</Text>
           </View>
         )}
-        {order.status === 'confirmed' && order.type === 'Delivery' && onAssign && (
+        {order.status === 'ready' && isDelivery && onAssign && (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Assign rider for order ${order.orderNumber}`}
+            accessibilityLabel={`Assign rider for order ${order.order_number}`}
+            disabled={busy}
             onPress={onAssign}
             style={({ pressed }) => [styles.assignButton, pressed && styles.pressed]}>
-            <Text style={styles.assignButtonText}>🛵 Assign rider</Text>
+            <Text style={styles.assignButtonText}>🛵 {order.rider ? 'Reassign' : 'Assign rider'}</Text>
           </Pressable>
         )}
       </View>
@@ -120,45 +206,114 @@ function OrderCard({
 }
 
 export default function StaffOrdersScreen() {
-  const { riders, assignDelivery } = useDeliveryDemo();
-  const { orders, confirmOrder, rejectOrder, addActivity } = useStaffDemo();
-  const { current } = useAuthDemo();
-  const staffInitials = (current?.name ?? 'ST')
-    .split(' ')
-    .map((part) => part[0] ?? '')
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-  const [filter, setFilter] = useState<StaffOrderStatus>('incoming');
+  const { token, user } = useAuth();
+  const insets = useSafeAreaInsets();
+  const [orders, setOrders] = useState<StaffOrder[]>([]);
+  const [riders, setRiders] = useState<{ id: number; name: string; meta: string; onDuty: boolean }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [filter, setFilter] = useState<QueueFilter>('incoming');
   const [rejectingOrder, setRejectingOrder] = useState<StaffOrder | null>(null);
   const [assigningOrder, setAssigningOrder] = useState<StaffOrder | null>(null);
-  const [selectedRiderId, setSelectedRiderId] = useState<string | null>(null);
+  const [selectedRiderId, setSelectedRiderId] = useState<number | null>(null);
   const [assignError, setAssignError] = useState('');
   const [reason, setReason] = useState(REJECTION_REASONS[0]);
   const [note, setNote] = useState('');
   const [feedback, setFeedback] = useState('');
 
-  const counts = useMemo(
-    () => ({
-      incoming: orders.filter((order) => order.status === 'incoming').length,
-      confirmed: orders.filter((order) => order.status === 'confirmed').length,
-      rejected: orders.filter((order) => order.status === 'rejected').length,
-    }),
-    [orders],
-  );
-  const shownOrders = orders.filter((order) => order.status === filter);
+  const staffInitials = (user?.name ?? 'ST')
+    .split(' ')
+    .map((part) => part[0] ?? '')
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+  const load = useCallback(async () => {
+    if (!token) return;
+    setLoadError('');
+    try {
+      const [liveOrders, liveRiders] = await Promise.all([
+        staffApi.orders(token),
+        staffApi.riders(token),
+      ]);
+      setOrders(liveOrders);
+      setRiders(
+        liveRiders.map((rider) => ({
+          id: rider.id,
+          name: rider.name,
+          meta: [rider.rider_profile?.vehicle_type, rider.rider_profile?.plate_number]
+            .filter(Boolean)
+            .join(' · ') || rider.phone || 'No vehicle on file',
+          onDuty: rider.rider_profile?.is_active === true,
+        })),
+      );
+    } catch (caught) {
+      setLoadError(errorMessage(caught, 'Could not load the order queue.'));
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useFocusEffect(useCallback(() => { void load().catch(() => undefined); }, [load]));
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    load().catch(() => undefined).finally(() => setRefreshing(false));
+  }, [load]);
+
+  const counts = useMemo(() => {
+    const grouped: Record<QueueFilter, number> = { incoming: 0, active: 0, completed: 0, cancelled: 0 };
+    for (const order of orders) grouped[queueOf(order.status)] += 1;
+    return grouped;
+  }, [orders]);
+  const shownOrders = orders.filter((order) => queueOf(order.status) === filter);
+
+  const runOn = async (id: number, operation: () => Promise<StaffOrder>, done: string) => {
+    if (!token || busyId !== null) return;
+    setBusyId(id);
+    setLoadError('');
+    try {
+      const updated = await operation();
+      setOrders((previous) => previous.map((order) => (order.id === id ? updated : order)));
+      // Assignment details (rider chip) arrive on a fresh fetch.
+      if (updated.rider_id !== undefined) void load().catch(() => undefined);
+      setFeedback(done);
+    } catch (caught) {
+      setLoadError(errorMessage(caught, 'That action failed. Try again.'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleStatus = (order: StaffOrder, next: OrderStatus, label: string) => {
+    if (!token) return;
+    void runOn(order.id, () => staffApi.updateOrderStatus(token, order.id, next), `${order.order_number}: ${label}.`);
+  };
 
   const handleConfirm = (order: StaffOrder) => {
-    confirmOrder(order.id);
-    setFeedback(
-      order.type === 'Delivery'
-        ? `${order.orderNumber} confirmed. Assign a delivery rider when it is ready.`
-        : `${order.orderNumber} confirmed. The kitchen can start preparing it.`,
+    if (!token) return;
+    void runOn(
+      order.id,
+      () => staffApi.updateOrderStatus(token, order.id, 'confirmed'),
+      order.order_type === 'delivery'
+        ? `${order.order_number} confirmed. Assign a delivery rider when it is ready.`
+        : `${order.order_number} confirmed. The kitchen can start preparing it.`,
+    );
+  };
+
+  const handleMarkPaid = (order: StaffOrder) => {
+    if (!token) return;
+    void runOn(
+      order.id,
+      () => staffApi.confirmPayment(token, order.id),
+      `${order.order_number} marked paid. Points credit when the order completes.`,
     );
   };
 
   const openAssignSheet = (order: StaffOrder) => {
-    setSelectedRiderId(null);
+    setSelectedRiderId(order.rider_id);
     setAssignError('');
     setAssigningOrder(order);
   };
@@ -170,40 +325,18 @@ export default function StaffOrdersScreen() {
   };
 
   const handleAssign = () => {
-    if (!assigningOrder) return;
-    const rider = riders.find((candidate) => candidate.id === selectedRiderId);
-    if (!rider) {
-      setAssignError('Select a rider first.');
+    if (!assigningOrder || !token || selectedRiderId == null) {
+      if (selectedRiderId == null) setAssignError('Select a rider first.');
       return;
     }
-    const target = {
-      id: `d-${assigningOrder.id}`,
-      orderNumber: assigningOrder.orderNumber,
-      customer: assigningOrder.customer,
-      phone: assigningOrder.phone ?? '0917 000 0000',
-      address: assigningOrder.address ?? 'Customer address on file',
-      items: assigningOrder.items.map((item) => ({ name: item.name, quantity: item.quantity })),
-      codAmount: assigningOrder.total,
-      distanceKm: 5.2,
-      deliveryFee: 49,
-      store: { latitude: 7.1904, longitude: 125.4539 },
-      destination: {
-        latitude: 7.0832,
-        longitude: 125.5907,
-        destinationName: assigningOrder.destinationName ?? "Customer's House",
-      },
-    };
-    assignDelivery(target, rider.id);
-    addActivity({
-      kind: 'rider_assigned',
-      title: `${rider.name} assigned to ${assigningOrder.orderNumber}`,
-      detail: `Delivery · ${assigningOrder.customer} · COD ₱${assigningOrder.total.toLocaleString('en-PH')}`,
-    });
-    setFeedback(`${rider.name} assigned to ${assigningOrder.orderNumber}. The rider app has been notified.`);
+    const rider = riders.find((candidate) => candidate.id === selectedRiderId);
+    void runOn(
+      assigningOrder.id,
+      () => staffApi.assignRider(token, assigningOrder.id, selectedRiderId),
+      `${rider?.name ?? 'Rider'} assigned to ${assigningOrder.order_number}. The rider app has been notified.`,
+    );
     closeAssignSheet();
   };
-
-  const availableRiders = riders.filter((rider) => rider.status === 'available');
 
   const closeRejectModal = () => {
     setRejectingOrder(null);
@@ -212,11 +345,17 @@ export default function StaffOrdersScreen() {
   };
 
   const handleReject = () => {
-    if (!rejectingOrder) return;
-    rejectOrder(rejectingOrder.id, reason, note);
-    setFeedback(`${rejectingOrder.orderNumber} rejected: ${reason}.`);
+    if (!rejectingOrder || !token) return;
+    const detail = note.trim() ? `${reason} — ${note.trim()}` : reason;
+    void runOn(
+      rejectingOrder.id,
+      () => staffApi.updateOrderStatus(token, rejectingOrder.id, 'cancelled', detail),
+      `${rejectingOrder.order_number} rejected: ${reason}.`,
+    );
     closeRejectModal();
   };
+
+  const availableRiders = riders.filter((rider) => rider.onDuty);
 
   return (
     <View style={styles.container}>
@@ -250,7 +389,19 @@ export default function StaffOrdersScreen() {
         ))}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}>
+        {loading && orders.length === 0 ? (
+          <View style={styles.empty}><Text style={styles.emptyIcon}>📦</Text><Text style={styles.emptyTitle}>Loading queue…</Text></View>
+        ) : null}
+        {!!loadError && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠ {loadError}</Text>
+            <Pressable onPress={onRefresh} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable>
+          </View>
+        )}
         {feedback ? (
           <Pressable accessibilityRole="button" accessibilityLabel="Dismiss message" onPress={() => setFeedback('')} style={styles.feedback}>
             <Text style={styles.feedbackIcon}>✓</Text><Text style={styles.feedbackText}>{feedback}</Text><Text style={styles.feedbackClose}>×</Text>
@@ -260,13 +411,17 @@ export default function StaffOrdersScreen() {
           <OrderCard
             key={order.id}
             order={order}
+            busy={busyId === order.id}
             onConfirm={() => handleConfirm(order)}
             onReject={() => setRejectingOrder(order)}
-            onAssign={order.type === 'Delivery' ? () => openAssignSheet(order) : undefined}
+            onAdvance={(next, label) => handleStatus(order, next, `${order.order_number}: ${label}.`)}
+            onAssign={order.order_type === 'delivery' ? () => openAssignSheet(order) : undefined}
+            onMarkPaid={() => handleMarkPaid(order)}
           />
         )) : (
-          <View style={styles.empty}><Text style={styles.emptyIcon}>🎉</Text><Text style={styles.emptyTitle}>Queue is clear</Text><Text style={styles.emptyText}>No {filter} orders right now.</Text></View>
+          !loading && <View style={styles.empty}><Text style={styles.emptyIcon}>🎉</Text><Text style={styles.emptyTitle}>Queue is clear</Text><Text style={styles.emptyText}>No {filter} orders right now.</Text></View>
         )}
+        <View style={{ height: Math.max(insets.bottom, 12) }} />
       </ScrollView>
 
       <Modal visible={rejectingOrder != null} transparent animationType="slide" onRequestClose={closeRejectModal}>
@@ -274,8 +429,8 @@ export default function StaffOrdersScreen() {
           <Pressable style={StyleSheet.absoluteFill} onPress={closeRejectModal} accessibilityLabel="Close rejection dialog" />
           <View style={styles.modalSheet}>
             <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Reject {rejectingOrder?.orderNumber}</Text>
-            <Text style={styles.modalSubtitle}>Select a reason. This will be recorded in staff activity.</Text>
+            <Text style={styles.modalTitle}>Reject {rejectingOrder?.order_number}</Text>
+            <Text style={styles.modalSubtitle}>Select a reason. The order moves to Cancelled.</Text>
             <View style={styles.reasonList}>
               {REJECTION_REASONS.map((option) => (
                 <Pressable key={option} onPress={() => setReason(option)} style={[styles.reasonOption, reason === option && styles.reasonOptionActive]}>
@@ -307,7 +462,7 @@ export default function StaffOrdersScreen() {
           <Pressable style={StyleSheet.absoluteFill} onPress={closeAssignSheet} accessibilityLabel="Close rider assignment dialog" />
           <View style={styles.modalSheet}>
             <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Assign rider · {assigningOrder?.orderNumber}</Text>
+            <Text style={styles.modalTitle}>Assign rider · {assigningOrder?.order_number}</Text>
             <Text style={styles.modalSubtitle}>
               {availableRiders.length
                 ? 'Pick an On Duty rider. They will see the delivery in their app.'
@@ -315,27 +470,20 @@ export default function StaffOrdersScreen() {
             </Text>
             <View style={styles.reasonList}>
               {riders.map((rider) => {
-                const selectable = rider.status === 'available';
                 const active = selectedRiderId === rider.id;
                 return (
                   <Pressable
                     key={rider.id}
-                    disabled={!selectable}
+                    disabled={!rider.onDuty}
                     onPress={() => setSelectedRiderId(rider.id)}
-                    style={[styles.riderOption, active && styles.riderOptionActive, !selectable && styles.riderOptionDisabled]}>
+                    style={[styles.riderOption, active && styles.riderOptionActive, !rider.onDuty && styles.riderOptionDisabled]}>
                     <View style={styles.riderAvatar}><Text style={styles.riderAvatarText}>🛵</Text></View>
                     <View style={styles.riderCopy}>
-                      <Text style={[styles.riderName, !selectable && styles.riderNameDisabled]}>{rider.name}</Text>
-                      <Text style={styles.riderMeta}>{rider.vehicle} · {rider.completedToday} today</Text>
+                      <Text style={[styles.riderName, !rider.onDuty && styles.riderNameDisabled]}>{rider.name}</Text>
+                      <Text style={styles.riderMeta}>{rider.meta}</Text>
                     </View>
-                    <View style={[styles.riderStatusChip, rider.status === 'available' && styles.riderStatusAvailable, rider.status === 'on_delivery' && styles.riderStatusBusy]}>
-                      <Text style={styles.riderStatusText}>
-                        {rider.status === 'available'
-                          ? 'On Duty'
-                          : rider.status === 'on_delivery'
-                            ? 'On Delivery'
-                            : 'Unavailable'}
-                      </Text>
+                    <View style={[styles.riderStatusChip, rider.onDuty && styles.riderStatusAvailable]}>
+                      <Text style={styles.riderStatusText}>{rider.onDuty ? 'On Duty' : 'Off Duty'}</Text>
                     </View>
                   </Pressable>
                 );
@@ -376,6 +524,10 @@ const styles = StyleSheet.create({
   feedbackIcon: { color: '#15803D', fontWeight: '900' },
   feedbackText: { flex: 1, color: '#166534', fontSize: 12, fontWeight: '600' },
   feedbackClose: { color: '#15803D', fontSize: 20 },
+  errorBox: { gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA' },
+  errorText: { color: '#B91C1C', fontSize: 12, fontWeight: '700' },
+  retryButton: { alignSelf: 'flex-start', backgroundColor: RED, borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8 },
+  retryText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   card: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
   orderHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
   orderHeaderCopy: { flex: 1 },
@@ -390,10 +542,13 @@ const styles = StyleSheet.create({
   itemQuantity: { width: 24, color: RED, fontSize: 13, fontWeight: '900' },
   itemCopy: { flex: 1 },
   itemName: { color: TEXT, fontSize: 13, fontWeight: '700' },
-  itemNote: { color: '#B45309', fontSize: 10, marginTop: 2 },
   rejectedBox: { marginTop: 10, padding: 10, borderRadius: 10, backgroundColor: '#FEF2F2' },
   rejectedTitle: { color: '#B91C1C', fontSize: 11, fontWeight: '800' },
-  rejectedNote: { color: '#991B1B', fontSize: 10, marginTop: 3 },
+  riderChip: { marginTop: 10, color: '#C2410C', fontSize: 11, fontWeight: '800' },
+  paymentRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#EEEEF1' },
+  paymentLabel: { color: GRAY, fontSize: 11, fontWeight: '700' },
+  payButton: { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9 },
+  payButtonText: { color: '#1D4ED8', fontSize: 11, fontWeight: '800' },
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
   totalLabel: { color: GRAY, fontSize: 9, textTransform: 'uppercase', fontWeight: '700' },
   total: { color: TEXT, fontSize: 17, fontWeight: '900', marginTop: 1 },
@@ -404,8 +559,14 @@ const styles = StyleSheet.create({
   confirmButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   statusBadge: { backgroundColor: '#DCFCE7', borderRadius: 9, paddingHorizontal: 11, paddingVertical: 7 },
   statusRejected: { backgroundColor: '#F3F4F6' },
+  statusReady: { backgroundColor: '#FFEDD5' },
+  statusTransit: { backgroundColor: '#E0E7FF' },
+  statusDone: { backgroundColor: '#DCFCE7' },
   statusBadgeText: { color: '#15803D', fontSize: 11, fontWeight: '800' },
   statusRejectedText: { color: GRAY },
+  statusReadyText: { color: '#C2410C' },
+  statusTransitText: { color: '#4338CA' },
+  statusDoneText: { color: '#15803D' },
   pressed: { opacity: 0.72 },
   empty: { alignItems: 'center', paddingVertical: 70 },
   emptyIcon: { fontSize: 48 },
@@ -444,7 +605,6 @@ const styles = StyleSheet.create({
   riderMeta: { color: GRAY, fontSize: 10, marginTop: 2 },
   riderStatusChip: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 999, backgroundColor: '#F3F4F6' },
   riderStatusAvailable: { backgroundColor: '#DCFCE7' },
-  riderStatusBusy: { backgroundColor: '#FEF3C7' },
   riderStatusText: { color: '#374151', fontSize: 9, fontWeight: '800' },
   assignError: { color: RED, fontSize: 11, fontWeight: '700', marginTop: 8 },
   modalAssignButton: { flex: 1, paddingVertical: 13, alignItems: 'center', borderRadius: 11, backgroundColor: RED },

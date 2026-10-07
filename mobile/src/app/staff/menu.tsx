@@ -1,67 +1,91 @@
-import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
-import { useStaffDemo, type MenuAvailability, type StaffMenuItem } from '@/context/staff-demo-context';
+import { useAuth } from '@/context/auth-context';
+import { errorMessage } from '@/lib/api';
+import { staffApi, type StaffMenuItem } from '@/lib/staff-api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
 const TEXT = '#1C1C1E';
 const GRAY = '#74747C';
-const CATEGORIES = ['All', 'Chickenjoy', 'Burgers', 'Rice Meals', 'Pasta'];
-
-const AVAILABILITY_COPY: Record<MenuAvailability, { label: string; color: string; bg: string }> = {
-  available: { label: 'Available', color: '#15803D', bg: '#DCFCE7' },
-  sold_out: { label: 'Sold out', color: '#B91C1C', bg: '#FEE2E2' },
-  unavailable: { label: 'Unavailable', color: '#B45309', bg: '#FEF3C7' },
-};
 
 function peso(value: number): string {
   return `₱${value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
 }
 
+function emojiFor(name: string): string {
+  const value = name.toLowerCase();
+  if (value.includes('burger')) return '🍔';
+  if (value.includes('spaghetti') || value.includes('pasta')) return '🍝';
+  if (value.includes('fries')) return '🍟';
+  if (value.includes('rice')) return '🍚';
+  return '🍗';
+}
+
 export default function StaffMenuScreen() {
-  const { menuItems, updateMenuAvailability } = useStaffDemo();
+  const { token } = useAuth();
+  const [items, setItems] = useState<StaffMenuItem[]>([]);
+  const [categories, setCategories] = useState<string[]>(['All']);
   const [category, setCategory] = useState('All');
   const [search, setSearch] = useState('');
-  const [selectedItem, setSelectedItem] = useState<StaffMenuItem | null>(null);
-  const [nextStatus, setNextStatus] = useState<MenuAvailability>('sold_out');
-  const [note, setNote] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
 
-  const unavailableCount = menuItems.filter((item) => item.availability !== 'available').length;
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const [menu, cats] = await Promise.all([staffApi.menu(), staffApi.categories()]);
+      setItems(menu);
+      setCategories(['All', ...cats.map((cat) => cat.name)]);
+    } catch (caught) {
+      setError(errorMessage(caught, 'Could not load the live menu.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => { void load().catch(() => undefined); }, [load]));
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    load().catch(() => undefined).finally(() => setRefreshing(false));
+  }, [load]);
+
+  const unavailableCount = items.filter((item) => !item.is_available).length;
   const visibleItems = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return menuItems.filter((item) =>
-      (category === 'All' || item.category === category) && item.name.toLowerCase().includes(term),
+    return items.filter(
+      (item) =>
+        (category === 'All' || item.category?.name === category) &&
+        item.name.toLowerCase().includes(term),
     );
-  }, [menuItems, category, search]);
+  }, [items, category, search]);
 
-  const openStatusSheet = (item: StaffMenuItem) => {
-    setSelectedItem(item);
-    setNextStatus(item.availability === 'available' ? 'sold_out' : item.availability);
-    setNote(item.statusNote ?? '');
-  };
-
-  const closeStatusSheet = () => {
-    setSelectedItem(null);
-    setNextStatus('sold_out');
-    setNote('');
-  };
-
-  const saveStatus = () => {
-    if (!selectedItem) return;
-    updateMenuAvailability(selectedItem.id, nextStatus, note);
-    const label = AVAILABILITY_COPY[nextStatus].label.toLowerCase();
-    setFeedback(`${selectedItem.name} marked ${label}. Admin notification added to Activity.`);
-    closeStatusSheet();
-  };
-
-  const restoreItem = (item: StaffMenuItem) => {
-    updateMenuAvailability(item.id, 'available', '');
-    setFeedback(`${item.name} is available again. Admin notification added to Activity.`);
+  const toggleAvailability = (item: StaffMenuItem) => {
+    if (!token || busyId !== null) return;
+    setBusyId(item.id);
+    setError('');
+    setFeedback('');
+    staffApi
+      .updateMenuAvailability(token, item.id, !item.is_available)
+      .then((updated) => {
+        setItems((previous) => previous.map((row) => (row.id === item.id ? updated : row)));
+        setFeedback(
+          updated.is_available
+            ? `${item.name} is available again on the live menu.`
+            : `${item.name} marked unavailable on the live menu.`,
+        );
+      })
+      .catch((caught) => setError(errorMessage(caught, 'Could not update availability.')))
+      .finally(() => setBusyId(null));
   };
 
   return (
@@ -71,9 +95,9 @@ export default function StaffMenuScreen() {
         <View style={styles.header}>
           <Text style={styles.eyebrow}>STORE OPERATIONS</Text>
           <Text style={styles.title}>Menu Availability</Text>
-          <Text style={styles.subtitle}>Keep the menu accurate and alert admins about stock issues.</Text>
+          <Text style={styles.subtitle}>Changes update the live customer menu immediately.</Text>
           <View style={styles.summaryRow}>
-            <View style={styles.summaryCard}><Text style={styles.summaryNumber}>{menuItems.length - unavailableCount}</Text><Text style={styles.summaryLabel}>Available</Text></View>
+            <View style={styles.summaryCard}><Text style={styles.summaryNumber}>{items.length - unavailableCount}</Text><Text style={styles.summaryLabel}>Available</Text></View>
             <View style={styles.summaryDivider} />
             <View style={styles.summaryCard}><Text style={styles.summaryNumber}>{unavailableCount}</Text><Text style={styles.summaryLabel}>Need attention</Text></View>
           </View>
@@ -93,93 +117,69 @@ export default function StaffMenuScreen() {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoriesScroll} contentContainerStyle={styles.categories}>
-        {CATEGORIES.map((item) => (
+        {categories.map((item) => (
           <Pressable key={item} onPress={() => setCategory(item)} style={[styles.category, category === item && styles.categoryActive]}>
             <Text style={[styles.categoryText, category === item && styles.categoryTextActive]}>{item}</Text>
           </Pressable>
         ))}
       </ScrollView>
 
-      <ScrollView style={styles.list} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.list}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}>
         {feedback ? (
           <Pressable onPress={() => setFeedback('')} style={styles.feedback} accessibilityLabel="Dismiss message">
-            <Text style={styles.feedbackIcon}>🔔</Text><Text style={styles.feedbackText}>{feedback}</Text><Text style={styles.feedbackClose}>×</Text>
+            <Text style={styles.feedbackIcon}>✓</Text><Text style={styles.feedbackText}>{feedback}</Text><Text style={styles.feedbackClose}>×</Text>
           </Pressable>
         ) : null}
-        <View style={styles.resultRow}><Text style={styles.resultText}>{visibleItems.length} menu items</Text><Text style={styles.demoText}>Local demo data</Text></View>
-        {visibleItems.map((item) => {
-          const appearance = AVAILABILITY_COPY[item.availability];
-          return (
-            <View key={item.id} style={[styles.card, item.availability !== 'available' && styles.cardMuted]}>
-              <View style={styles.emojiBox}><Text style={styles.emoji}>{item.emoji}</Text></View>
-              <View style={styles.itemCopy}>
-                <Text style={styles.itemName}>{item.name}</Text>
-                <Text style={styles.itemMeta}>{item.category} · {peso(item.price)}</Text>
-                <View style={[styles.availabilityBadge, { backgroundColor: appearance.bg }]}>
-                  <View style={[styles.statusDot, { backgroundColor: appearance.color }]} />
-                  <Text style={[styles.availabilityText, { color: appearance.color }]}>{appearance.label}</Text>
-                </View>
-                {item.statusNote ? <Text numberOfLines={2} style={styles.statusNote}>{item.statusNote}</Text> : null}
+        {!!error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠ {error}</Text>
+            <Pressable onPress={onRefresh} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable>
+          </View>
+        )}
+        <View style={styles.resultRow}><Text style={styles.resultText}>{visibleItems.length} menu items</Text><Text style={styles.demoText}>Live catalog</Text></View>
+        {loading && items.length === 0 ? (
+          <View style={styles.empty}><ActivityIndicator color={RED} size="large" /><Text style={styles.emptyTitle}>Loading live menu…</Text></View>
+        ) : null}
+        {visibleItems.map((item) => (
+          <View key={item.id} style={[styles.card, !item.is_available && styles.cardMuted]}>
+            <View style={styles.emojiBox}><Text style={styles.emoji}>{emojiFor(item.name)}</Text></View>
+            <View style={styles.itemCopy}>
+              <Text style={styles.itemName}>{item.name}</Text>
+              <Text style={styles.itemMeta}>{item.category?.name ?? ''} · {peso(Number(item.base_price))}</Text>
+              <View style={[styles.availabilityBadge, { backgroundColor: item.is_available ? '#DCFCE7' : '#FEE2E2' }]}>
+                <View style={[styles.statusDot, { backgroundColor: item.is_available ? '#15803D' : '#B91C1C' }]} />
+                <Text style={[styles.availabilityText, { color: item.is_available ? '#15803D' : '#B91C1C' }]}>
+                  {item.is_available ? 'Available' : 'Unavailable'}
+                </Text>
               </View>
-              <View style={styles.itemActions}>
-                {item.availability === 'available' ? (
-                  <Pressable onPress={() => openStatusSheet(item)} style={({ pressed }) => [styles.reportButton, pressed && styles.pressed]}>
-                    <Text style={styles.reportButtonText}>Change</Text>
-                  </Pressable>
+            </View>
+            <View style={styles.itemActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={item.is_available ? `Mark ${item.name} unavailable` : `Restore ${item.name}`}
+                disabled={busyId !== null}
+                onPress={() => toggleAvailability(item)}
+                style={({ pressed }) => [
+                  item.is_available ? styles.reportButton : styles.restoreButton,
+                  pressed && styles.pressed,
+                ]}>
+                {busyId === item.id ? (
+                  <ActivityIndicator color={item.is_available ? TEXT : '#FFFFFF'} size="small" />
                 ) : (
-                  <>
-                    <Pressable onPress={() => restoreItem(item)} style={({ pressed }) => [styles.restoreButton, pressed && styles.pressed]}>
-                      <Text style={styles.restoreButtonText}>Restore</Text>
-                    </Pressable>
-                    <Pressable accessibilityLabel={`Edit ${item.name} status`} onPress={() => openStatusSheet(item)} style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}>
-                      <Text style={styles.editButtonText}>Edit</Text>
-                    </Pressable>
-                  </>
+                  <Text style={item.is_available ? styles.reportButtonText : styles.restoreButtonText}>
+                    {item.is_available ? 'Mark out' : 'Restore'}
+                  </Text>
                 )}
-              </View>
-            </View>
-          );
-        })}
-        {!visibleItems.length && <View style={styles.empty}><Text style={styles.emptyIcon}>🔎</Text><Text style={styles.emptyTitle}>No menu items found</Text><Text style={styles.emptyText}>Try another search or category.</Text></View>}
-      </ScrollView>
-
-      <Modal transparent animationType="slide" visible={selectedItem != null} onRequestClose={closeStatusSheet}>
-        <View style={styles.modalBackdrop}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={closeStatusSheet} accessibilityLabel="Close status dialog" />
-          <View style={styles.modalSheet}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Update {selectedItem?.name}</Text>
-            <Text style={styles.modalSubtitle}>The selected status and your note will appear as an Admin notification in Activity.</Text>
-            <View style={styles.statusChoices}>
-              {(['sold_out', 'unavailable'] as MenuAvailability[]).map((status) => {
-                const appearance = AVAILABILITY_COPY[status];
-                return (
-                  <Pressable key={status} onPress={() => setNextStatus(status)} style={[styles.statusChoice, nextStatus === status && { borderColor: appearance.color, backgroundColor: appearance.bg }]}>
-                    <View style={[styles.choiceIcon, { backgroundColor: appearance.bg }]}><Text>{status === 'sold_out' ? '⛔' : '⏸️'}</Text></View>
-                    <View style={styles.choiceCopy}><Text style={[styles.choiceTitle, nextStatus === status && { color: appearance.color }]}>{appearance.label}</Text><Text style={styles.choiceDescription}>{status === 'sold_out' ? 'No stock remains for this item' : 'Temporarily pause ordering this item'}</Text></View>
-                    <View style={[styles.radio, nextStatus === status && { borderColor: appearance.color }]}>{nextStatus === status && <View style={[styles.radioDot, { backgroundColor: appearance.color }]} />}</View>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <Text style={styles.inputLabel}>Reason for admin</Text>
-            <TextInput
-              value={note}
-              onChangeText={setNote}
-              placeholder="Example: Chicken stock arriving at 4 PM"
-              placeholderTextColor="#A0A0A8"
-              multiline
-              maxLength={180}
-              style={styles.noteInput}
-            />
-            <View style={styles.notice}><Text style={styles.noticeIcon}>ⓘ</Text><Text style={styles.noticeText}>Demo only: this creates an in-app activity record. It does not send a real push notification.</Text></View>
-            <View style={styles.modalActions}>
-              <Pressable onPress={closeStatusSheet} style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}><Text style={styles.cancelText}>Cancel</Text></Pressable>
-              <Pressable onPress={saveStatus} style={({ pressed }) => [styles.notifyButton, pressed && styles.pressed]}><Text style={styles.notifyText}>Update & Notify Admin</Text></Pressable>
+              </Pressable>
             </View>
           </View>
-        </View>
-      </Modal>
+        ))}
+        {!loading && !visibleItems.length && <View style={styles.empty}><Text style={styles.emptyIcon}>🔎</Text><Text style={styles.emptyTitle}>No menu items found</Text><Text style={styles.emptyText}>Try another search or category.</Text></View>}
+      </ScrollView>
     </View>
   );
 }
@@ -212,6 +212,10 @@ const styles = StyleSheet.create({
   feedbackIcon: { fontSize: 14 },
   feedbackText: { flex: 1, color: '#1E40AF', fontSize: 11, lineHeight: 15, fontWeight: '600' },
   feedbackClose: { color: '#1D4ED8', fontSize: 19 },
+  errorBox: { gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA' },
+  errorText: { color: '#B91C1C', fontSize: 12, fontWeight: '700' },
+  retryButton: { alignSelf: 'flex-start', backgroundColor: RED, borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8 },
+  retryText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 2 },
   resultText: { color: TEXT, fontSize: 11, fontWeight: '800' },
   demoText: { color: GRAY, fontSize: 9 },
@@ -225,40 +229,14 @@ const styles = StyleSheet.create({
   availabilityBadge: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 3, paddingHorizontal: 7, borderRadius: 999, marginTop: 6 },
   statusDot: { width: 6, height: 6, borderRadius: 3 },
   availabilityText: { fontSize: 9, fontWeight: '800' },
-  statusNote: { color: GRAY, fontSize: 9, marginTop: 4 },
   itemActions: { gap: 6, alignItems: 'stretch' },
-  reportButton: { borderWidth: 1, borderColor: '#D8D8DE', borderRadius: 9, paddingVertical: 8, paddingHorizontal: 10 },
+  reportButton: { borderWidth: 1, borderColor: '#D8D8DE', borderRadius: 9, paddingVertical: 8, paddingHorizontal: 10, minWidth: 84, alignItems: 'center' },
   reportButtonText: { color: TEXT, fontSize: 10, fontWeight: '800' },
-  restoreButton: { backgroundColor: '#16A34A', borderRadius: 9, paddingVertical: 7, paddingHorizontal: 9 },
+  restoreButton: { backgroundColor: '#16A34A', borderRadius: 9, paddingVertical: 7, paddingHorizontal: 9, minWidth: 84, alignItems: 'center' },
   restoreButtonText: { color: '#FFFFFF', fontSize: 9, fontWeight: '800' },
-  editButton: { alignItems: 'center', paddingVertical: 4 },
-  editButtonText: { color: RED, fontSize: 9, fontWeight: '800' },
   pressed: { opacity: 0.7 },
   empty: { alignItems: 'center', paddingVertical: 60 },
   emptyIcon: { fontSize: 44 },
   emptyTitle: { color: TEXT, fontSize: 17, fontWeight: '900', marginTop: 8 },
   emptyText: { color: GRAY, fontSize: 11, marginTop: 3 },
-  modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
-  modalSheet: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 27, borderTopLeftRadius: 24, borderTopRightRadius: 24, backgroundColor: '#FFFFFF' },
-  modalHandle: { alignSelf: 'center', width: 42, height: 4, borderRadius: 2, backgroundColor: '#D1D1D6', marginBottom: 15 },
-  modalTitle: { color: TEXT, fontSize: 20, fontWeight: '900' },
-  modalSubtitle: { color: GRAY, fontSize: 11, lineHeight: 16, marginTop: 4 },
-  statusChoices: { gap: 8, marginTop: 14 },
-  statusChoice: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#E0E0E5' },
-  choiceIcon: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  choiceCopy: { flex: 1 },
-  choiceTitle: { color: TEXT, fontSize: 13, fontWeight: '800' },
-  choiceDescription: { color: GRAY, fontSize: 9, marginTop: 2 },
-  radio: { width: 18, height: 18, borderRadius: 9, borderWidth: 2, borderColor: '#C7C7CC', alignItems: 'center', justifyContent: 'center' },
-  radioDot: { width: 8, height: 8, borderRadius: 4 },
-  inputLabel: { color: TEXT, fontSize: 11, fontWeight: '800', marginTop: 14, marginBottom: 6 },
-  noteInput: { minHeight: 70, borderWidth: 1, borderColor: '#D8D8DE', borderRadius: 11, padding: 10, color: TEXT, fontSize: 12, textAlignVertical: 'top' },
-  notice: { flexDirection: 'row', gap: 7, marginTop: 10, padding: 9, borderRadius: 9, backgroundColor: '#F3F4F6' },
-  noticeIcon: { color: GRAY, fontSize: 11 },
-  noticeText: { flex: 1, color: GRAY, fontSize: 9, lineHeight: 13 },
-  modalActions: { flexDirection: 'row', gap: 9, marginTop: 14 },
-  cancelButton: { paddingHorizontal: 20, paddingVertical: 13, alignItems: 'center', borderRadius: 11, backgroundColor: '#EEEEF1' },
-  cancelText: { color: TEXT, fontSize: 12, fontWeight: '800' },
-  notifyButton: { flex: 1, paddingVertical: 13, alignItems: 'center', borderRadius: 11, backgroundColor: RED },
-  notifyText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
 });

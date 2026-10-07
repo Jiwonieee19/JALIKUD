@@ -114,4 +114,35 @@ class DeliveryCheckoutTest extends TestCase
             'address_id' => null,
         ]);
     }
+
+    public function test_checkout_defaults_to_cod_and_accepts_gcash(): void
+    {
+        $user = $this->customerWithCart();
+
+        $this->postJson('/api/orders', ['order_type' => 'pickup'])->assertStatus(201);
+        $this->assertDatabaseHas('orders', [
+            'user_id' => $user->id,
+            'payment_method' => 'cod',
+            'payment_status' => 'unpaid',
+        ]);
+
+        $this->postJson('/api/cart/items', ['menu_item_id' => \App\Models\MenuItem::first()->id, 'quantity' => 1])
+            ->assertStatus(201);
+        $this->postJson('/api/orders', ['order_type' => 'pickup', 'payment_method' => 'gcash'])
+            ->assertStatus(201);
+        $this->assertDatabaseHas('orders', [
+            'user_id' => $user->id,
+            'payment_method' => 'gcash',
+            'payment_status' => 'unpaid',
+        ]);
+    }
+
+    public function test_checkout_rejects_unknown_payment_method(): void
+    {
+        $this->customerWithCart();
+
+        $this->postJson('/api/orders', ['order_type' => 'pickup', 'payment_method' => 'card'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['payment_method']);
+    }
 }

@@ -8,7 +8,9 @@ use App\Models\Coupon;
 use App\Models\CouponRedemption;
 use App\Models\Order;
 use App\Models\StoreSetting;
+use App\Models\User;
 use App\Services\CartPricingService;
+use App\Services\PointLedger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -35,10 +37,23 @@ class OrderController extends Controller
     public function index(PaginationRequest $request): JsonResponse
     {
         $user = $request->user();
-        $query = Order::query()->orderByDesc('placed_at');
+        $with = [
+            'address:id,label,line1,line2,city,state,postal_code,country,is_default',
+            'orderItems:id,order_id,item_name,quantity,subtotal',
+        ];
 
-        // Admins see all orders; customers see their own.
-        if (! $user->isAdmin()) {
+        // The customer surface must not leak user objects (see
+        // CustomerMobileIntegrationTest); staff need names for the queue.
+        if ($user->isStaff()) {
+            $with[] = 'user:id,name,phone';
+        }
+
+        $query = Order::query()
+            ->with($with)
+            ->orderByDesc('placed_at');
+
+        // Admins and staff see all orders; customers see their own.
+        if (! $user->isStaff()) {
             $query->where('user_id', $user->id);
         }
 
@@ -49,7 +64,7 @@ class OrderController extends Controller
 
     public function show(Request $request, Order $order): JsonResponse
     {
-        if ($order->user_id !== $request->user()->id && ! $request->user()->isAdmin()) {
+        if ($order->user_id !== $request->user()->id && ! $request->user()->isStaff()) {
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
@@ -73,6 +88,7 @@ class OrderController extends Controller
             'coupon_code' => ['nullable', 'string', 'max:50'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'scheduled_for' => ['nullable', 'date'],
+            'payment_method' => ['nullable', 'in:cod,gcash'],
         ]);
 
         $user = $request->user();
@@ -82,7 +98,7 @@ class OrderController extends Controller
             return response()->json(['message' => 'The store is currently closed.'], 422);
         }
 
-        return DB::transaction(function () use ($request, $data, $user, $pricing) {
+        return DB::transaction(function () use ($data, $user, $pricing) {
             $cart = Cart::where('user_id', $user->id)
                 ->with(['cartItems.menuItem', 'cartItems.options.variantOption'])
                 ->first();
@@ -119,6 +135,56 @@ class OrderController extends Controller
                 $discountAmount = $coupon->discountFor($subtotal);
             }
 
+            // Reserved reward: revalidated here because the cart, catalog, or
+            // points balance may have changed since selection. Points move
+            // only after every other validation has passed.
+            $rewardKey = $cart->reward_key;
+            $rewardDiscount = 0.0;
+            $rewardCost = 0;
+
+            if ($rewardKey !== null && $rewardKey !== '') {
+                $definition = PointLedger::definition($rewardKey);
+
+                if ($definition === null) {
+                    return response()->json(['message' => 'Selected reward is no longer available.'], 422);
+                }
+
+                if ($coupon !== null) {
+                    return response()->json(['message' => 'Rewards cannot be combined with a coupon.'], 422);
+                }
+
+                $rewardCost = (int) ($definition['points_cost'] ?? 0);
+
+                if (($definition['type'] ?? null) === 'free_item') {
+                    $slug = (string) ($definition['menu_item_slug'] ?? '');
+                    $match = $priced['lines']->first(fn ($line) => $line['menu_item']->slug === $slug);
+
+                    if ($match === null) {
+                        return response()->json([
+                            'message' => "Add {$definition['label']} to your cart to use this reward.",
+                            'errors' => ['reward' => ["Add {$definition['label']} to your cart to use this reward."]],
+                        ], 422);
+                    }
+
+                    $rewardDiscount = round((float) $match['unit_price'], 2);
+                } elseif (($definition['type'] ?? null) === 'voucher') {
+                    $minimum = (float) ($definition['min_order_amount'] ?? 0);
+
+                    if ($subtotal < $minimum) {
+                        return response()->json([
+                            'message' => 'This reward needs a subtotal of at least ₱'.number_format($minimum, 2).'.',
+                            'errors' => ['reward' => ['Reward minimum not met.']],
+                        ], 422);
+                    }
+
+                    $rewardDiscount = round((float) ($definition['discount_amount'] ?? 0), 2);
+                } else {
+                    return response()->json(['message' => 'Selected reward is no longer available.'], 422);
+                }
+
+                $rewardDiscount = max(0.0, min($rewardDiscount, $subtotal - $discountAmount));
+            }
+
             $settings = StoreSetting::query()->first();
 
             if ($settings && $subtotal < (float) $settings->min_order_amount) {
@@ -135,7 +201,7 @@ class OrderController extends Controller
 
             $deliveryFee = $data['order_type'] === 'delivery' ? round((float) ($settings?->delivery_fee ?? 0), 2) : 0.0;
             $taxAmount = round($subtotal * ((float) ($settings?->tax_rate_percent ?? 0) / 100), 2);
-            $totalAmount = round($subtotal - $discountAmount + $deliveryFee + $taxAmount, 2);
+            $totalAmount = round($subtotal - $discountAmount - $rewardDiscount + $deliveryFee + $taxAmount, 2);
 
             $order = Order::create([
                 'order_number' => $this->generateOrderNumber(),
@@ -144,9 +210,11 @@ class OrderController extends Controller
                 'order_type' => $data['order_type'],
                 'status' => Order::STATUS_PENDING,
                 'payment_status' => 'unpaid',
-                'payment_method' => null,
+                'payment_method' => $data['payment_method'] ?? 'cod',
                 'subtotal' => $subtotal,
                 'discount_amount' => $discountAmount,
+                'reward_key' => $rewardKey,
+                'reward_discount_amount' => $rewardDiscount,
                 'delivery_fee' => $deliveryFee,
                 'tax_amount' => $taxAmount,
                 'total_amount' => $totalAmount,
@@ -177,7 +245,7 @@ class OrderController extends Controller
 
             // Clear the cart after ordering
             $cart->cartItems()->delete();
-            $cart->update(['address_id' => null, 'coupon_id' => null]);
+            $cart->update(['address_id' => null, 'coupon_id' => null, 'reward_key' => null]);
 
             // Record initial status
             $order->statusHistory()->create([
@@ -194,11 +262,24 @@ class OrderController extends Controller
                 ]);
             }
 
+            // Deduct reserved points last: every other validation has passed,
+            // so a failure here cannot leave a half-built order behind.
+            if ($rewardKey !== null && $rewardKey !== '' && $rewardCost > 0) {
+                $definition = PointLedger::definition($rewardKey);
+                PointLedger::spendForOrder(
+                    $user->id,
+                    $order,
+                    $rewardCost,
+                    'Redeemed '.($definition['label'] ?? $rewardKey)." on {$order->order_number}"
+                );
+            }
+
             $order->load(['orderItems.options', 'coupon', 'address']);
 
             return response()->json(['data' => $order], 201);
         });
     }
+
     /**
      * PUT /api/admin/orders/{order}/status - change order status (staff/admin).
      */
@@ -227,6 +308,80 @@ class OrderController extends Controller
             'changed_by' => $request->user()->id,
             'note' => $data['note'] ?? null,
         ]);
+
+        if ($data['status'] === Order::STATUS_COMPLETED) {
+            PointLedger::awardForOrder($order->fresh());
+        }
+
+        if ($data['status'] === Order::STATUS_CANCELLED) {
+            PointLedger::refundForOrder($order->fresh());
+        }
+
+        return response()->json(['data' => $order]);
+    }
+
+    /**
+     * PUT /api/admin/orders/{order}/payment - confirm (or fail) payment.
+     * Staff and admins only. Marking a completed order paid awards loyalty
+     * points; marking a pending one paid banks the award until completion.
+     */
+    public function confirmPayment(Request $request, Order $order): JsonResponse
+    {
+        $data = $request->validate([
+            'payment_status' => ['required', 'in:paid,failed'],
+        ]);
+
+        $order->update(['payment_status' => $data['payment_status']]);
+
+        if ($data['payment_status'] === Order::PAYMENT_PAID) {
+            PointLedger::awardForOrder($order->fresh());
+        }
+
+        return response()->json(['data' => $order->fresh()]);
+    }
+
+    /**
+     * PUT /api/admin/orders/{order}/rider - assign (or unassign) a rider.
+     * Staff and admins only; the assignee must hold the rider role.
+     */
+    public function assignRider(Request $request, Order $order): JsonResponse
+    {
+        $data = $request->validate([
+            'rider_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('users', 'id')
+                    ->where('role', User::ROLE_RIDER)
+                    ->whereNull('deleted_at'),
+            ],
+        ]);
+
+        if ($order->order_type !== 'delivery') {
+            return response()->json(['message' => 'Only delivery orders can be assigned to a rider.'], 422);
+        }
+
+        if (in_array($order->status, [
+            Order::STATUS_OUT_FOR_DELIVERY,
+            Order::STATUS_COMPLETED,
+            Order::STATUS_CANCELLED,
+        ], true)) {
+            return response()->json(['message' => "Cannot assign a rider to an order with status {$order->status}."], 422);
+        }
+
+        if (($data['rider_id'] ?? null) !== null) {
+            $profile = \App\Models\RiderProfile::where('user_id', $data['rider_id'])->first();
+
+            if ($profile === null || ! $profile->is_active) {
+                return response()->json(['message' => 'Selected rider is not on duty.'], 422);
+            }
+        }
+
+        $order->update([
+            'rider_id' => $data['rider_id'] ?? null,
+            'assigned_at' => array_key_exists('rider_id', $data) && $data['rider_id'] ? now() : null,
+        ]);
+
+        $order->load(['rider:id,name,phone', 'address', 'orderItems']);
 
         return response()->json(['data' => $order]);
     }

@@ -1,10 +1,14 @@
-import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 
 import { BottomTabInset } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useCustomerOrder } from '@/context/customer-order-context';
+import { errorMessage } from '@/lib/api';
+import { customerApi, type PointEntry, type Reward } from '@/lib/customer-api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -12,130 +16,99 @@ const CARD = '#FFFFFF';
 const TEXT_DARK = '#1C1C1E';
 const TEXT_GRAY = '#8E8E93';
 
-type Reward = {
-  id: string;
-  title: string;
-  description: string;
-  points: number;
-  worth: number;
-  emoji: string;
-  type: 'free_item' | 'voucher';
-  cartName?: string;
+const EMOJI: Record<string, string> = {
+  'chickenjoy-1pc': '🍗',
+  yumburger: '🍔',
+  'voucher-100': '🎫',
 };
 
-// Static rewards for now — will be replaced by the backend API later.
-const REWARDS: Reward[] = [
-  {
-    id: '1',
-    title: 'Free Chickenjoy 1pc',
-    description: 'Redeem for a free 1pc Chickenjoy (worth ₱109)',
-    points: 500,
-    worth: 109,
-    emoji: '🍗',
-    type: 'free_item',
-    cartName: 'Chickenjoy 1pc',
-  },
-  {
-    id: '2',
-    title: 'Free Yumburger',
-    description: 'Redeem for one free classic Yumburger',
-    points: 350,
-    worth: 89,
-    emoji: '🍔',
-    type: 'free_item',
-    cartName: 'Yumburger',
-  },
-  {
-    id: '3',
-    title: 'Free Regular Fries',
-    description: 'Redeem for a free serving of Regular Fries',
-    points: 200,
-    worth: 79,
-    emoji: '🍟',
-    type: 'free_item',
-    cartName: 'Regular Fries',
-  },
-  {
-    id: '4',
-    title: '₱100 Off Voucher',
-    description: 'Get ₱100 off your next order of ₱300 or more',
-    points: 750,
-    worth: 100,
-    emoji: '🎫',
-    type: 'voucher',
-  },
-  {
-    id: '5',
-    title: 'Free Peach Mango Pie',
-    description: 'Redeem for a delicious free Peach Mango Pie',
-    points: 150,
-    worth: 45,
-    emoji: '🥧',
-    type: 'free_item',
-    cartName: 'Peach Mango Pie',
-  },
-  {
-    id: '6',
-    title: 'Free Sundae Cup',
-    description: 'Redeem for a free regular Sundae Cup',
-    points: 100,
-    worth: 39,
-    emoji: '🍨',
-    type: 'free_item',
-    cartName: 'Sundae Cup',
-  },
-];
+function describe(reward: Reward): string {
+  if (reward.type === 'free_item') {
+    const price = reward.menu_item ? ` (worth ₱${Number(reward.menu_item.base_price)})` : '';
+    return `Redeem for ${reward.label}${price}`;
+  }
+  return `${reward.label} on orders of ₱${Number(reward.min_order_amount ?? 0)} or more`;
+}
+
+function historyKind(reason: PointEntry['reason']): 'earned' | 'redeemed' {
+  return reason === 'earned' ? 'earned' : 'redeemed';
+}
 
 export default function RewardsScreen() {
-  const router = useRouter();
-  const { addToCart, pointsBalance, pointsHistory, redeemedRewardIds, redeemReward } = useCustomerOrder();
+  const { token } = useAuth();
+  const { cart, addToCart, quantityInCart, selectReward, clearReward, refreshCart, mutating } = useCustomerOrder();
+  const [balance, setBalance] = useState(0);
+  const [rewards, setRewards] = useState<Reward[]>([]);
+  const [history, setHistory] = useState<PointEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [cardError, setCardError] = useState<Record<string, string>>({});
 
-  const handleRedeem = (reward: Reward) => {
-    if (redeemedRewardIds.has(reward.id) || reward.points > pointsBalance) return;
+  const load = useCallback(async () => {
+    if (!token) return;
+    setError('');
+    try {
+      const [catalog, ledger] = await Promise.all([customerApi.rewards(token), customerApi.points(token)]);
+      setRewards(catalog.data.rewards);
+      setBalance(ledger.data.balance);
+      setHistory(ledger.data.history);
+    } catch (caught) {
+      setError(errorMessage(caught, 'Could not load rewards.'));
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
 
-    const remainingPoints = pointsBalance - reward.points;
-    const destinationMessage =
-      reward.type === 'free_item'
-        ? 'The free item will be added to your cart.'
-        : 'The voucher will be saved for later use.';
+  useFocusEffect(useCallback(() => { void load().catch(() => undefined); }, [load]));
 
-    Alert.alert(
-      'Confirm Redemption',
-      `${reward.title}\n\nRedeem for ${reward.points.toLocaleString('en-PH')} points?\nRemaining balance: ${remainingPoints.toLocaleString('en-PH')} points\n\n${destinationMessage}`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm Redeem',
-          onPress: () => {
-            if (!redeemReward(reward.id, reward.points)) return;
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    Promise.all([load(), refreshCart()]).catch(() => undefined).finally(() => setRefreshing(false));
+  }, [load, refreshCart]);
 
-            if (reward.type === 'free_item' && reward.cartName) {
-              addToCart({
-                id: `reward-${reward.id}`,
-                name: reward.cartName,
-                unitPrice: 0,
-                emoji: reward.emoji,
-                variant: 'Redeemed Reward',
-                source: 'reward',
-                maxQuantity: 1,
-              });
-              router.replace('/(tabs)/cart');
-              setTimeout(
-                () => Alert.alert('Reward Redeemed', `${reward.cartName} was added to your cart.`),
-                250,
-              );
-              return;
-            }
-
-            setTimeout(
-              () => Alert.alert('Voucher Redeemed', `${reward.title} was saved for later use.`),
-              250,
-            );
-          },
-        },
-      ],
-    );
+  const redeem = (reward: Reward) => {
+    if (!token || busyKey !== null || mutating) return;
+    setBusyKey(reward.key);
+    setCardError((previous) => ({ ...previous, [reward.key]: '' }));
+    (async () => {
+      try {
+        if (reward.type === 'free_item' && reward.menu_item) {
+          if (quantityInCart(reward.menu_item.id) === 0) {
+            await addToCart({ id: reward.menu_item.id, name: reward.menu_item.name });
+          }
+          await selectReward(reward.key);
+        } else if (reward.type === 'voucher') {
+          await selectReward(reward.key);
+        }
+        await Promise.all([refreshCart(), load()]);
+      } catch (caught) {
+        setCardError((previous) => ({
+          ...previous,
+          [reward.key]: errorMessage(caught, 'Could not redeem this reward.'),
+        }));
+      } finally {
+        setBusyKey(null);
+      }
+    })();
   };
+
+  const unselect = (rewardKey: string) => {
+    if (busyKey !== null || mutating) return;
+    setBusyKey(rewardKey);
+    clearReward()
+      .then(() => Promise.all([refreshCart(), load()]))
+      .catch((caught: unknown) => {
+        setCardError((previous) => ({
+          ...previous,
+          [rewardKey]: errorMessage(caught, 'Could not remove this reward.'),
+        }));
+      })
+      .finally(() => setBusyKey(null));
+  };
+
+  const selectedKey = cart?.reward_key ?? null;
 
   return (
     <View style={styles.container}>
@@ -155,12 +128,12 @@ export default function RewardsScreen() {
             <Text style={styles.balanceLabel}>Your Points Balance</Text>
             <View style={styles.balanceRow}>
               <Text style={styles.balanceValue}>
-                {pointsBalance.toLocaleString('en-PH')}
+                {balance.toLocaleString('en-PH')}
               </Text>
               <Text style={styles.balanceUnit}>pts</Text>
             </View>
             <Text style={styles.balanceHint}>⭐ Earn 1 point for every ₱10 spent</Text>
-            <Text style={styles.balanceSubHint}>Points are credited when your order is delivered</Text>
+            <Text style={styles.balanceSubHint}>Points are credited when your order is completed and paid</Text>
           </View>
         </View>
       </SafeAreaView>
@@ -169,61 +142,87 @@ export default function RewardsScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}>
         <Text style={styles.sectionTitle}>AVAILABLE REWARDS</Text>
 
-        {REWARDS.map((reward) => {
-          const isRedeemed = redeemedRewardIds.has(reward.id);
-          const cannotAfford = reward.points > pointsBalance;
+        {loading && rewards.length === 0 ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color={RED} size="large" />
+            <Text style={styles.loadingText}>Loading rewards…</Text>
+          </View>
+        ) : null}
+        {!!error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠ {error}</Text>
+            <Pressable onPress={onRefresh} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable>
+          </View>
+        )}
+
+        {rewards.map((reward) => {
+          const selected = selectedKey === reward.key;
+          const usable = reward.is_available && reward.can_afford;
+          const busy = busyKey === reward.key;
           return (
-            <View key={reward.id} style={styles.card}>
-              <View style={styles.cardImageBox}>
-                <Text style={styles.cardEmoji}>{reward.emoji}</Text>
-              </View>
-
-              <View style={styles.cardInfo}>
-                <Text style={styles.cardTitle} numberOfLines={1}>
-                  {reward.title}
-                </Text>
-                <Text style={styles.cardDescription} numberOfLines={2}>
-                  {reward.description}
-                </Text>
-                <View style={styles.cardPointsRow}>
-                  <Text style={styles.cardPoints}>⭐ {reward.points} pts</Text>
-                  <Text style={styles.cardWorth}> · worth ₱{reward.worth}</Text>
+            <View key={reward.key}>
+              <View style={styles.card}>
+                <View style={styles.cardImageBox}>
+                  <Text style={styles.cardEmoji}>{EMOJI[reward.key] ?? '🎁'}</Text>
                 </View>
-              </View>
 
-              <Pressable
-                disabled={isRedeemed || cannotAfford}
-                onPress={() => handleRedeem(reward)}
-                style={({ pressed }) => [
-                  styles.redeemButton,
-                  isRedeemed && styles.redeemButtonDone,
-                  cannotAfford && styles.redeemButtonDisabled,
-                  pressed && !isRedeemed && !cannotAfford && styles.pressed,
-                ]}>
-                <Text style={styles.redeemText}>
-                  {isRedeemed ? 'Redeemed' : cannotAfford ? 'Not enough points' : 'Redeem'}
-                </Text>
-              </Pressable>
+                <View style={styles.cardInfo}>
+                  <Text style={styles.cardTitle} numberOfLines={1}>
+                    {reward.label}
+                  </Text>
+                  <Text style={styles.cardDescription} numberOfLines={2}>
+                    {describe(reward)}
+                  </Text>
+                  <View style={styles.cardPointsRow}>
+                    <Text style={styles.cardPoints}>⭐ {reward.points_cost} pts</Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={selected ? `Remove ${reward.label}` : `Redeem ${reward.label}`}
+                  disabled={!selected && (!usable || busy || mutating)}
+                  onPress={() => (selected ? unselect(reward.key) : redeem(reward))}
+                  style={({ pressed }) => [
+                    styles.redeemButton,
+                    selected && styles.redeemButtonDone,
+                    !selected && !usable && styles.redeemButtonDisabled,
+                    pressed && (selected || usable) && styles.pressed,
+                  ]}>
+                  {busy ? (
+                    <ActivityIndicator color="#FFFFFF" size="small" />
+                  ) : (
+                    <Text style={styles.redeemText}>
+                      {selected ? 'Selected ✓' : !reward.is_available ? 'Unavailable' : !reward.can_afford ? `${reward.points_cost} pts` : 'Redeem'}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+              {!!cardError[reward.key] && <Text style={styles.cardError}>⚠ {cardError[reward.key]}</Text>}
             </View>
           );
         })}
 
-        {pointsHistory.length > 0 && (
+        {history.length > 0 && (
           <>
             <Text style={[styles.sectionTitle, styles.historyTitle]}>POINTS HISTORY</Text>
-            {pointsHistory.map((entry) => (
+            {history.map((entry) => (
               <View key={entry.id} style={styles.historyCard}>
-                <Text style={styles.historyIcon}>{entry.kind === 'earned' ? '⭐' : '🎁'}</Text>
+                <Text style={styles.historyIcon}>{historyKind(entry.reason) === 'earned' ? '⭐' : '🎁'}</Text>
                 <View style={styles.historyInfo}>
-                  <Text style={styles.historyLabel}>{entry.label}</Text>
-                  <Text style={styles.historyDate}>{entry.date}</Text>
+                  <Text style={styles.historyLabel}>{entry.description ?? entry.reason}</Text>
+                  <Text style={styles.historyDate}>
+                    {new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(entry.created_at))}
+                    {entry.order ? ` · ${entry.order.order_number}` : ''}
+                  </Text>
                 </View>
-                <Text style={[styles.historyPoints, entry.kind === 'redeemed' && styles.historySpent]}>
-                  {entry.kind === 'earned' ? '+' : '−'}
-                  {entry.points.toLocaleString('en-PH')} pts
+                <Text style={[styles.historyPoints, historyKind(entry.reason) === 'redeemed' && styles.historySpent]}>
+                  {entry.points_delta > 0 ? '+' : ''}
+                  {entry.points_delta.toLocaleString('en-PH')} pts
                 </Text>
               </View>
             ))}
@@ -318,6 +317,41 @@ const styles = StyleSheet.create({
     color: TEXT_GRAY,
     marginBottom: 10,
   },
+  loadingBox: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    gap: 8,
+  },
+  loadingText: {
+    fontSize: 13,
+    color: TEXT_GRAY,
+  },
+  errorBox: {
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    marginBottom: 10,
+  },
+  errorText: {
+    color: '#B91C1C',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: RED,
+    borderRadius: 9,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -326,6 +360,14 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 10,
     gap: 12,
+  },
+  cardError: {
+    color: '#B91C1C',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: -6,
+    marginBottom: 10,
+    paddingHorizontal: 2,
   },
   cardImageBox: {
     width: 56,
@@ -360,10 +402,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
     color: TEXT_DARK,
-  },
-  cardWorth: {
-    fontSize: 12,
-    color: TEXT_GRAY,
   },
   redeemButton: {
     backgroundColor: RED,
@@ -402,4 +440,3 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
 });
-

@@ -1,10 +1,12 @@
-import { useRouter } from 'expo-router';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
 import { useCustomerOrder } from '@/context/customer-order-context';
+import { errorMessage } from '@/lib/api';
+import { customerApi } from '@/lib/customer-api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -30,6 +32,13 @@ type Deal = {
 };
 
 // Static deals for now — will be replaced by the backend API later.
+// Each deal maps to the live menu item added to the cart (charged at the
+// server-authoritative menu price, not the bundle sticker price).
+const DEAL_MENU_MAP: Record<string, { slug: string; quantity: number; label: string }> = {
+  '1': { slug: 'chickenjoy-6pc', quantity: 1, label: 'Chickenjoy 6pc ×1' },
+  '2': { slug: 'burger-steak', quantity: 2, label: 'Burger Steak ×2' },
+  '3': { slug: 'jolly-spaghetti', quantity: 1, label: 'Jolly Spaghetti ×1' },
+};
 const DEALS: Deal[] = [
   {
     id: '1',
@@ -74,36 +83,60 @@ const DEALS: Deal[] = [
 ];
 
 export default function DealsScreen() {
-  const router = useRouter();
-  const { addToCart, quantityInCart } = useCustomerOrder();
+  const { addToCart, quantityInCart, mutating } = useCustomerOrder();
+  const [menuBySlug, setMenuBySlug] = useState<Record<string, { id: number; name: string; price: number }>>({});
+  const [menuLoading, setMenuLoading] = useState(true);
+  const [menuError, setMenuError] = useState('');
+  const [dealError, setDealError] = useState<Record<string, string>>({});
+
+  // Resolve deal mappings against the live catalog so renames/seeds never
+  // break the buttons. Depends on the live menu, not hardcoded ids.
+  useEffect(() => {
+    let cancelled = false;
+    customerApi.menu()
+      .then((response) => {
+        if (cancelled) return;
+        const items = Array.isArray(response.data) ? response.data : response.data.data;
+        const map: Record<string, { id: number; name: string; price: number }> = {};
+        for (const item of items) {
+          if (item && typeof item.slug === 'string' && Number.isFinite(Number(item.id))) {
+            map[item.slug] = { id: Number(item.id), name: item.name, price: Number(item.base_price) || 0 };
+          }
+        }
+        setMenuBySlug(map);
+        setMenuError('');
+      })
+      .catch((caught) => {
+        if (!cancelled) setMenuError(errorMessage(caught, 'Could not load the live menu.'));
+      })
+      .finally(() => {
+        if (!cancelled) setMenuLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const dealTargets = useMemo(() => {
+    const targets: Record<string, { id: number; name: string; price: number; quantity: number; label: string } | null> = {};
+    for (const deal of DEALS) {
+      const mapping = DEAL_MENU_MAP[deal.id];
+      const live = mapping ? menuBySlug[mapping.slug] : undefined;
+      targets[deal.id] = live
+        ? { id: live.id, name: live.name, price: live.price, quantity: mapping.quantity, label: mapping.label }
+        : null;
+    }
+    return targets;
+  }, [menuBySlug]);
 
   const handleAddToCart = (deal: Deal) => {
-    Alert.alert(
-      'Add Deal to Cart',
-      `${deal.title}\n\nAdd this deal to your cart for ₱${deal.price.toLocaleString('en-PH')}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Add to Cart',
-          onPress: () => {
-            addToCart({
-              id: `deal-${deal.id}`,
-              name: deal.title,
-              unitPrice: deal.price,
-              emoji: deal.emoji,
-              variant: `Deal · ${deal.includes.join(' · ')}`,
-              source: 'deal',
-              maxQuantity: 1,
-            });
-            router.replace('/(tabs)/cart');
-            setTimeout(
-              () => Alert.alert('Deal Added', `${deal.title} was added to your cart.`),
-              250,
-            );
-          },
-        },
-      ],
+    const target = dealTargets[deal.id];
+    if (!target || mutating) return;
+    setDealError((previous) => ({ ...previous, [deal.id]: '' }));
+    const adds = Array.from({ length: target.quantity }, () =>
+      addToCart({ id: target.id, name: target.name, unitPrice: target.price, emoji: deal.emoji }),
     );
+    void Promise.all(adds).catch((caught) => {
+      setDealError((previous) => ({ ...previous, [deal.id]: errorMessage(caught, 'Could not add this deal to the cart.') }));
+    });
   };
 
   return (
@@ -128,8 +161,16 @@ export default function DealsScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
+        {!!menuError && (
+          <View style={styles.noticeBox}>
+            <Text style={styles.noticeText}>⚠ {menuError}</Text>
+          </View>
+        )}
         {DEALS.map((deal) => {
-          const isAdded = quantityInCart(`deal-${deal.id}`) > 0;
+          const target = dealTargets[deal.id];
+          const inCart = target ? quantityInCart(target.id) : 0;
+          const unavailable = !menuLoading && !menuError && !target;
+          const busy = mutating || menuLoading;
           return (
             <View key={deal.id} style={styles.card}>
               {/* Image area with badges + overlaid title */}
@@ -172,19 +213,34 @@ export default function DealsScreen() {
                       ]}>
                       ⏱ {deal.expiry}
                     </Text>
+                    <Text style={styles.menuPriceNote}>
+                      {target
+                        ? `Adds ${target.label} at menu price (₱${target.price})`
+                        : unavailable
+                          ? 'Main item is not on the menu right now'
+                          : 'Checking live menu…'}
+                    </Text>
+                    {!!dealError[deal.id] && <Text style={styles.dealError}>⚠ {dealError[deal.id]}</Text>}
                   </View>
 
                   <Pressable
-                    disabled={isAdded}
+                    accessibilityRole="button"
+                    accessibilityLabel={target ? `Add ${deal.title} to cart` : `${deal.title} unavailable`}
+                    disabled={!target || busy}
                     onPress={() => handleAddToCart(deal)}
                     style={({ pressed }) => [
                       styles.addCartButton,
-                      isAdded && styles.addCartButtonDone,
-                      pressed && !isAdded && styles.pressed,
+                      inCart > 0 && styles.addCartButtonDone,
+                      (!target || busy) && styles.addCartButtonDisabled,
+                      pressed && target && !busy && styles.pressed,
                     ]}>
-                    <Text style={styles.addCartText}>
-                      {isAdded ? '✓ Added' : 'Add to Cart'}
-                    </Text>
+                    {busy && target ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={styles.addCartText}>
+                        {unavailable ? 'Unavailable' : inCart > 0 ? `Added ✓ ${inCart}` : 'Add'}
+                      </Text>
+                    )}
                   </Pressable>
                 </View>
               </View>
@@ -374,6 +430,31 @@ const styles = StyleSheet.create({
   },
   addCartButtonDone: {
     backgroundColor: '#16A34A',
+  },
+  addCartButtonDisabled: {
+    opacity: 0.45,
+  },
+  menuPriceNote: {
+    fontSize: 11,
+    color: TEXT_GRAY,
+  },
+  dealError: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  noticeBox: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  noticeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400E',
   },
   addCartText: {
     fontSize: 13,

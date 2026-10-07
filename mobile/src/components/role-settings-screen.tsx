@@ -36,8 +36,8 @@ export function RoleSettingsScreen({ roleLabel, roleIcon, details = [] }: RoleSe
   const [pushNotifications, setPushNotifications] = useState(true);
   const [biometricLogin, setBiometricLogin] = useState(false);
 
-  const handleSignOut = () => {
-    signOut();
+  const handleSignOut = async () => {
+    await signOut();
     router.replace('/login');
   };
 
@@ -123,7 +123,7 @@ export function RoleSettingsScreen({ roleLabel, roleIcon, details = [] }: RoleSe
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Log out of ${roleLabel} account`}
-          onPress={handleSignOut}
+          onPress={() => void handleSignOut()}
           style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}>
           <Text style={styles.logoutIcon}>🚪</Text>
           <Text style={styles.logoutText}>Log Out</Text>

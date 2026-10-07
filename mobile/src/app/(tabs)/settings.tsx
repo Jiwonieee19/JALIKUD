@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
@@ -45,8 +45,8 @@ export default function SettingsScreen() {
   const [pushNotifications, setPushNotifications] = useState(true);
   const [biometricLogin, setBiometricLogin] = useState(false);
 
-  const handleSignOut = () => {
-    signOut();
+  const handleSignOut = async () => {
+    await signOut();
     router.replace('/login');
   };
 
@@ -86,7 +86,7 @@ export default function SettingsScreen() {
               <Text style={styles.profileDetail}>{current?.email ?? 'Not signed in'}</Text>
               <Text style={styles.profileDetail}>{current?.phone ?? '—'}</Text>
             </View>
-            <Pressable style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}>
+            <Pressable onPress={() => router.push('/account' as Href)} style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}>
               <Text style={styles.editIcon}>✏️</Text>
             </Pressable>
           </View>
@@ -95,7 +95,7 @@ export default function SettingsScreen() {
         {/* Account rows */}
         <View style={styles.card}>
           {NAV_ROWS.map((row, index) => (
-            <Pressable key={row.label} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
+            <Pressable key={row.label} onPress={row.label === 'Saved Addresses' ? () => router.push('/addresses' as Href) : undefined} style={({ pressed }) => [styles.row, pressed && styles.pressed]}>
               <View style={styles.rowIconBox}>
                 <Text style={styles.rowIcon}>{row.icon}</Text>
               </View>
@@ -153,7 +153,8 @@ export default function SettingsScreen() {
             <Pressable
               key={row.label}
               style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-              onPress={row.label === 'Log Out' ? handleSignOut : undefined}>
+              disabled={row.label === 'Delete Account'}
+              onPress={row.label === 'Log Out' ? () => void handleSignOut() : undefined}>
               <View style={styles.rowIconBox}>
                 <Text style={styles.rowIcon}>{row.icon}</Text>
               </View>

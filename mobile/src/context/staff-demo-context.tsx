@@ -181,12 +181,7 @@ export function StaffDemoProvider({ children }: { children: ReactNode }) {
           type: order.deliveryType === 'delivery' ? 'Delivery' : 'Pickup',
           items: order.lineItems ?? [],
           total: order.total,
-          status:
-            order.status === 'pending'
-              ? 'incoming'
-              : order.status === 'canceled'
-                ? 'rejected'
-                : 'confirmed',
+          status: order.status === 'pending' ? 'incoming' : order.status === 'cancelled' ? 'rejected' : 'confirmed',
           phone: order.customerPhone,
           address: order.deliveryAddress,
           destinationName: order.destinationName,
@@ -232,7 +227,7 @@ export function StaffDemoProvider({ children }: { children: ReactNode }) {
           : candidate,
       ),
     );
-    updateOrderStatus(order.orderNumber, 'canceled', note.trim() || reason);
+    updateOrderStatus(order.orderNumber, 'cancelled', note.trim() || reason);
     addActivity({
       kind: 'order_rejected',
       title: `Order ${order.orderNumber} rejected`,

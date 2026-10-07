@@ -1,9 +1,13 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 
 import { BottomTabInset } from '@/constants/theme';
-import { useDeliveryDemo } from '@/context/delivery-demo-context';
+import { useAuth } from '@/context/auth-context';
+import { errorMessage } from '@/lib/api';
+import { riderApi } from '@/lib/staff-api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -15,12 +19,50 @@ function peso(value: number): string {
 }
 
 export default function RiderHistoryScreen() {
-  const { riders, deliveries } = useDeliveryDemo();
-  const rider = riders[0];
-  const completed = deliveries
-    .filter((delivery) => delivery.riderId === rider.id && delivery.status === 'delivered')
-    .sort((a, b) => (b.deliveredAt ?? '').localeCompare(a.deliveredAt ?? ''));
-  const codCollected = completed.reduce((sum, delivery) => sum + delivery.codAmount, 0);
+  const { token, user } = useAuth();
+  const [completed, setCompleted] = useState<
+    { id: number; orderNumber: string; date: string; customer: string; address: string; cod: number }[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!token) return;
+    setError('');
+    try {
+      const queue = await riderApi.deliveries(token);
+      setCompleted(
+        queue
+          .filter((order) => order.status === 'completed')
+          .map((order) => ({
+            id: order.id,
+            orderNumber: order.order_number,
+            date: new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(
+              new Date(order.placed_at),
+            ),
+            customer: order.user?.name ?? 'Customer',
+            address: order.address
+              ? [order.address.line1, order.address.line2, order.address.city].filter(Boolean).join(', ')
+              : 'Customer address on file',
+            cod: Number(order.total_amount),
+          })),
+      );
+    } catch (caught) {
+      setError(errorMessage(caught, 'Could not load delivery history.'));
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useFocusEffect(useCallback(() => { void load().catch(() => undefined); }, [load]));
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    load().catch(() => undefined).finally(() => setRefreshing(false));
+  }, [load]);
+
+  const codCollected = completed.reduce((sum, delivery) => sum + delivery.cod, 0);
 
   return (
     <View style={styles.container}>
@@ -29,11 +71,14 @@ export default function RiderHistoryScreen() {
         <View style={styles.header}>
           <Text style={styles.eyebrow}>DELIVERY RIDER</Text>
           <Text style={styles.title}>Delivery History</Text>
-          <Text style={styles.subtitle}>{rider.name} · {rider.vehicle}</Text>
+          <Text style={styles.subtitle}>{user?.name ?? 'Rider'}</Text>
         </View>
       </SafeAreaView>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}>
         <View style={styles.summaryRow}>
           <View style={styles.summaryCard}>
             <Text style={styles.summaryNumber}>{completed.length}</Text>
@@ -43,34 +88,40 @@ export default function RiderHistoryScreen() {
             <Text style={styles.summaryNumber}>{peso(codCollected)}</Text>
             <Text style={styles.summaryLabel}>COD collected</Text>
           </View>
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryNumber}>{rider.completedToday}</Text>
-            <Text style={styles.summaryLabel}>Today</Text>
-          </View>
         </View>
 
         <Text style={styles.sectionTitle}>Delivered orders</Text>
+        {loading && completed.length === 0 ? (
+          <View style={styles.empty}><ActivityIndicator color={RED} size="large" /><Text style={styles.emptyTitle}>Loading history…</Text></View>
+        ) : null}
+        {!!error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠ {error}</Text>
+            <Pressable onPress={onRefresh} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable>
+          </View>
+        )}
         {completed.length ? (
           completed.map((delivery) => (
             <View key={delivery.id} style={styles.card}>
               <View style={styles.cardTop}>
                 <Text style={styles.orderNumber}>{delivery.orderNumber}</Text>
-                <Text style={styles.deliveredAt}>{delivery.deliveredAt}</Text>
+                <Text style={styles.deliveredAt}>{delivery.date}</Text>
               </View>
-              <Text style={styles.customer}>{delivery.customer} · {delivery.destination.destinationName}</Text>
+              <Text style={styles.customer}>{delivery.customer}</Text>
               <Text style={styles.address}>{delivery.address}</Text>
               <View style={styles.cardFooter}>
-                <Text style={styles.codAmount}>COD {peso(delivery.codAmount)}</Text>
-                <Text style={styles.distance}>{delivery.distanceKm} km</Text>
+                <Text style={styles.codAmount}>COD {peso(delivery.cod)}</Text>
               </View>
             </View>
           ))
         ) : (
-          <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>📦</Text>
-            <Text style={styles.emptyTitle}>No deliveries yet</Text>
-            <Text style={styles.emptyText}>Completed deliveries will appear here.</Text>
-          </View>
+          !loading && (
+            <View style={styles.empty}>
+              <Text style={styles.emptyIcon}>📦</Text>
+              <Text style={styles.emptyTitle}>No deliveries yet</Text>
+              <Text style={styles.emptyText}>Completed deliveries will appear here.</Text>
+            </View>
+          )
         )}
       </ScrollView>
     </View>
@@ -98,7 +149,10 @@ const styles = StyleSheet.create({
   address: { color: GRAY, fontSize: 10, lineHeight: 14, marginTop: 2 },
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
   codAmount: { color: '#B45309', fontSize: 11, fontWeight: '900' },
-  distance: { color: GRAY, fontSize: 10 },
+  errorBox: { gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', marginBottom: 10 },
+  errorText: { color: '#B91C1C', fontSize: 12, fontWeight: '700' },
+  retryButton: { alignSelf: 'flex-start', backgroundColor: RED, borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8 },
+  retryText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   empty: { alignItems: 'center', paddingVertical: 70 },
   emptyIcon: { fontSize: 48 },
   emptyTitle: { color: TEXT, fontSize: 18, fontWeight: '900', marginTop: 10 },

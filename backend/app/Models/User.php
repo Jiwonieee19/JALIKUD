@@ -81,6 +81,11 @@ class User extends Authenticatable
         return $this->hasMany(Order::class, 'rider_id');
     }
 
+    public function pointTransactions(): HasMany
+    {
+        return $this->hasMany(PointTransaction::class);
+    }
+
     public function reviews(): HasMany
     {
         return $this->hasMany(Review::class);

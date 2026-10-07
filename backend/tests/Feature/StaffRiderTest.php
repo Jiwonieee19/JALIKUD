@@ -1,0 +1,267 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\Category;
+use App\Models\MenuItem;
+use App\Models\Order;
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
+use Laravel\Sanctum\Sanctum;
+use Tests\TestCase;
+
+/**
+ * Staff and rider access to the order pipeline.
+ *
+ * Staff (and admins) operate the queue under /api/admin/* via EnsureStaff;
+ * riders work their own queue under /api/rider/*. Customers stay confined to
+ * their own orders on both surfaces.
+ */
+class StaffRiderTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private function user(string $role): User
+    {
+        return User::factory()->create(['role' => $role]);
+    }
+
+    private function order(array $overrides = []): Order
+    {
+        return Order::create(array_merge([
+            'order_number' => 'ORD-'.strtoupper(Str::random(8)),
+            'user_id' => $this->user(User::ROLE_CUSTOMER)->id,
+            'order_type' => 'delivery',
+            'status' => Order::STATUS_PENDING,
+            'subtotal' => 100,
+            'total_amount' => 100,
+        ], $overrides));
+    }
+
+    private function onDutyRider(): User
+    {
+        $rider = $this->user(User::ROLE_RIDER);
+        \App\Models\RiderProfile::create([
+            'user_id' => $rider->id,
+            'vehicle_type' => 'motorcycle',
+            'plate_number' => 'XYZ-9999',
+            'is_active' => true,
+        ]);
+
+        return $rider;
+    }
+
+    private function menuItem(): MenuItem
+    {
+        $category = Category::create(['name' => 'Mains', 'slug' => 'mains-'.Str::random(6)]);
+
+        return MenuItem::create([
+            'category_id' => $category->id,
+            'name' => 'Chicken Adobo',
+            'slug' => 'adobo-'.Str::random(6),
+            'base_price' => 100,
+            'is_available' => true,
+        ]);
+    }
+
+    public function test_staff_sees_all_orders_while_customers_see_only_their_own(): void
+    {
+        $mine = $this->order();
+        $theirs = $this->order();
+
+        Sanctum::actingAs($this->user(User::ROLE_STAFF));
+        $this->getJson('/api/admin/orders?per_page=100')->assertOk()->assertJsonCount(2, 'data.data');
+
+        Sanctum::actingAs(User::find($mine->user_id));
+        $response = $this->getJson('/api/orders?per_page=100')->assertOk();
+        $response->assertJsonCount(1, 'data.data');
+        $response->assertJsonPath('data.data.0.id', $mine->id);
+        $this->assertNotContains($theirs->id, collect($response->json('data.data'))->pluck('id')->all());
+    }
+
+    public function test_staff_can_update_status_but_customers_and_riders_cannot(): void
+    {
+        $order = $this->order();
+
+        Sanctum::actingAs($this->user(User::ROLE_STAFF));
+        $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_CONFIRMED])
+            ->assertOk();
+        $this->assertSame(Order::STATUS_CONFIRMED, $order->fresh()->status);
+
+        Sanctum::actingAs($this->user(User::ROLE_CUSTOMER));
+        $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_PREPARING])
+            ->assertStatus(403);
+
+        Sanctum::actingAs($this->user(User::ROLE_RIDER));
+        $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_PREPARING])
+            ->assertStatus(403);
+    }
+
+    public function test_staff_gate_keeps_user_admin_but_opens_menu_availability(): void
+    {
+        Sanctum::actingAs($this->user(User::ROLE_STAFF));
+        $this->getJson('/api/admin/users')->assertStatus(403);
+
+        $item = $this->menuItem();
+        $this->putJson("/api/admin/menu-items/{$item->id}", ['is_available' => false])->assertOk();
+        $this->assertFalse($item->fresh()->is_available);
+
+        $this->deleteJson("/api/admin/menu-items/{$item->id}")->assertStatus(403);
+
+        Sanctum::actingAs($this->user(User::ROLE_CUSTOMER));
+        $this->putJson("/api/admin/menu-items/{$item->id}", ['is_available' => true])->assertStatus(403);
+    }
+
+    public function test_staff_can_assign_and_unassign_a_rider(): void
+    {
+        $staff = $this->user(User::ROLE_STAFF);
+        $rider = $this->onDutyRider();
+        $order = $this->order();
+        Sanctum::actingAs($staff);
+
+        $this->putJson("/api/admin/orders/{$order->id}/rider", ['rider_id' => $rider->id])
+            ->assertOk()
+            ->assertJsonPath('data.rider_id', $rider->id);
+
+        $fresh = $order->fresh();
+        $this->assertSame($rider->id, $fresh->rider_id);
+        $this->assertNotNull($fresh->assigned_at);
+
+        $this->putJson("/api/admin/orders/{$order->id}/rider", ['rider_id' => null])->assertOk();
+        $this->assertNull($order->fresh()->rider_id);
+        $this->assertNull($order->fresh()->assigned_at);
+    }
+
+    public function test_assign_rejects_non_riders_pickup_orders_and_closed_orders(): void
+    {
+        $staff = $this->user(User::ROLE_STAFF);
+        $order = $this->order();
+        Sanctum::actingAs($staff);
+
+        // A staff account is not a rider.
+        $this->putJson("/api/admin/orders/{$order->id}/rider", ['rider_id' => $staff->id])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('rider_id');
+
+        $this->putJson('/api/admin/orders/'.$this->order(['order_type' => 'pickup'])->id.'/rider', ['rider_id' => $this->onDutyRider()->id])
+            ->assertStatus(422);
+
+        $this->putJson('/api/admin/orders/'.$this->order(['status' => Order::STATUS_COMPLETED])->id.'/rider', ['rider_id' => $this->onDutyRider()->id])
+            ->assertStatus(422);
+
+        Sanctum::actingAs($this->user(User::ROLE_CUSTOMER));
+        $this->putJson("/api/admin/orders/{$order->id}/rider", ['rider_id' => $this->onDutyRider()->id])
+            ->assertStatus(403);
+    }
+
+    public function test_assign_rejects_riders_who_are_not_on_duty(): void
+    {
+        Sanctum::actingAs($this->user(User::ROLE_STAFF));
+        $order = $this->order();
+
+        // No profile at all.
+        $this->putJson("/api/admin/orders/{$order->id}/rider", ['rider_id' => $this->user(User::ROLE_RIDER)->id])
+            ->assertStatus(422);
+
+        // Inactive profile.
+        $offDuty = $this->user(User::ROLE_RIDER);
+        \App\Models\RiderProfile::create(['user_id' => $offDuty->id, 'is_active' => false]);
+        $this->putJson("/api/admin/orders/{$order->id}/rider", ['rider_id' => $offDuty->id])
+            ->assertStatus(422);
+    }
+
+    public function test_rider_can_toggle_own_availability(): void
+    {
+        $rider = $this->user(User::ROLE_RIDER);
+        Sanctum::actingAs($rider);
+
+        $this->putJson('/api/rider/availability', ['is_available' => true])
+            ->assertOk()
+            ->assertJsonPath('data.is_active', true);
+
+        $this->putJson('/api/rider/availability', ['is_available' => false])->assertOk();
+        $this->assertFalse($rider->fresh()->riderProfile->is_active);
+
+        Sanctum::actingAs($this->user(User::ROLE_CUSTOMER));
+        $this->putJson('/api/rider/availability', ['is_available' => true])->assertStatus(403);
+    }
+
+    public function test_riders_directory_lists_only_riders(): void
+    {
+        $rider = $this->user(User::ROLE_RIDER);
+        $this->user(User::ROLE_CUSTOMER);
+
+        Sanctum::actingAs($this->user(User::ROLE_STAFF));
+        $response = $this->getJson('/api/admin/riders?per_page=100')->assertOk();
+        $ids = collect($response->json('data.data'))->pluck('id')->all();
+        $this->assertContains($rider->id, $ids);
+        $this->assertCount(1, $ids);
+
+        Sanctum::actingAs($this->user(User::ROLE_CUSTOMER));
+        $this->getJson('/api/admin/riders')->assertStatus(403);
+    }
+
+    public function test_rider_sees_only_their_assigned_deliveries(): void
+    {
+        $rider = $this->user(User::ROLE_RIDER);
+        $other = $this->user(User::ROLE_RIDER);
+        $mine = $this->order(['rider_id' => $rider->id, 'status' => Order::STATUS_READY]);
+        $this->order(['rider_id' => $other->id, 'status' => Order::STATUS_READY]);
+        $this->order(['status' => Order::STATUS_READY]);
+
+        Sanctum::actingAs($rider);
+        $response = $this->getJson('/api/rider/deliveries?per_page=100')->assertOk();
+        $response->assertJsonCount(1, 'data.data');
+        $response->assertJsonPath('data.data.0.id', $mine->id);
+
+        $this->getJson("/api/rider/deliveries/{$mine->id}")->assertOk();
+
+        Sanctum::actingAs($other);
+        $this->getJson("/api/rider/deliveries/{$mine->id}")->assertStatus(404);
+
+        Sanctum::actingAs($this->user(User::ROLE_CUSTOMER));
+        $this->getJson('/api/rider/deliveries')->assertStatus(403);
+    }
+
+    public function test_rider_advances_only_the_delivery_leg(): void
+    {
+        $rider = $this->user(User::ROLE_RIDER);
+        $order = $this->order(['rider_id' => $rider->id, 'status' => Order::STATUS_READY]);
+        Sanctum::actingAs($rider);
+
+        $this->putJson("/api/rider/deliveries/{$order->id}/status", ['status' => Order::STATUS_OUT_FOR_DELIVERY])
+            ->assertOk();
+        $this->putJson("/api/rider/deliveries/{$order->id}/status", ['status' => Order::STATUS_COMPLETED])
+            ->assertOk();
+        $this->assertSame(Order::STATUS_COMPLETED, $order->fresh()->status);
+        $this->assertSame(2, $order->statusHistory()->count());
+    }
+
+    public function test_rider_cannot_touch_kitchen_states_or_foreign_orders(): void
+    {
+        $rider = $this->user(User::ROLE_RIDER);
+        $kitchen = $this->order(['rider_id' => $rider->id, 'status' => Order::STATUS_PENDING]);
+        $foreign = $this->order(['status' => Order::STATUS_READY]);
+        Sanctum::actingAs($rider);
+
+        $this->putJson("/api/rider/deliveries/{$kitchen->id}/status", ['status' => Order::STATUS_CONFIRMED])
+            ->assertStatus(422);
+
+        $this->putJson("/api/rider/deliveries/{$foreign->id}/status", ['status' => Order::STATUS_COMPLETED])
+            ->assertStatus(404);
+    }
+
+    public function test_admin_keeps_full_access(): void
+    {
+        $admin = $this->user(User::ROLE_ADMIN);
+        $rider = $this->onDutyRider();
+        $order = $this->order();
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/admin/orders?per_page=100')->assertOk();
+        $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_CONFIRMED])->assertOk();
+        $this->putJson("/api/admin/orders/{$order->id}/rider", ['rider_id' => $rider->id])->assertOk();
+        $this->getJson('/api/admin/riders')->assertOk();
+    }
+}

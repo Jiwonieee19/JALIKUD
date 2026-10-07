@@ -14,6 +14,7 @@ class Cart extends Model
         'order_type',
         'address_id',
         'coupon_id',
+        'reward_key',
     ];
 
     public function user(): BelongsTo
@@ -33,6 +34,9 @@ class Cart extends Model
 
     public function cartItems(): HasMany
     {
-        return $this->hasMany(CartItem::class);
+        // Oldest-first everywhere (serialize, pricing, merge/collapse): without
+        // an explicit order the line sequence can shift after updates/deletes
+        // and the app's rows visibly swap on every +/− tap.
+        return $this->hasMany(CartItem::class)->orderBy('id');
     }
 }
