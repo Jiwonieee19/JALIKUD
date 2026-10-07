@@ -9,7 +9,8 @@ import Table from '../components/ui/Table'
 import Tabs from '../components/ui/Tabs'
 import Textarea from '../components/ui/Textarea'
 import Label from '../components/ui/Label'
-import { formatDateTime, mockOrders, mockRiders, peso } from '../mock'
+import { formatDateTime, mockOrders, mockRiders, paginate, peso } from '../mock'
+import Pagination from '../components/ui/Pagination'
 import type { Order, OrderStatus } from '../types'
 
 /**
@@ -30,6 +31,9 @@ import type { Order, OrderStatus } from '../types'
  * backend/routes/api.php, so staff get 403 before that check runs.
  * See docs/API_WIRING.md.
  */
+
+/** Rows per page in the order table. */
+const PER_PAGE = 7
 
 /** Legal transitions, mirroring the orders_status_check CHECK constraint. */
 const ALL_STATUSES: OrderStatus[] = [
@@ -79,6 +83,7 @@ export default function AdminOrdersPage() {
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | 'delivery' | 'pickup'>('all')
   const [selected, setSelected] = useState<Order | null>(null)
+  const [page, setPage] = useState(1)
   const [assigning, setAssigning] = useState<Order | null>(null)
   const [riderChoice, setRiderChoice] = useState('')
   const [note, setNote] = useState('')
@@ -107,6 +112,12 @@ export default function AdminOrdersPage() {
 
   const availableRiders = mockRiders.filter((rider) => rider.status !== 'offline')
 
+  const { data: pagedRows, meta } = paginate(
+    rows,
+    Math.min(page, Math.max(1, Math.ceil(rows.length / PER_PAGE))),
+    PER_PAGE,
+  )
+
   function flash(message: string) {
     setToast(message)
     window.setTimeout(() => setToast(null), 2600)
@@ -126,7 +137,10 @@ export default function AdminOrdersPage() {
             <Select
               aria-label="Filter by fulfilment type"
               value={typeFilter}
-              onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)}
+              onChange={(event) => {
+                setTypeFilter(event.target.value as typeof typeFilter)
+                setPage(1)
+              }}
             >
               <option value="all">All types</option>
               <option value="delivery">Delivery</option>
@@ -138,7 +152,10 @@ export default function AdminOrdersPage() {
 
       <Tabs
         value={filter}
-        onChange={setFilter}
+        onChange={(next) => {
+          setFilter(next)
+          setPage(1)
+        }}
         options={[
           { value: 'all', label: 'All', count: counts.all },
           ...ALL_STATUSES.map((status) => ({
@@ -154,7 +171,10 @@ export default function AdminOrdersPage() {
           <input
             type="search"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value)
+              setPage(1)
+            }}
             placeholder="Search order number or customer…"
             aria-label="Search orders"
             className="block w-full max-w-sm rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-slate-300 ring-inset placeholder:text-slate-400 focus:ring-2 focus:ring-red-600 focus:ring-inset dark:bg-slate-800 dark:text-white dark:ring-slate-700 dark:placeholder:text-slate-500"
@@ -173,7 +193,7 @@ export default function AdminOrdersPage() {
           />
         ) : (
           <Table
-            rows={rows}
+            rows={pagedRows}
             rowKey={(order) => order.id}
             columns={[
               {
@@ -263,6 +283,17 @@ export default function AdminOrdersPage() {
             ]}
           />
         )}
+
+        <div className="mt-4">
+          <Pagination
+            page={meta.current_page}
+            lastPage={meta.last_page}
+            total={meta.total}
+            perPage={meta.per_page}
+            itemLabel="orders"
+            onPageChange={setPage}
+          />
+        </div>
       </Card>
 
       <Modal

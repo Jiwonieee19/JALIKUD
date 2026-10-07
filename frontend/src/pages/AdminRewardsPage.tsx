@@ -9,8 +9,18 @@ import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Tabs from '../components/ui/Tabs'
 import Textarea from '../components/ui/Textarea'
-import { formatDate, formatDateTime, mockMenuItems, mockRedemptions, mockRewards, peso, rewardItemName } from '../mock'
+import {
+  formatDate,
+  formatDateTime,
+  mockMenuItems,
+  mockRedemptions,
+  mockRewards,
+  paginate,
+  peso,
+  rewardItemName,
+} from '../mock'
 import RewardThumb from '../components/ui/RewardThumb'
+import Pagination from '../components/ui/Pagination'
 import type { Reward, RewardRedemption, RewardType } from '../types'
 
 /**
@@ -74,9 +84,14 @@ function toDraft(reward: Reward): Draft {
 
 type Tab = 'catalogue' | 'redemptions' | 'orphans'
 
+/** Rows per page in the reward and redemption tables. */
+const PER_PAGE = 7
+
 export default function AdminRewardsPage() {
   const [tab, setTab] = useState<Tab>('catalogue')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [redemptionPage, setRedemptionPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused'>('all')
   const [editing, setEditing] = useState<Reward | null>(null)
   const [creating, setCreating] = useState(false)
@@ -96,6 +111,21 @@ export default function AdminRewardsPage() {
   }, [search, statusFilter])
 
   const activeCount = mockRewards.filter((reward) => reward.is_active).length
+
+  // The two tables are on separate tabs, so each keeps its own page index.
+  const { data: pagedRows, meta } = paginate(
+    rows,
+    Math.min(page, Math.max(1, Math.ceil(rows.length / PER_PAGE))),
+    PER_PAGE,
+  )
+  const { data: pagedRedemptions, meta: redemptionMeta } = paginate(
+    mockRedemptions,
+    Math.min(
+      redemptionPage,
+      Math.max(1, Math.ceil(mockRedemptions.length / PER_PAGE)),
+    ),
+    PER_PAGE,
+  )
   const totalPoints = mockRewards.reduce((sum, reward) => sum + reward.points_required, 0)
   const avgRatio =
     mockRewards.length > 0
@@ -180,7 +210,10 @@ export default function AdminRewardsPage() {
             <Input
               type="search"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value)
+                setPage(1)
+              }}
               placeholder="Search rewards…"
               aria-label="Search rewards"
               className="max-w-xs"
@@ -189,7 +222,10 @@ export default function AdminRewardsPage() {
               <Select
                 aria-label="Filter by status"
                 value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as typeof statusFilter)
+                  setPage(1)
+                }}
               >
                 <option value="all">All statuses</option>
                 <option value="active">Active</option>
@@ -200,7 +236,7 @@ export default function AdminRewardsPage() {
 
           <Card>
             <Table
-              rows={rows}
+              rows={pagedRows}
               rowKey={(reward) => reward.id}
               empty={
                 <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -337,6 +373,16 @@ export default function AdminRewardsPage() {
                 },
               ]}
             />
+            <div className="mt-4">
+              <Pagination
+                page={meta.current_page}
+                lastPage={meta.last_page}
+                total={meta.total}
+                perPage={meta.per_page}
+                itemLabel="rewards"
+                onPageChange={setPage}
+              />
+            </div>
           </Card>
         </>
       )}
@@ -344,7 +390,7 @@ export default function AdminRewardsPage() {
       {tab === 'redemptions' && (
         <Card description="Customers redeem points against this catalogue. Codes are single-use.">
           <Table
-            rows={mockRedemptions}
+            rows={pagedRedemptions}
             rowKey={(redemption) => redemption.id}
             empty={<p className="text-sm text-slate-500">No redemptions yet.</p>}
             columns={[
@@ -421,6 +467,16 @@ export default function AdminRewardsPage() {
               },
             ]}
           />
+          <div className="mt-4">
+            <Pagination
+              page={redemptionMeta.current_page}
+              lastPage={redemptionMeta.last_page}
+              total={redemptionMeta.total}
+              perPage={redemptionMeta.per_page}
+              itemLabel="redemptions"
+              onPageChange={setRedemptionPage}
+            />
+          </div>
         </Card>
       )}
 
