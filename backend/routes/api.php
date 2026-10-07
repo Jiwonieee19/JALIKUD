@@ -8,8 +8,13 @@ use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\CouponController;
 use App\Http\Controllers\MenuItemController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\RewardController;
+use App\Http\Controllers\RiderController;
+use App\Http\Controllers\RiderDeliveryController;
 use App\Http\Controllers\StoreSettingController;
 use App\Http\Middleware\EnsureAdmin;
+use App\Http\Middleware\EnsureRider;
+use App\Http\Middleware\EnsureStaff;
 use Illuminate\Support\Facades\Route;
 
 // Public authentication endpoints (rate limited to slow down brute force)
@@ -39,11 +44,41 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/cart/items/{cart}/{cartItem}', [CartController::class, 'removeItem']);
     Route::delete('/cart', [CartController::class, 'destroy']);
     Route::post('/cart/coupon', [CartController::class, 'applyCoupon'])->middleware('throttle:coupons');
+    Route::post('/cart/reward', [CartController::class, 'applyReward']);
+    Route::delete('/cart/reward', [CartController::class, 'removeReward']);
+
+    // Loyalty (customer)
+    Route::get('/rewards', [RewardController::class, 'index']);
+    Route::get('/points', [RewardController::class, 'points']);
 
     // Orders (customer)
     Route::get('/orders', [OrderController::class, 'index']);
     Route::get('/orders/{order}', [OrderController::class, 'show']);
     Route::post('/orders', [OrderController::class, 'store'])->middleware('throttle:orders');
+
+    // Rider operations (rider role only): own delivery queue.
+    Route::middleware(EnsureRider::class)
+        ->prefix('rider')
+        ->group(function () {
+            Route::get('/deliveries', [RiderDeliveryController::class, 'index']);
+            Route::get('/deliveries/{order}', [RiderDeliveryController::class, 'show']);
+            Route::put('/deliveries/{order}/status', [RiderDeliveryController::class, 'updateStatus']);
+            Route::put('/availability', [RiderDeliveryController::class, 'updateAvailability']);
+        });
+
+    // Staff order operations (staff + admin). User/catalog/coupon/store
+    // administration stays admin-only below.
+    Route::middleware(EnsureStaff::class)
+        ->prefix('admin')
+        ->group(function () {
+            Route::get('/orders', [OrderController::class, 'index']);
+            Route::get('/orders/{order}', [OrderController::class, 'show']);
+            Route::put('/orders/{order}/status', [OrderController::class, 'updateStatus']);
+            Route::put('/orders/{order}/payment', [OrderController::class, 'confirmPayment']);
+            Route::put('/orders/{order}/rider', [OrderController::class, 'assignRider']);
+            Route::get('/riders', [RiderController::class, 'index']);
+            Route::match(['put', 'patch'], '/menu-items/{menuItem}', [MenuItemController::class, 'update']);
+        });
 
     // Admin-only: all routes under /admin/*
     Route::middleware(EnsureAdmin::class)
@@ -57,14 +92,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
             // Catalog management
             Route::apiResource('categories', CategoryController::class)->only(['store', 'update', 'destroy']);
-            Route::apiResource('menu-items', MenuItemController::class)->only(['store', 'update', 'destroy']);
+            Route::apiResource('menu-items', MenuItemController::class)->only(['store', 'destroy']);
             Route::apiResource('coupons', CouponController::class)->except(['create', 'edit']);
             Route::put('/store-setting', [StoreSettingController::class, 'update']);
-
-            // Order management
-            Route::get('/orders', [OrderController::class, 'index']);
-            Route::get('/orders/{order}', [OrderController::class, 'show']);
-            Route::put('/orders/{order}/status', [OrderController::class, 'updateStatus']);
         });
 
 });

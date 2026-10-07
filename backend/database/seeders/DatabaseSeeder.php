@@ -17,9 +17,10 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             UserSeeder::class,
+            MenuSeeder::class,
         ]);
 
-        // Seed a default store setting if none exists
+        // Seed a default store setting if none exists (matches production pricing).
         if (\App\Models\StoreSetting::count() === 0) {
             \App\Models\StoreSetting::create([
                 'store_name' => 'JALIKUD',
@@ -27,8 +28,8 @@ class DatabaseSeeder extends Seeder
                 'accepts_delivery' => true,
                 'accepts_pickup' => true,
                 'min_order_amount' => 0,
-                'delivery_fee' => 0,
-                'tax_rate_percent' => 0,
+                'delivery_fee' => 49,
+                'tax_rate_percent' => 12,
                 'opening_time' => '08:00:00',
                 'closing_time' => '22:00:00',
             ]);

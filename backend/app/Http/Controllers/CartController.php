@@ -7,6 +7,7 @@ use App\Models\CartItem;
 use App\Models\Coupon;
 use App\Models\MenuItem;
 use App\Services\CartPricingService;
+use App\Services\PointLedger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -16,13 +17,17 @@ use Illuminate\Support\Facades\DB;
  */
 class CartController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    public function index(Request $request, CartPricingService $pricing): JsonResponse
     {
         $cart = $this->getCart($request);
 
-        $cart->load(['cartItems.menuItem', 'cartItems.options.variantOption', 'address', 'coupon']);
+        return DB::transaction(function () use ($cart, $request, $pricing) {
+            // Heal carts split before merge-on-add existed: fold identical
+            // lines into one row so the app always shows a single row.
+            $this->collapseAllDuplicates($cart);
 
-        return response()->json(['data' => $cart]);
+            return $this->cartResponse($cart, $request, $pricing);
+        });
     }
 
     public function addItem(Request $request, CartPricingService $pricing): JsonResponse
@@ -56,14 +61,46 @@ class CartController extends Controller
                 ->flatMap->variantOptions
                 ->whereIn('id', $requestedIds);
 
-        return DB::transaction(function () use ($request, $menuItem, $data, $options) {
+        return DB::transaction(function () use ($request, $menuItem, $data, $options, $pricing, $requestedIds) {
             $cart = $this->getCart($request);
+            $notes = ($data['notes'] ?? null) !== null && trim((string) ($data['notes'] ?? '')) !== ''
+                ? trim((string) $data['notes'])
+                : null;
+            sort($requestedIds);
+
+            // Merge with an identical line (same item + same options + same
+            // notes) instead of stacking a duplicate row for every tap.
+            $existing = $cart->cartItems()->with('options')
+                ->where('menu_item_id', $menuItem->id)
+                ->get()
+                ->first(function (CartItem $candidate) use ($notes, $requestedIds) {
+                    $candidateNotes = $candidate->notes !== null && trim((string) $candidate->notes) !== ''
+                        ? trim((string) $candidate->notes)
+                        : null;
+                    $candidateOptionIds = $candidate->options->pluck('variant_option_id')
+                        ->map(fn ($id) => (int) $id)->sort()->values()->all();
+
+                    return $candidateNotes === $notes && $candidateOptionIds === $requestedIds;
+                });
+
+            if ($existing !== null) {
+                $this->collapseMatching($cart, $existing);
+
+                $existing->refresh();
+                $room = 99 - (int) $existing->quantity;
+
+                if ($room > 0) {
+                    $existing->increment('quantity', min((int) $data['quantity'], $room));
+                }
+
+                return $this->cartResponse($cart, $request, $pricing);
+            }
 
             $cartItem = $cart->cartItems()->create([
                 'menu_item_id' => $menuItem->id,
                 'quantity' => $data['quantity'],
                 'unit_price' => $menuItem->base_price,
-                'notes' => $data['notes'] ?? null,
+                'notes' => $notes,
             ]);
 
             foreach ($options as $option) {
@@ -73,13 +110,13 @@ class CartController extends Controller
                 ]);
             }
 
-            $cart->load(['cartItems.menuItem', 'cartItems.options.variantOption']);
+            $this->collapseAllDuplicates($cart, $cartItem->id);
 
-            return response()->json(['data' => $cart], 201);
+            return $this->cartResponse($cart, $request, $pricing, 201);
         });
     }
 
-    public function updateItem(Request $request, Cart $cart, CartItem $cartItem): JsonResponse
+    public function updateItem(Request $request, Cart $cart, CartItem $cartItem, CartPricingService $pricing): JsonResponse
     {
         if ($cart->user_id !== $request->user()->id || $cartItem->cart_id !== $cart->id) {
             return response()->json(['message' => 'Forbidden.'], 403);
@@ -92,10 +129,10 @@ class CartController extends Controller
 
         $cartItem->update($data);
 
-        return response()->json(['data' => $cartItem]);
+        return $this->cartResponse($cart, $request, $pricing);
     }
 
-    public function removeItem(Request $request, Cart $cart, CartItem $cartItem): JsonResponse
+    public function removeItem(Request $request, Cart $cart, CartItem $cartItem, CartPricingService $pricing): JsonResponse
     {
         if ($cart->user_id !== $request->user()->id || $cartItem->cart_id !== $cart->id) {
             return response()->json(['message' => 'Forbidden.'], 403);
@@ -103,19 +140,19 @@ class CartController extends Controller
 
         $cartItem->delete();
 
-        return response()->json(['message' => 'Item removed from cart.']);
+        return $this->cartResponse($cart, $request, $pricing);
     }
 
-    public function destroy(Request $request): JsonResponse
+    public function destroy(Request $request, CartPricingService $pricing): JsonResponse
     {
         $cart = $this->getCart($request);
         $cart->cartItems()->delete();
-        $cart->update(['address_id' => null, 'coupon_id' => null]);
+        $cart->update(['address_id' => null, 'coupon_id' => null, 'reward_key' => null]);
 
-        return response()->json(['message' => 'Cart cleared.']);
+        return $this->cartResponse($cart, $request, $pricing);
     }
 
-    public function applyCoupon(Request $request): JsonResponse
+    public function applyCoupon(Request $request, CartPricingService $pricing): JsonResponse
     {
         $data = $request->validate([
             'code' => ['required', 'string', 'max:50'],
@@ -123,24 +160,69 @@ class CartController extends Controller
 
         $cart = $this->getCart($request);
 
+        if ($cart->reward_key !== null) {
+            return response()->json(['message' => 'Remove the selected reward before applying a coupon.'], 422);
+        }
+
         $coupon = Coupon::where('code', $data['code'])->first();
 
         if (! $coupon) {
             return response()->json(['message' => 'Coupon code not found or inactive.'], 422);
         }
 
-        // Enforce window + usage limits at apply time (subtotal not enforced here;
-        // checkout re-checks everything and fails closed).
-        $reason = $coupon->rejectionReason(null, $request->user()->id);
+        $priced = $pricing->price($cart);
+        $reason = $coupon->rejectionReason($priced['subtotal'], $request->user()->id);
 
         if ($reason !== null) {
             return response()->json(['message' => $reason], 422);
         }
 
         $cart->update(['coupon_id' => $coupon->id]);
-        $cart->load('cartItems.menuItem', 'coupon');
 
-        return response()->json(['data' => $cart]);
+        return $this->cartResponse($cart, $request, $pricing);
+    }
+
+    /**
+     * Reserve a reward on the cart. Points are only checked here — they are
+     * deducted if and when checkout succeeds, never on selection.
+     */
+    public function applyReward(Request $request, CartPricingService $pricing): JsonResponse
+    {
+        $data = $request->validate([
+            'reward_key' => ['required', 'string', 'max:50'],
+        ]);
+
+        $definition = PointLedger::definition($data['reward_key']);
+
+        if ($definition === null) {
+            return response()->json(['message' => 'Reward not found.'], 422);
+        }
+
+        $cart = $this->getCart($request);
+
+        if ($cart->coupon_id !== null) {
+            return response()->json(['message' => 'Remove the applied coupon before selecting a reward.'], 422);
+        }
+
+        $balance = PointLedger::balance($request->user()->id);
+
+        if ($balance < (int) ($definition['points_cost'] ?? PHP_INT_MAX)) {
+            return response()->json(['message' => 'Not enough points for this reward.'], 422);
+        }
+
+        $cart->update(['reward_key' => $data['reward_key']]);
+
+        // Eligibility details (item in cart, voucher minimum) surface as
+        // pricing_errors on the returned cart rather than a rejection.
+        return $this->cartResponse($cart, $request, $pricing);
+    }
+
+    public function removeReward(Request $request, CartPricingService $pricing): JsonResponse
+    {
+        $cart = $this->getCart($request);
+        $cart->update(['reward_key' => null]);
+
+        return $this->cartResponse($cart, $request, $pricing);
     }
 
     private function getCart(Request $request): Cart
@@ -149,5 +231,74 @@ class CartController extends Controller
             ['user_id' => $request->user()->id],
             ['session_id' => null, 'order_type' => 'delivery'],
         );
+    }
+
+    /**
+     * Identity of a cart line for merging: same item + same options + same
+     * notes. Different options/notes stay as separate rows on purpose.
+     */
+    private function lineKey(CartItem $item): string
+    {
+        $notes = $item->notes !== null && trim((string) $item->notes) !== ''
+            ? trim((string) $item->notes)
+            : '';
+        $optionIds = $item->relationLoaded('options')
+            ? $item->options->pluck('variant_option_id')->map(fn ($id) => (int) $id)->sort()->values()->all()
+            : [];
+
+        return $item->menu_item_id.'|'.$notes.'|'.implode(',', $optionIds);
+    }
+
+    /**
+     * Fold every other line identical to $kept into $kept (qty capped at 99).
+     */
+    private function collapseMatching(Cart $cart, CartItem $kept): void
+    {
+        $kept->loadMissing('options');
+        $key = $this->lineKey($kept);
+
+        $duplicates = $cart->cartItems()->with('options')->get()
+            ->filter(fn (CartItem $candidate) => $candidate->id !== $kept->id && $this->lineKey($candidate) === $key)
+            ->sortBy('id')
+            ->values();
+
+        foreach ($duplicates as $duplicate) {
+            $room = 99 - (int) $kept->quantity;
+            if ($room > 0) {
+                $kept->increment('quantity', min((int) $duplicate->quantity, $room));
+            }
+            $duplicate->delete();
+        }
+    }
+
+    /**
+     * Fold all identical-line groups in the cart into single rows (qty capped
+     * at 99, earliest row kept). Heals carts split before merge-on-add.
+     */
+    private function collapseAllDuplicates(Cart $cart, ?int $excludeId = null): void
+    {
+        $lines = $cart->cartItems()->with('options')->get()
+            ->when($excludeId !== null, fn ($collection) => $collection->reject(fn (CartItem $item) => $item->id === $excludeId))
+            ->groupBy(fn (CartItem $item) => $this->lineKey($item));
+
+        foreach ($lines as $group) {
+            if ($group->count() < 2) {
+                continue;
+            }
+
+            $ordered = $group->sortBy('id')->values();
+            $kept = $ordered->first();
+            $total = min(99, (int) $ordered->sum('quantity'));
+
+            $kept->update(['quantity' => $total]);
+            $ordered->skip(1)->each(fn (CartItem $duplicate) => $duplicate->delete());
+        }
+    }
+
+    private function cartResponse(Cart $cart, Request $request, CartPricingService $pricing, int $status = 200): JsonResponse
+    {
+        return response()->json([
+            'data' => $pricing->serialize($cart->fresh(), $request->user()->id),
+        ], $status);
     }
 }

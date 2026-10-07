@@ -1,17 +1,22 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
 import { useCustomerOrder } from '@/context/customer-order-context';
+import { errorMessage } from '@/lib/api';
+import { customerApi, type MenuItem as ApiMenuItem, type StoreSetting } from '@/lib/customer-api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -21,67 +26,28 @@ const TEXT_GRAY = '#8E8E93';
 const BADGE_GREEN = '#16A34A';
 const BADGE_AMBER = '#F59E0B';
 
-const CATEGORIES = ['All', 'Chickenjoy', 'Burgers', 'Rice Meals', 'Pasta'] as const;
-type Category = (typeof CATEGORIES)[number];
+type Category = { id: number | null; name: string };
 
 type MenuItem = {
-  id: string;
+  id: number;
   name: string;
   price: number;
   oldPrice?: number;
-  category: Exclude<Category, 'All'>;
+  categoryId: number;
   isNew?: boolean;
   emoji: string;
+  imageUrl?: string;
+  description?: string;
 };
 
-// Static menu data for now — will be replaced by the backend API later.
-const MENU: MenuItem[] = [
-  { id: '1', name: 'Chickenjoy 1pc', price: 109, category: 'Chickenjoy', emoji: '🍗' },
-  {
-    id: '2',
-    name: 'Chickenjoy 2pc',
-    price: 199,
-    oldPrice: 221,
-    category: 'Chickenjoy',
-    emoji: '🍗',
-  },
-  {
-    id: '3',
-    name: 'Chickenjoy 6pc',
-    price: 549,
-    category: 'Chickenjoy',
-    isNew: true,
-    emoji: '🍗',
-  },
-  { id: '4', name: 'Yumburger', price: 89, category: 'Burgers', emoji: '🍔' },
-  {
-    id: '5',
-    name: 'Burger Steak',
-    price: 139,
-    oldPrice: 165,
-    category: 'Rice Meals',
-    emoji: '🍔',
-  },
-  {
-    id: '6',
-    name: 'Champ Burger',
-    price: 179,
-    category: 'Burgers',
-    isNew: true,
-    emoji: '🍔',
-  },
-  { id: '7', name: '1pc Burger Steak Solo', price: 99, category: 'Rice Meals', emoji: '🍚' },
-  {
-    id: '8',
-    name: 'Chicken & Burger Combo',
-    price: 249,
-    oldPrice: 285,
-    category: 'Burgers',
-    emoji: '🍟',
-  },
-  { id: '9', name: 'Jolly Spaghetti', price: 99, category: 'Pasta', emoji: '🍝' },
-  { id: '10', name: 'Chickenjoy 8pc Family', price: 729, category: 'Chickenjoy', emoji: '🍗' },
-];
+function emojiFor(item: ApiMenuItem): string {
+  const value = item.name.toLowerCase();
+  if (value.includes('burger')) return '🍔';
+  if (value.includes('spaghetti') || value.includes('pasta')) return '🍝';
+  if (value.includes('fries')) return '🍟';
+  if (value.includes('rice')) return '🍚';
+  return '🍗';
+}
 
 function discountPercent(item: MenuItem): number | null {
   if (!item.oldPrice || item.oldPrice <= item.price) return null;
@@ -90,12 +56,47 @@ function discountPercent(item: MenuItem): number | null {
 
 // The first screen a customer sees after logging in.
 export default function HomeScreen() {
-  const { addToCart, quantityInCart } = useCustomerOrder();
-  const [activeCategory, setActiveCategory] = useState<Category>('All');
+  const { addToCart, quantityInCart, mutating } = useCustomerOrder();
+  const [categories, setCategories] = useState<Category[]>([{ id: null, name: 'All' }]);
+  const [menu, setMenu] = useState<MenuItem[]>([]);
+  const [store, setStore] = useState<StoreSetting | null>(null);
+  const [activeCategory, setActiveCategory] = useState<number | null>(null);
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  const items = MENU.filter((item) => {
-    const matchesCategory = activeCategory === 'All' || item.category === activeCategory;
+  const loadCatalog = async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const catalog = await customerApi.catalog();
+      setStore(catalog.store);
+      setCategories([{ id: null, name: 'All' }, ...catalog.categories.map(({ id, name }) => ({ id, name }))]);
+      setMenu(catalog.menuItems
+        .filter((item) => item && Number.isFinite(Number(item.id)) && typeof item.name === 'string')
+        .map((item) => ({
+          id: Number(item.id),
+          name: item.name,
+          price: Number(item.base_price) || 0,
+          categoryId: Number(item.category?.id ?? item.category_id),
+          isNew: Boolean(item.is_featured),
+          emoji: emojiFor(item),
+          imageUrl: item.image_url || undefined,
+          description: item.description || undefined,
+        })));
+    } catch (caught) {
+      setLoadError(errorMessage(caught, 'The menu server is currently unavailable.'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Initial public catalog synchronization is the purpose of this screen effect.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void loadCatalog(); }, []);
+
+  const items = menu.filter((item) => {
+    const matchesCategory = activeCategory === null || item.categoryId === activeCategory;
     const matchesSearch = item.name.toLowerCase().includes(search.trim().toLowerCase());
     return matchesCategory && matchesSearch;
   });
@@ -113,7 +114,7 @@ export default function HomeScreen() {
               <View style={styles.locationRow}>
                 <Text style={styles.locationIcon}>🏪</Text>
                 <Text style={styles.locationName} numberOfLines={1}>
-                  SM Lanang Premier
+                  {store?.store_name ?? 'Jalikud'}
                 </Text>
               </View>
             </View>
@@ -141,6 +142,7 @@ export default function HomeScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={loading} onRefresh={() => void loadCatalog()} tintColor={RED} />}
         showsVerticalScrollIndicator={false}>
         {/* Promo banner */}
         <Pressable style={({ pressed }) => [styles.banner, pressed && styles.pressed]}>
@@ -148,9 +150,9 @@ export default function HomeScreen() {
             <Text style={styles.bannerEmoji}>🍗</Text>
           </View>
           <View style={styles.bannerTextWrap}>
-            <Text style={styles.bannerKicker}>TODAY ONLY</Text>
-            <Text style={styles.bannerTitle}>Chickenjoy 2pc</Text>
-            <Text style={styles.bannerSubtitle}>Save ₱22 · Use code JALI50</Text>
+            <Text style={styles.bannerKicker}>LIVE MENU</Text>
+            <Text style={styles.bannerTitle}>{store?.store_name ?? 'Jalikud'}</Text>
+            <Text style={styles.bannerSubtitle}>{store?.is_open ? 'Open now · Browse available items' : 'The store is currently closed'}</Text>
           </View>
         </Pressable>
 
@@ -161,19 +163,19 @@ export default function HomeScreen() {
           showsHorizontalScrollIndicator={false}
           style={styles.chipsScroll}
           contentContainerStyle={styles.chipsRow}>
-          {CATEGORIES.map((category) => {
-            const selected = category === activeCategory;
+          {categories.map((category) => {
+            const selected = category.id === activeCategory;
             return (
               <Pressable
-                key={category}
-                onPress={() => setActiveCategory(category)}
+                key={category.id ?? 'all'}
+                onPress={() => setActiveCategory(category.id)}
                 style={({ pressed }) => [
                   styles.chip,
                   selected && styles.chipSelected,
                   pressed && styles.pressed,
                 ]}>
                 <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
-                  {category}
+                  {category.name}
                 </Text>
               </Pressable>
             );
@@ -182,6 +184,7 @@ export default function HomeScreen() {
 
         {/* Product grid */}
         <View style={styles.grid}>
+          {loading && menu.length === 0 && <ActivityIndicator style={styles.loader} size="large" color={RED} />}
           {items.map((item) => {
             const discount = discountPercent(item);
             const cartQuantity = quantityInCart(item.id);
@@ -198,12 +201,17 @@ export default function HomeScreen() {
                       <Text style={styles.badgeText}>NEW</Text>
                     </View>
                   )}
-                  <Text style={styles.cardEmoji}>{item.emoji}</Text>
+                  {item.imageUrl ? (
+                    <Image source={{ uri: item.imageUrl }} style={styles.cardImage} contentFit="cover" transition={150} />
+                  ) : (
+                    <Text style={styles.cardEmoji}>{item.emoji}</Text>
+                  )}
                 </View>
                 <View style={styles.cardBody}>
                   <Text style={styles.cardName} numberOfLines={2}>
                     {item.name}
                   </Text>
+                  {item.description && <Text style={styles.cardDescription} numberOfLines={2}>{item.description}</Text>}
                   <View style={styles.priceRow}>
                     <Text style={styles.price}>₱{item.price}</Text>
                     {item.oldPrice != null && <Text style={styles.oldPrice}>₱{item.oldPrice}</Text>}
@@ -211,14 +219,13 @@ export default function HomeScreen() {
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Add ${item.name} to cart`}
-                    onPress={() =>
-                      addToCart({
+                    disabled={mutating}
+                    onPress={() => void addToCart({
                         id: item.id,
                         name: item.name,
                         unitPrice: item.price,
                         emoji: item.emoji,
-                      })
-                    }
+                      }).catch(() => undefined)}
                     style={({ pressed }) => [styles.addButton, pressed && styles.pressed]}>
                     <Text style={styles.addButtonText}>{cartQuantity > 0 ? cartQuantity : '+'}</Text>
                   </Pressable>
@@ -226,8 +233,11 @@ export default function HomeScreen() {
               </View>
             );
           })}
-          {items.length === 0 && (
-            <Text style={styles.emptyText}>No items found. Try another search.</Text>
+          {!loading && items.length === 0 && (
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyText}>{loadError || 'No menu items found.'}</Text>
+              {!!loadError && <Pressable onPress={() => void loadCatalog()} style={styles.retryButton}><Text style={styles.retryText}>Try Again</Text></Pressable>}
+            </View>
           )}
         </View>
       </ScrollView>
@@ -417,6 +427,10 @@ const styles = StyleSheet.create({
   cardEmoji: {
     fontSize: 56,
   },
+  cardImage: {
+    width: '100%',
+    height: '100%',
+  },
   badge: {
     position: 'absolute',
     top: 8,
@@ -439,6 +453,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: TEXT_DARK,
     minHeight: 34,
+  },
+  cardDescription: {
+    minHeight: 30,
+    marginTop: 3,
+    fontSize: 11,
+    color: TEXT_GRAY,
   },
   priceRow: {
     flexDirection: 'row',
@@ -480,5 +500,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: TEXT_GRAY,
   },
+  emptyWrap: { width: '100%', alignItems: 'center', paddingVertical: 28, gap: 12 },
+  retryButton: { backgroundColor: RED, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
+  retryText: { color: '#FFFFFF', fontWeight: '800' },
+  loader: { width: '100%', paddingVertical: 48 },
 });
 

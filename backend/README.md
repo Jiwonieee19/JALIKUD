@@ -49,9 +49,23 @@ php artisan serve           # http://localhost:8000
 ```
 
 Docker for the whole stack is in the **root** `README.md`; the backend container
-auto-migrates on boot. The seeder creates one open `store_settings` row
-(`JALIKUD`, delivery + pickup, 08:00–22:00) if empty. It creates **no users** —
-register, then promote one:
+auto-migrates on boot. `php artisan migrate:fresh --seed` runs:
+
+- `UserSeeder` — five demo accounts: `admin@jalikud.test`, `staff@jalikud.test`,
+  `rider@jalikud.test`, `customer@jalikud.test` (with a default address) and
+  `customer2@jalikud.test`, all with password `Jalikud123` (override with
+  `SEED_USER_PASSWORD`).
+- One open `store_settings` row (`JALIKUD`, delivery + pickup, 08:00–22:00) if
+  the table is empty.
+- `MenuSeeder` — seeds the real 4-category / 10-item catalog and purges rows the
+  Postman collection generates (`Postman Cat …` / `Postman Meal t-*`). It is
+  idempotent, so it can be re-run against a live database at any time:
+
+  ```bash
+  php artisan db:seed --class=MenuSeeder
+  ```
+
+On databases seeded before `UserSeeder` existed, promote an account by hand:
 
 ```sql
 UPDATE users SET role = 'admin' WHERE email = 'you@example.com';
@@ -136,33 +150,83 @@ One cart per user, auto-created on first use (`order_type` defaults to
 `delivery`). Responses embed `cartItems.menuItem`,
 `cartItems.options.variantOption`, plus `address`/`coupon` where loaded.
 
+**Every cart endpoint returns the same authoritative representation** (`GET`,
+item create/update/delete, clear, coupon apply), so clients can render totals
+from any response without a follow-up fetch:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "cart_items": [
+      {
+        "id": 5,
+        "menu_item_id": 8,
+        "quantity": 2,
+        "unit_price": "120.00",
+        "line_total": "300.00",
+        "menu_item": { "...": "..." },
+        "options": [{ "...": "...", "price_delta": "30.00" }]
+      }
+    ],
+    "address": null,
+    "coupon": null,
+    "subtotal": "300.00",
+    "discount_amount": "0.00",
+    "delivery_fee": "50.00",
+    "tax_amount": "36.00",
+    "total_amount": "386.00",
+    "pricing_errors": []
+  }
+}
+```
+
+Money values are two-decimal strings. Lines are re-priced from the live
+catalog on every response, so stale snapshots never override current prices:
+
+```text
+line_total      = (live base_price + live option deltas) × quantity
+subtotal        = Σ line totals
+discount_amount = attached coupon discount (0 when invalid/expired)
+delivery_fee    = store delivery fee when order_type=delivery, else 0
+tax_amount      = subtotal × tax_rate_percent / 100
+total_amount    = subtotal − discount + delivery fee + tax
+pricing_errors  = unavailable-item / invalid-coupon messages (fail-closed)
+```
+
 **`GET /api/cart`** — returns `{ data: cart }`, creating an empty cart if needed.
 
 **`POST /api/cart/items`** → `201`. Fields: `menu_item_id` (required, must
 exist), `quantity` (required, int ≥ 1), `notes` (optional, ≤ 500 chars),
-`options` (optional array of `{ variant_option_id }`, each must exist).
-`unit_price` is snapshotted from `base_price`; options are stored with
-`price_delta: 0` (variants recorded but **not priced** — see §8).
+`options` (optional array of `{ variant_option_id }`, each must exist and be
+selectable for that item — required/min/max group rules are enforced). Option
+rows snapshot their real `price_delta`, but pricing always re-reads the live
+option value.
 
 **`PUT /api/cart/items/{cart}/{cartItem}`** — body `{ quantity?: int ≥ 1,
 notes?: string ≤ 500 | null }`. `403` if the cart isn't yours or the item isn't
 in that cart.
 
-**`DELETE /api/cart/items/{cart}/{cartItem}`** — same ownership rule.
-`200 { message: "Item removed from cart." }`.
+**`DELETE /api/cart/items/{cart}/{cartItem}`** — same ownership rule. `200`
+with the refreshed cart payload.
 
 **`DELETE /api/cart`** — deletes all lines, clears `address_id` + `coupon_id`
-(cart row stays). `200 { message: "Cart cleared." }`.
+(cart row stays). `200` with the refreshed (empty) cart payload.
 
 **`POST /api/cart/coupon`** — body `{ code }` (required, ≤ 50). Attaches an
-*active* coupon by code. Unknown/inactive → `422`
-`{ message: "Coupon code not found or inactive." }` (plain message, no `errors`
-object). No expiry/minimum/usage checks at this step.
+*active* coupon by code after checking it against the authoritative cart
+subtotal (window, usage limits, and minimum are enforced at attach time).
+Unknown/inactive/rejected → `422 { message: "..." }` (plain message, no
+`errors` object). Success returns the refreshed cart payload.
 
 ### 5.4 Orders (authenticated)
 
 **`GET /api/orders`** — paginated (default 10/page). Customers see only their
 orders; **admins see all** (`isAdmin()` branch). Staff/riders see only their own.
+Each order embeds the safe relations mobile cards need: `address` (id, label,
+lines, city/state/postal/country, `is_default` — no coordinates) and
+`order_items` (`item_name`, `quantity`, `subtotal`). The related `user` object
+is never included in the index.
 
 **`GET /api/orders/{order}`** — detail with `user, address, rider, coupon,
 orderItems.options, statusHistory, payments, reviews`. Owner or admin only,
@@ -171,8 +235,10 @@ else `403 { message: "Forbidden." }`.
 **`POST /api/orders`** → `201`. Checkout: snapshots the cart into an order, then
 empties it. Empty cart → `422 { message: "Your cart is empty." }`. Fields:
 `order_type` (required: `delivery|pickup`), `address_id` (optional, must exist;
-omit/`null` for pickup), `coupon_code` (optional ≤ 50 — unknown/inactive codes
-are **silently ignored**: no error, no discount), `notes` (optional ≤ 2000 chars),
+omit/`null` for pickup), `coupon_code` (optional ≤ 50 — unknown, inactive, or
+rejected codes fail closed with `422 { message, errors: { coupon_code: [...] } }`
+instead of being silently ignored; when omitted, the cart's attached coupon is
+used), `notes` (optional ≤ 2000 chars),
 `scheduled_for` (optional date; `null` = ASAP). Server-side totals:
 
 ```text
@@ -331,28 +397,20 @@ and the `postman/` collection mirror this flow.
 
 So clients don't rely on behavior that doesn't exist:
 
-1. **No address / rider / review / payment / variant endpoints.** Those tables and
-   models exist, but no API writes them except as cart/checkout side effects
-   (checkout accepts an existing `address_id`; it cannot create one — seed
-   addresses in DB directly).
-2. **Cart variant options are priced at zero.** `addItem` always writes
-   `price_delta: 0` and checkout ignores option deltas.
-3. **Coupon enforcement is partial.** Expiry, global/per-user usage limits, and
-   cart-time minimums are not checked; unknown checkout codes are silently
-   ignored; `used_count` is never incremented though redemptions are recorded.
-4. **Staff role is half-wired.** `updateStatus()` allows staff, but the route is
+1. **No rider / review / payment / variant-management endpoints.** Those tables
+   and models exist, but there are no routes to assign riders, write reviews,
+   create/charge payments, or manage variant groups/options. Customer-facing
+   writes are limited to addresses, cart, and checkout.
+2. **Staff role is half-wired.** `updateStatus()` allows staff, but the route is
    inside the admin-only group, so staff get `403` before reaching it.
-5. **Checkout assumes store settings exist.** With no `store_settings` row (fresh
-   DB, seeder skipped), `POST /api/orders` throws a 500 on `->delivery_fee` of
-   null. Keep the seeder row or create settings via the admin API first.
-6. **Tax is on the pre-discount subtotal** (`subtotal × rate`), not `(subtotal −
+3. **Tax is on the pre-discount subtotal** (`subtotal × rate`), not `(subtotal −
    discount) × rate`.
-7. **Category tree is unguarded.** Self-parenting allowed; deleting a parent
+4. **Category tree is unguarded.** Self-parenting allowed; deleting a parent
    orphans children; deleting a category with items orphans the items.
-8. **No customer cancel endpoint** — cancellation only via the admin status route.
-9. **Payments are read-only.** `payments` appear in order detail, but no endpoint
+5. **No customer cancel endpoint** — cancellation only via the admin status route.
+6. **Payments are read-only.** `payments` appear in order detail, but no endpoint
    creates/charges/refunds them; `payment_status` never leaves `unpaid` via API.
-10. **Admin user JSON** omits `email_verified_at`/`updated_at`; delete returns a
-    plain message with no `data`.
+7. **Admin user JSON** omits `email_verified_at`/`updated_at`; delete returns a
+   plain message with no `data`.
 
 

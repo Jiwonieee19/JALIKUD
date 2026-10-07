@@ -1,381 +1,222 @@
-import { useState } from 'react';
-import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { BottomTabInset } from '@/constants/theme';
-import { useCustomerOrder, pointsForTotal } from '@/context/customer-order-context';
+import { useCustomerOrder, type CustomerPaymentMethod } from '@/context/customer-order-context';
 
-const RED = '#DC2626';
-const BG = '#F4F4F6';
-const CARD = '#FFFFFF';
-const TEXT_DARK = '#1C1C1E';
-const TEXT_GRAY = '#8E8E93';
-const GREEN = '#16A34A';
-
-function peso(value: number): string {
-  return `₱${value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
-}
+const RED = '#DC2626'; const BG = '#F4F4F6'; const CARD = '#FFFFFF'; const TEXT = '#1C1C1E'; const GRAY = '#74747C';
+const peso = (value: number) => `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function CartScreen() {
   const router = useRouter();
-  const { cartItems, changeQuantity, removeFromCart, placeOrder } = useCustomerOrder();
-  const [voucherInput, setVoucherInput] = useState('');
-  const [voucherApplied, setVoucherApplied] = useState(false);
+  const insets = useSafeAreaInsets();
+  const { cart, cartItems, addresses, changeQuantity, removeFromCart, applyCoupon, placeOrder, mutating, error, refreshCart, refreshAddresses, clearReward } = useCustomerOrder();
+  const [coupon, setCoupon] = useState('');
+  const [notes, setNotes] = useState('');
+  const [orderType, setOrderType] = useState<'delivery' | 'pickup'>('delivery');
+  const [addressId, setAddressId] = useState<number>();
+  const [paymentMethod, setPaymentMethod] = useState<CustomerPaymentMethod>('cod');
+  const [refreshing, setRefreshing] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const summaryY = useRef(0);
+  const selectedAddressId = addressId ?? addresses.find((item) => item.is_default)?.id ?? addresses[0]?.id;
 
-  const subtotal = cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-  const discount = voucherApplied ? Math.floor(subtotal * 0.5) : 0;
-  const deliveryFee = cartItems.length > 0 ? 49 : 0;
-  const total = subtotal - discount + deliveryFee;
-  const totalQty = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const subtotal = Number(cart?.subtotal ?? 0);
+  const discount = Number(cart?.discount_amount ?? 0);
+  const rewardDiscount = Number(cart?.reward_discount_amount ?? 0);
+  const delivery = orderType === 'delivery' ? Number(cart?.delivery_fee ?? 0) : 0;
+  const tax = Number(cart?.tax_amount ?? 0);
+  const computedTotal = Math.max(0, subtotal - discount + delivery + tax);
+  // Server total is the source of truth; fall back to the client sum only
+  // when the payload predates the pricing fields.
+  const serverTotal = cart?.total_amount === undefined || cart?.total_amount === null
+    ? null
+    : Number(cart.total_amount);
+  const total = Number.isFinite(serverTotal) ? Number(serverTotal) : computedTotal;
+  const count = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const displayedLinesSum = Math.round(cartItems.reduce((sum, item) => sum + item.lineTotal, 0) * 100) / 100;
+  // Server values are the only truth shown here. Priced lines with a zero
+  // server subtotal cannot come from one fresh response (subtotal = Σ lines),
+  // so that shape only means the payload is stale — surface a muted caption,
+  // never substitute local numbers.
+  const outOfSync = cartItems.length > 0 && subtotal === 0 && displayedLinesSum > 0;
+  const canCheckout = !mutating && !refreshing && cartItems.length > 0 && (orderType === 'delivery' ? !!selectedAddressId : true);
+  const pricingErrors = cart?.pricing_errors ?? [];
+  const staleItemIds = cartItems.filter((item) => item.lineTotal <= 0).map((item) => item.id);
+  const [clearingStale, setClearingStale] = useState(false);
 
-  const applyVoucher = () => {
-    if (voucherInput.trim().toUpperCase() === 'JALI50') {
-      setVoucherApplied(true);
+  async function clearUnavailable() {
+    if (staleItemIds.length === 0 || mutating || clearingStale) return;
+    setClearingStale(true);
+    try {
+      for (const id of staleItemIds) {
+        await removeFromCart(id);
+      }
+      await refreshCart();
+    } catch {
+      // removeFromCart already surfaces failures via context `error`.
+    } finally {
+      setClearingStale(false);
     }
-  };
+  }
 
-  const handlePlaceOrder = () => {
-    const order = placeOrder(total);
-    if (!order) return;
-    setVoucherApplied(false);
-    setVoucherInput('');
-    router.replace('/(tabs)/orders');
-  };
-  const earnPreview = pointsForTotal(total);
+  async function checkout() {
+    if (!canCheckout) return;
+    try {
+      await placeOrder({ orderType, addressId: selectedAddressId, couponCode: cart?.coupon?.code, notes: notes.trim() || undefined, paymentMethod });
+      router.replace('/(tabs)/orders');
+    } catch {
+      // placeOrder already stores the message in context `error`; stay on cart
+      // and bring the summary (with the error) into view.
+      requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: summaryY.current, animated: true }));
+    }
+  }
 
-  return (
-    <View style={styles.container}>
-      <StatusBar style="light" />
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    Promise.all([refreshCart(), refreshAddresses()])
+      .catch(() => undefined)
+      .finally(() => setRefreshing(false));
+  }, [refreshAddresses, refreshCart]);
 
-      {/* Red header: title + item count badge */}
-      <SafeAreaView edges={['top']} style={styles.headerSafe}>
-        <View style={styles.header}>
-          <View style={styles.titleRow}>
-            <View style={styles.titleIconBox}>
-              <Text style={styles.titleIcon}>🛒</Text>
-            </View>
-            <Text style={styles.title}>My Cart</Text>
-            <View style={styles.countBadge}>
-              <Text style={styles.countText}>{totalQty}</Text>
-            </View>
-          </View>
-        </View>
-      </SafeAreaView>
+  // Re-sync whenever the tab regains focus — the cart has no other refetch
+  // path, so a stale payload could otherwise sit here indefinitely.
+  useFocusEffect(useCallback(() => {
+    void Promise.all([refreshCart(), refreshAddresses()]).catch(() => undefined);
+  }, [refreshAddresses, refreshCart]));
 
+  useEffect(() => {
+    if (__DEV__) {
+      console.log('[cart] sync', JSON.stringify({
+        items: cartItems.length,
+        displayedLinesSum,
+        subtotal: cart?.subtotal,
+        deliveryFee: cart?.delivery_fee,
+        tax: cart?.tax_amount,
+        total: cart?.total_amount,
+        pricingErrors: cart?.pricing_errors,
+      }));
+    }
+  }, [cart?.delivery_fee, cart?.pricing_errors, cart?.subtotal, cart?.tax_amount, cart?.total_amount, cartItems.length, displayedLinesSum]);
+
+  return <View style={styles.container}>
+    <StatusBar style="light" />
+    <SafeAreaView edges={['top']} style={styles.headerSafe}><View style={styles.header}>
+      <Text style={styles.title}>🛒 My Cart</Text><Text style={styles.badge}>{count}</Text>
+    </View></SafeAreaView>
+    <KeyboardAvoidingView
+      style={styles.body}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}
         showsVerticalScrollIndicator={false}>
-        {/* Cart items */}
-        {cartItems.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyIcon}>🛒</Text>
-            <Text style={styles.emptyTitle}>Your cart is empty</Text>
-            <Text style={styles.emptyMessage}>Add items from the menu to place an order.</Text>
+      {cartItems.length === 0 ? <View style={styles.empty}><Text style={styles.emptyIcon}>🛒</Text><Text style={styles.cardTitle}>Your cart is empty</Text><Text style={styles.muted}>Add available products from the live menu.</Text></View> : <>
+        {cartItems.map((item) => <View key={item.id} style={styles.cardRow}>
+          <Text style={styles.emoji}>{item.emoji}</Text><View style={styles.itemCopy}><Text style={styles.itemName}>{item.name}</Text><Text style={styles.muted}>{item.variant}</Text>
+          {item.lineTotal <= 0 && <Text style={styles.error}>No longer available — remove it to restore totals.</Text>}
+          <View style={styles.quantity}><Pressable disabled={mutating} onPress={() => void changeQuantity(item.id, -1).catch(() => undefined)} style={styles.circle}><Text style={styles.circleText}>−</Text></Pressable><Text style={styles.qty}>{item.quantity}</Text><Pressable disabled={mutating} onPress={() => void changeQuantity(item.id, 1).catch(() => undefined)} style={styles.circle}><Text style={styles.circleText}>+</Text></Pressable></View></View>
+          <View style={styles.priceCopy}><Text style={styles.price}>{peso(item.lineTotal)}</Text><Pressable disabled={mutating} onPress={() => void removeFromCart(item.id).catch(() => undefined)}><Text style={styles.remove}>Remove</Text></Pressable></View>
+        </View>)}
+
+        <View style={styles.card}><Text style={styles.cardTitle}>Coupon</Text>{cart?.coupon ? <Text style={styles.success}>✓ {cart.coupon.code} applied</Text> : <View style={styles.inputRow}><TextInput style={styles.input} autoCapitalize="characters" placeholder="Coupon code" value={coupon} onChangeText={setCoupon} /><Pressable disabled={mutating || !coupon.trim()} onPress={() => void applyCoupon(coupon).catch(() => undefined)} style={styles.apply}><Text style={styles.applyText}>Apply</Text></Pressable></View>}</View>
+
+        <View style={styles.card}><Text style={styles.cardTitle}>Fulfillment</Text><View style={styles.typeRow}>{(['delivery', 'pickup'] as const).map((type) => <Pressable key={type} onPress={() => setOrderType(type)} style={[styles.type, orderType === type && styles.typeActive]}><Text style={[styles.typeText, orderType === type && styles.typeTextActive]}>{type === 'delivery' ? 'Delivery' : 'Pickup'}</Text></Pressable>)}</View>
+          {orderType === 'delivery' && <View style={styles.addresses}>{addresses.map((address) => <Pressable key={address.id} onPress={() => setAddressId(address.id)} style={[styles.address, selectedAddressId === address.id && styles.addressActive]}><Text style={styles.addressTitle}>{address.label || 'Address'}{address.is_default ? ' · Default' : ''}</Text><Text style={styles.muted}>{address.line1}, {address.city}</Text></Pressable>)}{addresses.length === 0 && <Text style={styles.error}>Add a delivery address in Settings before checkout.</Text>}</View>}
+          <TextInput style={[styles.input, styles.notes]} placeholder="Order notes (optional)" value={notes} onChangeText={setNotes} multiline />
+        </View>
+
+        <View style={styles.card} onLayout={(event) => { summaryY.current = event.nativeEvent.layout.y; }}>
+          <Text style={styles.cardTitle}>Order Summary</Text>
+          <Summary label="Subtotal" value={subtotal} />
+          {discount > 0 && <Summary label="Discount" value={-discount} accent />}
+          {rewardDiscount > 0 && <Summary label={`Reward${cart?.reward ? ` (${cart.reward.label})` : ''}`} value={-rewardDiscount} accent />}
+          {cart?.reward && (
+            <View style={styles.summary}>
+              <Text style={styles.success}>✓ {cart.reward.label} applied</Text>
+              <Pressable disabled={mutating} onPress={() => void clearReward().catch(() => undefined)}>
+                <Text style={styles.remove}>Remove</Text>
+              </Pressable>
+            </View>
+          )}
+          {orderType === 'delivery' && (
+            delivery > 0
+              ? <Summary label="Delivery fee" value={delivery} />
+              : <View style={styles.summary}><Text style={styles.muted}>Delivery fee</Text><Text style={styles.free}>FREE</Text></View>
+          )}
+          <Summary label="Tax" value={tax} />
+          <View style={styles.totalRow}><Text style={styles.totalLabel}>Total</Text><Text style={styles.total}>{peso(total)}</Text></View>
+          {outOfSync && <Text style={styles.muted}>Pull down to refresh for confirmed totals.</Text>}
+          <View style={styles.paymentBlock}>
+            <Text style={styles.paymentTitle}>Payment</Text>
+            <View style={styles.typeRow}>
+              {(['cod', 'gcash'] as const).map((method) => (
+                <Pressable
+                  key={method}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: paymentMethod === method }}
+                  accessibilityLabel={method === 'cod' ? 'Pay with Cash on Delivery' : 'Pay with GCash'}
+                  onPress={() => setPaymentMethod(method)}
+                  style={[styles.type, paymentMethod === method && styles.typeActive]}>
+                  <Text style={[styles.typeText, paymentMethod === method && styles.typeTextActive]}>
+                    {method === 'cod' ? '💵 COD' : '📱 GCash'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.muted}>
+              {paymentMethod === 'cod'
+                ? 'Pay in cash on handover. Order stays unpaid until then.'
+                : 'Send via GCash manually. Order stays unpaid until confirmed.'}
+            </Text>
           </View>
-        ) : (
-          cartItems.map((item) => (
-            <View key={item.id} style={styles.cardRow}>
-              <View style={styles.itemImageBox}>
-                <Text style={styles.itemEmoji}>{item.emoji}</Text>
-              </View>
-              <View style={styles.itemInfo}>
-                <View style={styles.itemTopRow}>
-                  <View style={styles.itemNameWrap}>
-                    <Text style={styles.itemName}>{item.name}</Text>
-                    {item.source === 'reward' && (
-                      <View style={styles.rewardBadge}>
-                        <Text style={styles.rewardBadgeText}>REWARD</Text>
-                      </View>
-                    )}
-                    {item.source === 'deal' && (
-                      <View style={styles.dealBadge}>
-                        <Text style={styles.dealBadgeText}>DEAL</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Pressable
-                    onPress={() => removeFromCart(item.id)}
-                    style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}>
-                    <Text style={styles.removeIcon}>✕</Text>
-                  </Pressable>
-                </View>
-                <Text style={styles.itemVariant}>{item.variant}</Text>
-                <View style={styles.itemBottomRow}>
-                  <View style={styles.qtyRow}>
-                    <Pressable
-                      onPress={() => changeQuantity(item.id, -1)}
-                      style={({ pressed }) => [styles.qtyButton, pressed && styles.qtyPressed]}>
-                      <Text style={styles.qtyButtonText}>−</Text>
-                    </Pressable>
-                    <Text style={styles.qtyValue}>{item.quantity}</Text>
-                    <Pressable
-                      disabled={item.maxQuantity != null && item.quantity >= item.maxQuantity}
-                      onPress={() => changeQuantity(item.id, 1)}
-                      style={({ pressed }) => [
-                        styles.qtyButton,
-                        item.maxQuantity != null && item.quantity >= item.maxQuantity && styles.qtyButtonDisabled,
-                        pressed && styles.qtyPressed,
-                      ]}>
-                      <Text style={styles.qtyButtonText}>+</Text>
-                    </Pressable>
-                  </View>
-                  <Text style={styles.itemPrice}>{peso(item.unitPrice * item.quantity)}</Text>
-                </View>
-              </View>
-            </View>
-          ))
-        )}
-
-        {cartItems.length > 0 && (
-          <>
-            {/* Voucher */}
-            <View style={styles.card}>
-              <View style={styles.voucherTitleRow}>
-                <Text style={styles.voucherIcon}>🏷️</Text>
-                <Text style={styles.voucherTitle}>Voucher Code</Text>
-              </View>
-              {voucherApplied ? (
-                <View style={styles.voucherAppliedBox}>
-                  <Text style={styles.voucherAppliedIcon}>✓</Text>
-                  <Text style={styles.voucherAppliedText}>JALI50 – 50% Off Applied!</Text>
-                  <Pressable
-                    onPress={() => {
-                      setVoucherApplied(false);
-                      setVoucherInput('');
-                    }}
-                    style={({ pressed }) => [styles.voucherClear, pressed && styles.pressed]}>
-                    <Text style={styles.removeIcon}>✕</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <View style={styles.voucherInputRow}>
-                  <TextInput
-                    value={voucherInput}
-                    onChangeText={(text) => setVoucherInput(text.toUpperCase())}
-                    placeholder="Enter voucher code"
-                    placeholderTextColor="#C7C7CC"
-                    style={styles.voucherInput}
-                    autoCapitalize="characters"
-                  />
-                  <Pressable
-                    onPress={applyVoucher}
-                    style={({ pressed }) => [styles.voucherApplyButton, pressed && styles.pressed]}>
-                    <Text style={styles.voucherApplyText}>Apply</Text>
-                  </Pressable>
-                </View>
-              )}
-              {!voucherApplied && (
-                <Text style={styles.voucherHint}>Try JALI50 for 50% off your order!</Text>
-              )}
-            </View>
-
-            {/* Order summary */}
-            <View style={styles.card}>
-              <View style={styles.summaryTitleRow}>
-                <Text style={styles.summaryIcon}>🧾</Text>
-                <Text style={styles.summaryTitle}>Order Summary</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Subtotal</Text>
-                <Text style={styles.summaryValue}>{peso(subtotal)}</Text>
-              </View>
-              {discount > 0 && (
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryDiscountLabel}>Voucher Discount</Text>
-                  <Text style={styles.summaryDiscountValue}>−{peso(discount)}</Text>
-                </View>
-              )}
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryFeeLabel}>Delivery Fee</Text>
-                <Text style={styles.summaryFeeValue}>+{peso(deliveryFee)} (est.)</Text>
-              </View>
-              <View style={[styles.summaryRow, styles.summaryTotalRow]}>
-                <Text style={styles.summaryTotalLabel}>Total</Text>
-                <Text style={styles.summaryTotalValue}>{peso(total)}</Text>
-              </View>
-              {earnPreview > 0 && (
-                <View style={styles.summaryRow}>
-                  <Text style={styles.earnLabel}>⭐ You&apos;ll earn {earnPreview} pts on delivery</Text>
-                </View>
-              )}
-            </View>
-          </>
-        )}
+          {pricingErrors.map((message) => <Text key={message} style={styles.error}>⚠ {message}</Text>)}
+          {staleItemIds.length > 0 && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Remove unavailable items from cart"
+              disabled={mutating || clearingStale}
+              onPress={() => void clearUnavailable()}
+              style={[styles.clearStale, (mutating || clearingStale) && styles.disabled]}>
+              {clearingStale ? <ActivityIndicator color="#B91C1C" /> : <Text style={styles.clearStaleText}>Remove unavailable items ({staleItemIds.length})</Text>}
+            </Pressable>
+          )}
+          {!!error && <Text style={styles.error}>⚠ {error}</Text>}
+        </View>
+      </>}
       </ScrollView>
-
-      {/* Sticky checkout button */}
       {cartItems.length > 0 && (
-        <View style={styles.checkoutBar}>
+        <View style={[styles.checkoutBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Place order for ${peso(total)}`}
-            onPress={handlePlaceOrder}
-            style={({ pressed }) => [styles.checkoutButton, pressed && styles.pressed]}>
-            <Text style={styles.checkoutText}>Place Order · {peso(total)}</Text>
-            <Text style={styles.checkoutArrow}>›</Text>
+            accessibilityLabel={`Place order for ${peso(total)} with ${paymentMethod === 'cod' ? 'Cash on Delivery' : 'GCash'}`}
+            disabled={!canCheckout}
+            onPress={() => void checkout()}
+            style={[styles.checkout, !canCheckout && styles.disabled]}>
+            {mutating ? <ActivityIndicator color="#FFF" /> : <Text style={styles.checkoutText}>Place Order · {peso(total)}</Text>}
           </Pressable>
         </View>
       )}
-    </View>
-  );
+    </KeyboardAvoidingView>
+  </View>;
+}
+
+function Summary({ label, value, accent = false }: { label: string; value: number; accent?: boolean }) {
+  const formatted = value < 0 ? `−${peso(Math.abs(value))}` : peso(value);
+  return <View style={styles.summary}><Text style={[styles.muted, accent && styles.success]}>{label}</Text><Text style={[styles.summaryValue, accent && styles.success]}>{formatted}</Text></View>;
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: BG },
-  headerSafe: { backgroundColor: RED },
-  header: { backgroundColor: RED, paddingHorizontal: 16, paddingBottom: 16 },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  titleIconBox: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  titleIcon: { fontSize: 18 },
-  title: { fontSize: 22, fontWeight: '800', color: '#FFFFFF' },
-  countBadge: { backgroundColor: '#FDE047', paddingHorizontal: 9, paddingVertical: 2, borderRadius: 999 },
-  countText: { fontSize: 12, fontWeight: '800', color: TEXT_DARK },
-  scroll: { flex: 1 },
-  scrollContent: { padding: 16, paddingBottom: BottomTabInset + 100, gap: 12 },
-  pressed: { opacity: 0.8 },
-  emptyBox: { alignItems: 'center', paddingVertical: 72, gap: 6 },
-  emptyIcon: { fontSize: 56 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: TEXT_DARK },
-  emptyMessage: { fontSize: 13, color: TEXT_GRAY, textAlign: 'center' },
-  card: { backgroundColor: CARD, borderRadius: 14, padding: 12 },
-  cardRow: {
-    flexDirection: 'row',
-    backgroundColor: CARD,
-    borderRadius: 14,
-    padding: 12,
-    gap: 12,
-  },
-  itemImageBox: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    backgroundColor: '#FDEBD2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  itemEmoji: { fontSize: 32 },
-  itemInfo: { flex: 1, gap: 2 },
-  itemTopRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  itemNameWrap: { flex: 1, alignItems: 'flex-start', gap: 4 },
-  itemName: { fontSize: 15, fontWeight: '700', color: TEXT_DARK },
-  rewardBadge: { backgroundColor: '#DCFCE7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
-  rewardBadgeText: { fontSize: 9, fontWeight: '800', color: '#15803D' },
-  dealBadge: { backgroundColor: '#FFEDD5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
-  dealBadgeText: { fontSize: 9, fontWeight: '800', color: '#C2410C' },
-  removeButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
-  removeIcon: { fontSize: 14, color: '#C7C7CC' },
-  itemVariant: { fontSize: 12, color: TEXT_GRAY },
-  itemBottomRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 8,
-  },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  qtyButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: RED,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qtyButtonDisabled: { backgroundColor: '#C7C7CC' },
-  qtyPressed: { opacity: 0.8, transform: [{ scale: 0.95 }] },
-  qtyButtonText: { fontSize: 16, lineHeight: 18, fontWeight: '700', color: '#FFFFFF' },
-  qtyValue: { minWidth: 18, textAlign: 'center', fontSize: 14, fontWeight: '700', color: TEXT_DARK },
-  itemPrice: { fontSize: 15, fontWeight: '800', color: RED },
-  voucherTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  voucherIcon: { fontSize: 14 },
-  voucherTitle: { fontSize: 14, fontWeight: '700', color: TEXT_DARK },
-  voucherInputRow: { flexDirection: 'row', gap: 8 },
-  voucherInput: {
-    flex: 1,
-    borderWidth: 2,
-    borderColor: '#E4E4E9',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 13,
-    fontWeight: '600',
-    letterSpacing: 1,
-    color: TEXT_DARK,
-  },
-  voucherApplyButton: {
-    backgroundColor: RED,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  voucherApplyText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
-  voucherAppliedBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#F0FDF4',
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  voucherAppliedIcon: { fontSize: 14, color: GREEN, fontWeight: '800' },
-  voucherAppliedText: { flex: 1, fontSize: 13, fontWeight: '700', color: GREEN },
-  voucherClear: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-  voucherHint: { marginTop: 8, fontSize: 11, color: TEXT_GRAY },
-  summaryTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  summaryIcon: { fontSize: 14 },
-  summaryTitle: { fontSize: 14, fontWeight: '700', color: TEXT_DARK },
-  summaryRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 3 },
-  summaryLabel: { fontSize: 13, color: TEXT_GRAY },
-  summaryValue: { fontSize: 13, fontWeight: '600', color: TEXT_DARK },
-  summaryDiscountLabel: { fontSize: 13, color: GREEN },
-  summaryDiscountValue: { fontSize: 13, fontWeight: '700', color: GREEN },
-  summaryFeeLabel: { fontSize: 12, color: TEXT_GRAY },
-  summaryFeeValue: { fontSize: 12, color: TEXT_GRAY },
-  summaryTotalRow: {
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F3',
-    marginTop: 6,
-    paddingTop: 10,
-  },
-  summaryTotalLabel: { fontSize: 15, fontWeight: '800', color: TEXT_DARK },
-  summaryTotalValue: { fontSize: 16, fontWeight: '800', color: RED },
-  earnLabel: { fontSize: 12, fontWeight: '700', color: GREEN },
-  checkoutBar: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: CARD,
-    borderTopWidth: 1,
-    borderTopColor: '#F0F0F3',
-  },
-  checkoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    backgroundColor: RED,
-    paddingVertical: 16,
-    borderRadius: 16,
-  },
-  checkoutText: { fontSize: 15, fontWeight: '800', color: '#FFFFFF' },
-  checkoutArrow: { fontSize: 20, lineHeight: 22, fontWeight: '700', color: '#FFFFFF' },
+  container: { flex: 1, backgroundColor: BG }, headerSafe: { backgroundColor: RED }, header: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 16 }, title: { color: '#FFF', fontSize: 22, fontWeight: '900' }, badge: { color: TEXT, backgroundColor: '#FDE047', fontWeight: '900', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 99 },
+  body: { flex: 1 }, scroll: { flex: 1 },
+  content: { padding: 16, paddingBottom: 24, gap: 12 }, empty: { alignItems: 'center', paddingVertical: 70, gap: 6 }, emptyIcon: { fontSize: 54 }, card: { backgroundColor: CARD, borderRadius: 15, padding: 14, gap: 11 }, cardTitle: { color: TEXT, fontSize: 16, fontWeight: '900' }, muted: { color: GRAY, fontSize: 12 },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: CARD, borderRadius: 15, padding: 12 }, emoji: { fontSize: 38 }, itemCopy: { flex: 1, gap: 3 }, itemName: { color: TEXT, fontSize: 14, fontWeight: '800' }, priceCopy: { alignItems: 'flex-end', gap: 10 }, price: { color: RED, fontWeight: '900' }, remove: { color: RED, fontSize: 11, fontWeight: '700' }, quantity: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 5 }, circle: { width: 25, height: 25, borderRadius: 13, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' }, circleText: { color: '#FFF', fontWeight: '900' }, qty: { minWidth: 16, textAlign: 'center', fontWeight: '800' },
+  inputRow: { flexDirection: 'row', gap: 8 }, input: { flex: 1, borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, color: TEXT }, apply: { backgroundColor: RED, borderRadius: 11, justifyContent: 'center', paddingHorizontal: 18 }, applyText: { color: '#FFF', fontWeight: '800' }, success: { color: '#15803D', fontWeight: '800' }, typeRow: { flexDirection: 'row', gap: 8 }, type: { flex: 1, borderWidth: 1, borderColor: '#DDD', borderRadius: 10, alignItems: 'center', padding: 10 }, typeActive: { backgroundColor: RED, borderColor: RED }, typeText: { color: TEXT, fontWeight: '700' }, typeTextActive: { color: '#FFF' }, addresses: { gap: 7 }, address: { borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, padding: 10 }, addressActive: { borderColor: RED, backgroundColor: '#FEF2F2' }, addressTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, notes: { minHeight: 65 },
+  summary: { flexDirection: 'row', justifyContent: 'space-between' }, summaryValue: { color: TEXT, fontSize: 12, fontWeight: '700' }, free: { color: '#15803D', fontSize: 12, fontWeight: '800' }, paymentBlock: { gap: 8, borderTopWidth: 1, borderTopColor: '#EEE', paddingTop: 10 }, paymentTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, clearStale: { borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', borderRadius: 10, padding: 10, alignItems: 'center' }, clearStaleText: { color: '#B91C1C', fontSize: 12, fontWeight: '800' }, totalRow: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#EEE', paddingTop: 10 }, totalLabel: { color: TEXT, fontWeight: '900' }, total: { color: RED, fontSize: 17, fontWeight: '900' }, error: { color: '#B91C1C', fontSize: 12, fontWeight: '700' }, checkoutBar: { backgroundColor: CARD, padding: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#EEE' }, checkout: { backgroundColor: RED, borderRadius: 14, padding: 16, alignItems: 'center' }, checkoutText: { color: '#FFF', fontWeight: '900' }, disabled: { opacity: 0.45 },
 });
-
-

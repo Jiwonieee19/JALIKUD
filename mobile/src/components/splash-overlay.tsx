@@ -1,16 +1,35 @@
 import { Image } from 'expo-image';
 import * as SplashScreen from 'expo-splash-screen';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Dimensions, StyleSheet, View } from 'react-native';
 import Animated, { Easing, Keyframe } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 const INITIAL_SCALE_FACTOR = Dimensions.get('screen').height / 90;
 const DURATION = 600;
+// Failsafes so the full-screen logo can never trap the app: the native
+// splash hide is raced against a timeout, and the overlay force-dismisses
+// even if the worklet animation callback never fires on-device.
+const HIDE_TIMEOUT_MS = 2000;
+const FORCE_DISMISS_MS = 4000;
+
+function hideNativeSplash(onHidden: () => void): void {
+  Promise.race([
+    SplashScreen.hideAsync(),
+    new Promise((resolve) => setTimeout(resolve, HIDE_TIMEOUT_MS)),
+  ])
+    .catch(() => undefined)
+    .finally(onHidden);
+}
 
 export function SplashOverlay() {
   const [animate, setAnimate] = useState(false);
   const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const failsafe = setTimeout(() => setVisible(false), FORCE_DISMISS_MS);
+    return () => clearTimeout(failsafe);
+  }, []);
 
   if (!visible) return null;
 
@@ -49,9 +68,7 @@ export function SplashOverlay() {
   ) : (
     <View
       onLayout={() => {
-        SplashScreen.hideAsync().finally(() => {
-          setAnimate(true);
-        });
+        hideNativeSplash(() => setAnimate(true));
       }}
       style={styles.splashOverlay}>
       {image}

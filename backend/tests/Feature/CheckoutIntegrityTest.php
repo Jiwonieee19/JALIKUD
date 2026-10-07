@@ -145,6 +145,130 @@ class CheckoutIntegrityTest extends TestCase
         $this->assertSame(1, \App\Models\Cart::where('user_id', $user->id)->first()->cartItems()->count(), 'cart must be left untouched');
     }
 
+    public function test_adding_the_same_item_twice_merges_into_one_row(): void
+    {
+        $this->actor();
+        $item = $this->menuItem(99.0);
+
+        $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 2])->assertStatus(201);
+        $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 1])->assertOk();
+
+        $response = $this->getJson('/api/cart')->assertOk();
+        $response->assertJsonCount(1, 'data.cart_items');
+        $response->assertJsonPath('data.cart_items.0.quantity', 3);
+        $response->assertJsonPath('data.subtotal', '297.00');
+    }
+
+    public function test_same_item_with_different_options_stays_on_separate_rows(): void
+    {
+        $this->actor();
+        $item = $this->menuItem(100.0);
+        $large = $this->sizeOption($item, 25.0);
+
+        $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 1])->assertStatus(201);
+        $this->postJson('/api/cart/items', [
+            'menu_item_id' => $item->id,
+            'quantity' => 1,
+            'options' => [['variant_option_id' => $large->id]],
+        ])->assertStatus(201);
+
+        $this->getJson('/api/cart')->assertOk()->assertJsonCount(2, 'data.cart_items');
+    }
+
+    public function test_get_cart_heals_pre_existing_duplicate_rows(): void
+    {
+        $user = $this->actor();
+        $item = $this->menuItem(99.0);
+
+        $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 2])->assertStatus(201);
+
+        // Simulate a cart split before merge-on-add existed: identical twin row.
+        $cart = \App\Models\Cart::where('user_id', $user->id)->firstOrFail();
+        \App\Models\CartItem::create([
+            'cart_id' => $cart->id,
+            'menu_item_id' => $item->id,
+            'quantity' => 1,
+            'unit_price' => 99,
+        ]);
+
+        $response = $this->getJson('/api/cart')->assertOk();
+        $response->assertJsonCount(1, 'data.cart_items');
+        $response->assertJsonPath('data.cart_items.0.quantity', 3);
+    }
+
+    public function test_cart_serialize_keeps_subtotal_delivery_tax_and_total_consistent(): void
+    {
+        $this->actor();
+        $item = $this->menuItem(100.0);
+
+        \App\Models\StoreSetting::create([
+            'store_name' => 'JALIKUD',
+            'is_open' => true,
+            'delivery_fee' => 49,
+            'tax_rate_percent' => 12,
+        ]);
+
+        $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 2])->assertStatus(201);
+
+        $response = $this->getJson('/api/cart')->assertOk();
+        $data = $response->json('data');
+
+        // subtotal must equal the sum of the priced lines — a zero subtotal
+        // with priced lines means a stale/mixed payload, never fresh output.
+        $lineSum = round(collect($data['cart_items'])->sum(fn ($line) => (float) $line['line_total']), 2);
+        $this->assertSame(200.0, $lineSum);
+        $this->assertSame('200.00', $data['subtotal']);
+        $this->assertSame('49.00', $data['delivery_fee']);
+        $this->assertSame('24.00', $data['tax_amount']);
+        $this->assertSame('273.00', $data['total_amount']);
+        $this->assertSame([], $data['pricing_errors']);
+    }
+
+    public function test_cart_lines_keep_oldest_first_order_across_quantity_updates(): void
+    {
+        $this->actor();
+        $first = $this->menuItem(99.0);
+        $second = $this->menuItem(150.0);
+
+        $this->postJson('/api/cart/items', ['menu_item_id' => $first->id, 'quantity' => 1])->assertStatus(201);
+        $this->postJson('/api/cart/items', ['menu_item_id' => $second->id, 'quantity' => 1])->assertStatus(201);
+
+        $ids = fn () => collect($this->getJson('/api/cart')->assertOk()->json('data.cart_items'))->pluck('id')->all();
+        $original = $ids();
+
+        $this->assertCount(2, $original);
+
+        // Bump the first line, then re-add the second: order must not swap.
+        $cartId = \App\Models\Cart::firstOrFail()->id;
+        $this->putJson("/api/cart/items/{$cartId}/{$original[0]}", ['quantity' => 3])->assertOk();
+        $this->assertSame($original, $ids());
+
+        $this->postJson('/api/cart/items', ['menu_item_id' => $second->id, 'quantity' => 1])->assertOk();
+        $ordered = $this->getJson('/api/cart')->assertOk()->json('data.cart_items');
+
+        $this->assertSame($original, collect($ordered)->pluck('id')->all());
+        $this->assertSame(3, $ordered[0]['quantity']);
+        $this->assertSame(2, $ordered[1]['quantity']);
+    }
+
+    public function test_cart_reports_zeroed_totals_with_errors_when_item_was_removed(): void
+    {
+        $this->actor();
+        $item = $this->menuItem(199.0);
+
+        $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 1])->assertStatus(201);
+
+        // Realistic removal path: admin DELETE soft-deletes (FK-safe), the
+        // seeder force-deletes only after clearing cart lines. Either way the
+        // priced cart must explain the zeroed totals instead of going silent.
+        $item->delete();
+
+        $response = $this->getJson('/api/cart')->assertOk();
+        $response->assertJsonPath('data.subtotal', '0.00');
+        $response->assertJsonPath('data.cart_items.0.line_total', '0.00');
+        $response->assertJsonCount(1, 'data.pricing_errors');
+    }
+
     public function test_checkout_is_rejected_when_store_is_closed(): void
     {
         $this->actor();

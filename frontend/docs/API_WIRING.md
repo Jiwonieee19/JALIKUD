@@ -368,13 +368,23 @@ no capability distinction from `customer` beyond the customer cart/order routes.
 
 ## 7. A note on how this repo got here
 
-`mobile/src/app/` contains six comments reading *"Static … will be replaced by
-the backend API later"* — and to this day has **zero** `fetch`, `axios` or
+*(Status updated after the customer mobile integration.)*
+
+`mobile/src/app/` used to contain six comments reading *"Static … will be
+replaced by the backend API later"* with **zero** `fetch`, `axios` or
 `AsyncStorage` calls anywhere. Static-first quietly became static-forever
 because nobody wrote down what the swap was supposed to be.
 
-That is the only reason this file exists. Keep it updated as you wire things up,
-or the same thing will happen here.
+That is why this file exists, and why it was kept updated: the mobile app now
+has a real network layer under `mobile/src/lib/` (`api.ts`, `auth-api.ts`,
+`customer-api.ts`) using built-in `fetch` + `EXPO_PUBLIC_API_URL`, with Sanctum
+tokens in `expo-secure-store`. Wired end-to-end: auth/session, store settings,
+categories, menu, server-priced cart/coupons, addresses, checkout, order
+history, profile/password, logout. **Still demo-only on mobile:** staff queue,
+rider flows, Deals, and Rewards (their backend domains do not exist yet).
+
+Keep this file updated as you wire things up, or the same thing will happen
+here.
 
 ---
 

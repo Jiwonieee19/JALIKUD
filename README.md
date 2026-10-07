@@ -2,7 +2,7 @@
 
 A full-stack, mobile-first financial platform built to **sustain economical and financial growth** by helping people and businesses structure, track, and grow their money. JALIKUD is a monorepo containing a Laravel REST API, a React web client, an Expo (React Native) mobile app, and a shared Postman collection for testing the API.
 
-> **Status:** Core authentication (register / login / profile / password) and **admin user management** are implemented end-to-end, with the API published publicly through a Cloudflare Tunnel and the web SPA through ngrok. The web dashboard currently renders **mock data** (`frontend/src/mock/`), and the mobile app is a standalone Expo prototype backed by in-memory demo data. See [Exposing the Stack via Tunnels](#exposing-the-stack-via-tunnels).
+> **Status:** Core authentication and the customer mobile flow are connected to the Laravel API: catalog, addresses, server-priced cart/coupons, checkout, orders, profile, password, and logout. Staff/rider operations and Deals/Rewards remain clearly marked prototype data. The API is published through a Cloudflare Tunnel when its home server is online. See [Exposing the Stack via Tunnels](#exposing-the-stack-via-tunnels).
 
 ---
 
@@ -462,6 +462,15 @@ The repo ships a ready-to-use Postman collection and environment in the `postman
 
 - `postman/JALIKUD_API.postman_collection.json`
 - `postman/JALIKUD_Local.postman_environment.json`
+- `postman/JALIKUD_Production.readonly.postman_environment.json` — points at the live tunnel **for read-only checks only** (`GET` catalog/orders). Never run write folders with it selected.
+
+> **Do NOT run the `Admin Catalog & Coupons` folder (Create/Update Category, Menu Item, Coupon) against production (`https://api.cahuco.me/api`).** Those requests auto-generate `Postman Cat t-*` / `Postman Meal t-*` rows that pollute the live menu the mobile app displays. Run writes only against `JALIKUD Local` (`http://localhost:5173/api`). If production is ever polluted, restore the real menu with:
+>
+> ```powershell
+> docker exec -it jalikud-api php artisan db:seed --class=MenuSeeder --force
+> ```
+>
+> or `cd backend && composer reseed-menu`. `MenuSeeder` force-deletes the `Postman % / t-* / SKU-t-*` rows (clearing junk cart lines first), then re-seeds the 4 real categories / 10 real items. Verify with `GET /api/categories?active=true` (4 rows) and `GET /api/menu?available=true` (10 rows).
 
 ### 1. Import
 
@@ -755,7 +764,7 @@ Standard Laravel variables, notably:
 - [ ] Rider assignment (`PUT /api/admin/orders/{order}/rider`) + `GET /api/admin/riders`
 - [ ] Staff / rider role capabilities (queues) - `isRider()` and `isStaff()` are still unused
 - [ ] Variant-group admin CRUD, reviews, and payments endpoints (tables exist, no routes)
-- [ ] Wire the Expo mobile app to the live API (absolute base URL + `expo-secure-store` tokens)
+- [x] Wire the Expo customer app to the live API (absolute base URL + `expo-secure-store` tokens)
 - [ ] Replace the web dashboard's `frontend/src/mock/` data with real API calls
 - [ ] Add automated tests to CI before pushing images
 - [ ] Real financial domain models (accounts, transactions, budgets, reporting)
@@ -764,19 +773,19 @@ Standard Laravel variables, notably:
 
 # JALIKUD Mobile
 
-Expo (React Native) app for JALIKUD — a role-based food-ordering prototype with **Customer**, **Staff**, and **Rider** experiences. It currently runs on **in-memory demo data**, so no backend is needed to try it as-is.
+Expo (React Native) app for JALIKUD — customers use the Laravel API, while the unfinished **Staff**, **Rider**, **Deals**, and **Rewards** experiences remain labeled previews.
 
 > Expo SDK 57 · React Native 0.86 · expo-router
 
 ## Connecting it to the API
 
-The app has **no network layer yet** — `mobile/src/services/` does not exist and there are no `fetch`/`axios` calls anywhere. If you wire it up, the following applies:
+The app uses `mobile/src/lib/api.ts` and `mobile/src/lib/customer-api.ts`. Authentication tokens are persisted with `expo-secure-store`. Configure the absolute API URL before starting Expo:
 
 - **Use an absolute base URL.** Unlike the web SPA (which uses a relative `/api` and relies on nginx), React Native has no proxy in front of it. Point it at the tunnel hostname, e.g. `https://api.yourdomain.com/api`, driven by an `EXPO_PUBLIC_API_URL` env var so the bundle is not tied to one environment:
 
   ```bash
   # mobile/.env
-  EXPO_PUBLIC_API_URL=https://api.yourdomain.com/api
+  EXPO_PUBLIC_API_URL=https://api.cahuco.me/api
   ```
 
 - **No ATS exception is needed** when the API is behind `https://`. Reaching a plain-`http://` host from a device would otherwise require an App Transport Security exception in `app.json` and `usesCleartextTraffic` on Android.
@@ -816,17 +825,11 @@ Expo Go supports SDK 57, so this project opens in it directly.
 
 > Phone and computer must be on the **same Wi-Fi**. If the QR won't connect, run `npx expo start --tunnel`.
 
-## 3. Demo login accounts
+## 3. Login accounts
 
-Tap any card on the login screen to autofill, or type the details. The password is the same for all: `demo1234`.
-
-| Role     | Email              | Password   |
-| -------- | ------------------ | ---------- |
-| Customer | `customer@demo.ph` | `demo1234` |
-| Staff    | `staff@demo.ph`    | `demo1234` |
-| Rider    | `rider@demo.ph`    | `demo1234` |
-
-You can also tap **Register** to create a new (temporary, in-memory) customer account.
+Use an account stored by the Laravel API. Public registration creates a real
+`customer` account only. Staff, admin, and rider accounts must be provisioned by
+an administrator; there are no bundled demo credentials.
 
 ## 4. Using the app
 
@@ -835,12 +838,12 @@ You can also tap **Register** to create a new (temporary, in-memory) customer ac
 - Browse the menu and add items to the cart, then review it in **Cart**.
 - Check **Orders** for your order history.
 
-**Staff** — tabs: Orders, Menu Status, Riders, Activity
+**Staff preview** — tabs: Orders, Menu Status, Riders, Activity
 
 - **Orders:** confirm, reject, or assign incoming orders to a rider.
 - **Menu Status:** toggle item availability. **Riders:** view riders. **Activity:** recent actions.
 
-**Rider** — tabs: Deliveries, History (plus a top-right availability switch and **Exit**)
+**Rider preview** — tabs: Deliveries, History (plus a top-right availability switch and **Exit**)
 
 - Toggle availability on, then open **Deliveries** to see the route/map and update a delivery.
 - **History** shows past deliveries. **Exit** signs you out.

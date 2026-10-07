@@ -1,0 +1,18 @@
+import { useState } from 'react';
+import { Stack, useRouter } from 'expo-router';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '@/context/auth-context';
+import { errorMessage } from '@/lib/api';
+import { customerApi } from '@/lib/customer-api';
+
+export default function AccountScreen() {
+  const router = useRouter(); const { user, token, updateUser } = useAuth();
+  const [name,setName]=useState(user?.name??''); const [email,setEmail]=useState(user?.email??'');
+  const [currentPassword,setCurrentPassword]=useState(''); const [password,setPassword]=useState(''); const [confirmation,setConfirmation]=useState('');
+  const [busy,setBusy]=useState(false); const [message,setMessage]=useState('');
+  async function saveProfile(){if(!token)return;setBusy(true);setMessage('');try{const result=await customerApi.updateProfile(token,{name,email});updateUser(result.user);setMessage(result.message);}catch(caught){setMessage(errorMessage(caught));}finally{setBusy(false)}}
+  async function savePassword(){if(!token)return;setBusy(true);setMessage('');try{const result=await customerApi.updatePassword(token,{current_password:currentPassword,password,password_confirmation:confirmation});setCurrentPassword('');setPassword('');setConfirmation('');setMessage(result.message);}catch(caught){setMessage(errorMessage(caught));}finally{setBusy(false)}}
+  return <SafeAreaView style={s.safe}><Stack.Screen options={{headerShown:false}}/><View style={s.header}><Pressable onPress={()=>router.back()}><Text style={s.back}>‹</Text></Pressable><Text style={s.title}>My Account</Text></View><ScrollView contentContainerStyle={s.content}><View style={s.card}><Text style={s.heading}>Profile</Text><TextInput style={s.input} placeholder="Full name" value={name} onChangeText={setName}/><TextInput style={s.input} autoCapitalize="none" keyboardType="email-address" placeholder="Email" value={email} onChangeText={setEmail}/><Pressable disabled={busy} onPress={()=>void saveProfile()} style={s.button}><Text style={s.buttonText}>Save Profile</Text></Pressable></View><View style={s.card}><Text style={s.heading}>Change Password</Text><TextInput style={s.input} secureTextEntry placeholder="Current password" value={currentPassword} onChangeText={setCurrentPassword}/><TextInput style={s.input} secureTextEntry placeholder="New password" value={password} onChangeText={setPassword}/><TextInput style={s.input} secureTextEntry placeholder="Confirm new password" value={confirmation} onChangeText={setConfirmation}/><Pressable disabled={busy} onPress={()=>void savePassword()} style={s.button}>{busy?<ActivityIndicator color="#FFF"/>:<Text style={s.buttonText}>Change Password</Text>}</Pressable></View>{!!message&&<Text style={s.message}>{message}</Text>}</ScrollView></SafeAreaView>;
+}
+const s=StyleSheet.create({safe:{flex:1,backgroundColor:'#F4F4F6'},header:{backgroundColor:'#DC2626',flexDirection:'row',alignItems:'center',gap:12,padding:16},back:{color:'#FFF',fontSize:34,lineHeight:30},title:{color:'#FFF',fontSize:21,fontWeight:'900'},content:{padding:16,gap:12},card:{backgroundColor:'#FFF',borderRadius:14,padding:14,gap:10},heading:{fontSize:16,fontWeight:'900'},input:{borderWidth:1,borderColor:'#E4E4E9',borderRadius:10,padding:11},button:{backgroundColor:'#DC2626',borderRadius:11,padding:14,alignItems:'center'},buttonText:{color:'#FFF',fontWeight:'900'},message:{color:'#374151',textAlign:'center',fontWeight:'700'}});

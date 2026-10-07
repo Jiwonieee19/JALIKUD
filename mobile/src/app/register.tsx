@@ -1,9 +1,10 @@
 import { Link, Stack, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useAuthDemo } from '@/context/auth-demo-context';
+import { routeForRole, useAuth } from '@/context/auth-context';
+import { errorMessage, fieldError, isApiError } from '@/lib/api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -15,7 +16,6 @@ const TEXT_DARK = '#1C1C1E';
 type FormState = {
   firstName: string;
   lastName: string;
-  address: string;
   email: string;
   phone: string;
   password: string;
@@ -25,7 +25,6 @@ type FormState = {
 const INITIAL_FORM: FormState = {
   firstName: '',
   lastName: '',
-  address: '',
   email: '',
   phone: '',
   password: '',
@@ -37,15 +36,15 @@ function FieldError({ message }: { message?: string }) {
   return <Text style={styles.fieldError}>{message}</Text>;
 }
 
-// Prototype-only registration: creates a temporary in-memory customer account.
 export default function RegisterScreen() {
   const router = useRouter();
-  const { registerAccount } = useAuthDemo();
+  const { register } = useAuth();
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [formError, setFormError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const updateField = (field: keyof FormState, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -60,25 +59,39 @@ export default function RegisterScreen() {
     if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) next.email = 'Enter a valid email address.';
     if (!form.phone.trim()) next.phone = 'Phone number is required.';
     if (form.password.length < 8) next.password = 'Password must be at least 8 characters.';
+    else if (!/[a-z]/.test(form.password) || !/[A-Z]/.test(form.password) || !/\d/.test(form.password)) {
+      next.password = 'Use an uppercase letter, lowercase letter, and number.';
+    }
     if (form.confirmPassword !== form.password) next.confirmPassword = 'Passwords do not match.';
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
-  const handleRegister = () => {
-    if (!validate()) return;
-    const result = registerAccount({
-      name: `${form.firstName.trim()} ${form.lastName.trim()}`.trim(),
-      email: form.email,
-      phone: form.phone,
-      password: form.password,
-    });
-    if (!result.ok) {
-      setFormError(result.error);
-      return;
+  const handleRegister = async () => {
+    if (submitting || !validate()) return;
+    setSubmitting(true);
+    try {
+      const user = await register({
+        name: `${form.firstName.trim()} ${form.lastName.trim()}`.trim(),
+        email: form.email,
+        phone: form.phone,
+        password: form.password,
+        password_confirmation: form.confirmPassword,
+      });
+      router.replace(routeForRole(user.role));
+    } catch (caught) {
+      if (isApiError(caught)) {
+        setErrors((current) => ({
+          ...current,
+          email: fieldError(caught, 'email'),
+          phone: fieldError(caught, 'phone'),
+          password: fieldError(caught, 'password'),
+        }));
+      }
+      setFormError(errorMessage(caught, 'Unable to register. Please try again.'));
+    } finally {
+      setSubmitting(false);
     }
-    // Newly registered prototype accounts are always customers.
-    router.replace('/(tabs)/menu');
   };
 
   return (
@@ -94,12 +107,12 @@ export default function RegisterScreen() {
               <Text style={styles.logoLetter}>J</Text>
             </View>
             <Text style={styles.brandName}>Jalikud</Text>
-            <Text style={styles.brandTagline}>Customer &amp; Store Staff</Text>
+            <Text style={styles.brandTagline}>Customer registration</Text>
 
             {/* Form */}
             <View style={styles.form}>
               <Text style={styles.heading}>Create account</Text>
-              <Text style={styles.note}>Prototype: accounts are temporary and stored in memory only.</Text>
+              <Text style={styles.note}>New accounts are always created as customers.</Text>
 
               <Text style={styles.label}>First name</Text>
               <TextInput
@@ -122,17 +135,6 @@ export default function RegisterScreen() {
                 onChangeText={(value) => updateField('lastName', value)}
               />
               <FieldError message={errors.lastName} />
-
-              <Text style={styles.label}>Address</Text>
-              <TextInput
-                style={[styles.input, styles.addressInput]}
-                placeholder="123 Main St, City"
-                placeholderTextColor={PLACEHOLDER}
-                multiline
-                textAlignVertical="top"
-                value={form.address}
-                onChangeText={(value) => updateField('address', value)}
-              />
 
               <Text style={styles.label}>Email</Text>
               <TextInput
@@ -204,9 +206,11 @@ export default function RegisterScreen() {
               )}
 
               <Pressable
-                style={({ pressed }) => [styles.submitButton, pressed && styles.pressed]}
-                onPress={handleRegister}>
-                <Text style={styles.submitText}>Register</Text>
+                accessibilityRole="button"
+                disabled={submitting}
+                style={({ pressed }) => [styles.submitButton, (pressed || submitting) && styles.pressed]}
+                onPress={() => void handleRegister()}>
+                {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.submitText}>Register</Text>}
               </Pressable>
 
               <Link href="/login" style={styles.loginLink}>
@@ -300,9 +304,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#B91C1C',
     marginTop: 2,
-  },
-  addressInput: {
-    minHeight: 80,
   },
   passwordRow: {
     flexDirection: 'row',

@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,18 +17,22 @@ type OrderTab = 'active' | 'completed' | 'canceled';
 
 const STATUS_LABELS: Record<CustomerOrderStatus, string> = {
   pending: 'Pending',
+  confirmed: 'Confirmed',
   preparing: 'Preparing',
+  ready: 'Ready',
   out_for_delivery: 'On the Way',
   completed: 'Delivered',
-  canceled: 'Canceled',
+  cancelled: 'Cancelled',
 };
 
 const STATUS_COLORS: Record<CustomerOrderStatus, { bg: string; text: string }> = {
   pending: { bg: '#FEF3C7', text: '#B45309' },
+  confirmed: { bg: '#DBEAFE', text: '#1D4ED8' },
   preparing: { bg: '#FFEDD5', text: '#C2410C' },
+  ready: { bg: '#F3E8FF', text: '#7E22CE' },
   out_for_delivery: { bg: '#E0E7FF', text: '#4338CA' },
   completed: { bg: '#DCFCE7', text: '#15803D' },
-  canceled: { bg: '#F0F0F3', text: TEXT_GRAY },
+  cancelled: { bg: '#F0F0F3', text: TEXT_GRAY },
 };
 
 function peso(value: number): string {
@@ -36,17 +41,20 @@ function peso(value: number): string {
 
 // UI only — order actions (details, cancel, reorder) are not implemented yet.
 export default function OrdersScreen() {
-  const { orders } = useCustomerOrder();
+  const { orders, refreshOrders, error } = useCustomerOrder();
   const [tab, setTab] = useState<OrderTab>('active');
+  useFocusEffect(useCallback(() => { void refreshOrders().catch(() => undefined); }, [refreshOrders]));
 
   const active = orders.filter(
     (order) =>
       order.status === 'pending' ||
+      order.status === 'confirmed' ||
       order.status === 'preparing' ||
+      order.status === 'ready' ||
       order.status === 'out_for_delivery',
   );
   const completed = orders.filter((order) => order.status === 'completed');
-  const canceled = orders.filter((order) => order.status === 'canceled');
+  const canceled = orders.filter((order) => order.status === 'cancelled');
   const shown = tab === 'active' ? active : tab === 'completed' ? completed : canceled;
 
   return (
@@ -87,7 +95,7 @@ export default function OrdersScreen() {
           <View style={styles.emptyBox}>
             <Text style={styles.emptyIcon}>📦</Text>
             <Text style={styles.emptyTitle}>No {tab} orders</Text>
-            <Text style={styles.emptyMessage}>Your {tab} orders will appear here</Text>
+            <Text style={styles.emptyMessage}>{error || `Your ${tab} orders will appear here`}</Text>
           </View>
         ) : (
           shown.map((order) => {
@@ -111,7 +119,9 @@ export default function OrdersScreen() {
 
                 {/* Progress tracker for active orders */}
                 {(order.status === 'pending' ||
+                  order.status === 'confirmed' ||
                   order.status === 'preparing' ||
+                  order.status === 'ready' ||
                   order.status === 'out_for_delivery') && (
                   <View style={styles.progressWrap}>
                     <View style={styles.progressTrack}>
@@ -120,11 +130,13 @@ export default function OrdersScreen() {
                           styles.progressFill,
                            {
                              width:
-                               order.status === 'pending'
+                                order.status === 'pending'
                                  ? '10%'
-                                 : order.status === 'preparing'
+                                  : order.status === 'confirmed'
+                                    ? '22%'
+                                    : order.status === 'preparing'
                                    ? '33%'
-                                   : '66%',
+                                    : order.status === 'ready' ? '52%' : '66%',
                            },
                         ]}
                       />
@@ -169,21 +181,7 @@ export default function OrdersScreen() {
                 {/* Footer: total + actions */}
                 <View style={styles.orderFooter}>
                   <Text style={styles.orderTotal}>{peso(order.total)}</Text>
-                  <View style={styles.actionRow}>
-                    <Pressable
-                      style={({ pressed }) => [styles.actionButton, pressed && styles.pressed]}>
-                      <Text style={styles.actionText}>Details</Text>
-                    </Pressable>
-                    {(order.status === 'completed' || order.status === 'canceled') && (
-                      <Pressable
-                        style={({ pressed }) => [
-                          styles.actionButtonPrimary,
-                          pressed && styles.pressed,
-                        ]}>
-                        <Text style={styles.actionTextPrimary}>↺ Reorder</Text>
-                      </Pressable>
-                    )}
-                  </View>
+                  <Text style={styles.orderDate}>{order.deliveryType === 'delivery' ? 'Delivery' : 'Pickup'}</Text>
                 </View>
               </View>
             );

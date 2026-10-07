@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,11 +11,14 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 
 import DeliverySchematicMap from '@/components/delivery-schematic-map';
 
 import { BottomTabInset } from '@/constants/theme';
-import { useDeliveryDemo, type Delivery } from '@/context/delivery-demo-context';
+import { useAuth } from '@/context/auth-context';
+import { errorMessage } from '@/lib/api';
+import { riderApi, type StaffOrder } from '@/lib/staff-api';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -21,7 +26,27 @@ const TEXT = '#1C1C1E';
 const GRAY = '#74747C';
 const GREEN = '#16A34A';
 
+const STORE_LOCATION = { latitude: 7.1904, longitude: 125.4539 };
+const FALLBACK_DESTINATION = { latitude: 7.0832, longitude: 125.5907 };
+
 type LatLng = { latitude: number; longitude: number };
+type DeliveryPhase = 'assigned' | 'picked_up' | 'delivered';
+
+type LiveDelivery = {
+  id: number;
+  orderNumber: string;
+  customer: string;
+  phone: string;
+  address: string;
+  destinationName: string;
+  items: { name: string; quantity: number }[];
+  codAmount: number;
+  store: LatLng;
+  destination: LatLng;
+  phase: DeliveryPhase;
+  assignedAt: string;
+  placedAt: string;
+};
 
 /** Interpolated waypoints (with a gentle curve) for the rider's route. */
 function buildRoute(from: LatLng, to: LatLng, steps = 24): LatLng[] {
@@ -38,13 +63,53 @@ function peso(value: number): string {
   return `₱${value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
 }
 
-function Stepper({ status }: { status: Delivery['status'] }) {
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+}
+
+function phaseOf(order: StaffOrder): DeliveryPhase | null {
+  if (order.status === 'ready') return 'assigned';
+  if (order.status === 'out_for_delivery') return 'picked_up';
+  if (order.status === 'completed') return 'delivered';
+  return null;
+}
+
+function toDelivery(order: StaffOrder): LiveDelivery | null {
+  const phase = phaseOf(order);
+  if (!phase) return null;
+  const address = order.address;
+  const addressText = address
+    ? [address.line1, address.line2, address.city].filter(Boolean).join(', ')
+    : 'Customer address on file';
+  const lat = Number(address?.latitude);
+  const lng = Number(address?.longitude);
+  return {
+    id: order.id,
+    orderNumber: order.order_number,
+    customer: order.user?.name ?? 'Customer',
+    phone: order.user?.phone ?? '—',
+    address: addressText,
+    destinationName: address?.label || "Customer's House",
+    items: (order.order_items ?? []).map((line) => ({ name: line.item_name, quantity: line.quantity })),
+    codAmount: Number(order.total_amount),
+    store: STORE_LOCATION,
+    destination: {
+      latitude: Number.isFinite(lat) ? lat : FALLBACK_DESTINATION.latitude,
+      longitude: Number.isFinite(lng) ? lng : FALLBACK_DESTINATION.longitude,
+    },
+    phase,
+    assignedAt: order.assigned_at ? formatDate(order.assigned_at) : formatDate(order.placed_at),
+    placedAt: order.placed_at,
+  };
+}
+
+function Stepper({ phase }: { phase: DeliveryPhase }) {
   const steps = [
     { key: 'assigned', label: 'Assigned' },
     { key: 'picked_up', label: 'Picked up' },
     { key: 'delivered', label: 'Delivered' },
   ];
-  const activeIndex = status === 'assigned' ? 0 : status === 'picked_up' ? 1 : 2;
+  const activeIndex = phase === 'assigned' ? 0 : phase === 'picked_up' ? 1 : 2;
   return (
     <View style={styles.stepper}>
       {steps.map((step, index) => (
@@ -65,10 +130,21 @@ function Stepper({ status }: { status: Delivery['status'] }) {
 }
 
 /** Full-screen map modal: JALIKUD store → customer's house, with simulated rider movement. */
-function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: () => void }) {
-  const { completeDelivery } = useDeliveryDemo();
+function DeliveryMapModal({
+  delivery,
+  busy,
+  onPickUp,
+  onComplete,
+  onClose,
+}: {
+  delivery: LiveDelivery;
+  busy: boolean;
+  onPickUp: () => void;
+  onComplete: () => void;
+  onClose: () => void;
+}) {
   const [route] = useState<LatLng[]>(() => buildRoute(delivery.store, delivery.destination));
-  const [progress, setProgress] = useState(delivery.status === 'picked_up' ? 0.35 : 0.1);
+  const [progress, setProgress] = useState(delivery.phase === 'picked_up' ? 0.35 : 0.1);
   const [moving, setMoving] = useState(false);
 
   useEffect(() => {
@@ -86,8 +162,8 @@ function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: 
       <View style={styles.mapModal}>
         <DeliverySchematicMap
           route={route}
-          rider={delivery.status === 'picked_up' ? position : null}
-          showRider={delivery.status === 'picked_up'}
+          rider={delivery.phase === 'picked_up' ? position : null}
+          showRider={delivery.phase === 'picked_up'}
           progress={progress}
           customerName={delivery.customer}
         />
@@ -102,9 +178,9 @@ function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: 
               <Text style={styles.mapBackText}>←</Text>
             </Pressable>
             <View style={styles.mapHeaderCopy}>
-              <Text style={styles.mapHeaderTitle}>{delivery.destination.destinationName}</Text>
+              <Text style={styles.mapHeaderTitle}>{delivery.destinationName}</Text>
               <Text style={styles.mapHeaderSubtitle}>
-                {delivery.orderNumber} · {delivery.distanceKm} km · COD {peso(delivery.codAmount)}
+                {delivery.orderNumber} · COD {peso(delivery.codAmount)}
               </Text>
             </View>
           </View>
@@ -117,7 +193,7 @@ function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: 
               <Text style={styles.mapBottomName}>{delivery.customer} · {delivery.phone}</Text>
               <Text style={styles.mapBottomAddress}>{delivery.address}</Text>
             </View>
-            {delivery.status === 'picked_up' && (
+            {delivery.phase === 'picked_up' && (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Simulate rider movement"
@@ -127,16 +203,31 @@ function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: 
               </Pressable>
             )}
           </View>
-          {delivery.status === 'picked_up' ? (
+          {delivery.phase === 'picked_up' ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Complete delivery"
-              onPress={() => {
-                completeDelivery(delivery.id);
-                onClose();
-              }}
+              disabled={busy}
+              onPress={onComplete}
               style={({ pressed }) => [styles.completeButton, pressed && styles.pressed]}>
-              <Text style={styles.completeButtonText}>✓ Complete delivery</Text>
+              {busy ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.completeButtonText}>✓ Complete delivery</Text>
+              )}
+            </Pressable>
+          ) : delivery.phase === 'assigned' ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Mark order picked up"
+              disabled={busy}
+              onPress={onPickUp}
+              style={({ pressed }) => [styles.completeButton, pressed && styles.pressed]}>
+              {busy ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.completeButtonText}>Pick up order</Text>
+              )}
             </Pressable>
           ) : (
             <Text style={styles.mapHint}>Pick up the order from the store first, then start delivery.</Text>
@@ -148,21 +239,70 @@ function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: 
 }
 
 export default function RiderDeliveriesScreen() {
-  const { riders, deliveries, pickupDelivery, setRiderAvailability } = useDeliveryDemo();
-  const rider = riders[0];
-  const onDelivery = rider.status === 'on_delivery';
+  const { token, user } = useAuth();
+  const [deliveries, setDeliveries] = useState<LiveDelivery[]>([]);
+  const [onDuty, setOnDuty] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [togglingDuty, setTogglingDuty] = useState(false);
+  const [error, setError] = useState('');
   const [showMap, setShowMap] = useState(false);
   const [moving, setMoving] = useState(false);
 
-  const active = deliveries.find(
-    (delivery) => delivery.riderId === rider.id && delivery.status !== 'delivered',
-  );
-  const history = deliveries.filter(
-    (delivery) => delivery.riderId === rider.id && delivery.status === 'delivered',
-  );
-  const readyCount = deliveries.filter((delivery) => delivery.status === 'ready').length;
+  const load = useCallback(async () => {
+    if (!token) return;
+    setError('');
+    try {
+      const queue = await riderApi.deliveries(token);
+      setDeliveries(queue.map(toDelivery).filter((d): d is LiveDelivery => d !== null));
+    } catch (caught) {
+      setError(errorMessage(caught, 'Could not load your deliveries.'));
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useFocusEffect(useCallback(() => { void load().catch(() => undefined); }, [load]));
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    load().catch(() => undefined).finally(() => setRefreshing(false));
+  }, [load]);
+
+  const active = [...deliveries].reverse().find((delivery) => delivery.phase !== 'delivered') ?? null;
+  const history = deliveries.filter((delivery) => delivery.phase === 'delivered');
+
+  const advance = async (delivery: LiveDelivery, next: 'out_for_delivery' | 'completed') => {
+    if (!token || busyId !== null) return;
+    setBusyId(delivery.id);
+    setError('');
+    try {
+      const updated = await riderApi.updateStatus(token, delivery.id, next);
+      const mapped = toDelivery(updated);
+      setDeliveries((previous) =>
+        previous.map((row) => (row.id === delivery.id && mapped ? mapped : row)),
+      );
+      if (next === 'completed') setShowMap(false);
+    } catch (caught) {
+      setError(errorMessage(caught, 'Could not update the delivery.'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleDuty = (next: boolean) => {
+    if (!token || togglingDuty || (active && next === false)) return;
+    setTogglingDuty(true);
+    riderApi
+      .setAvailability(token, next)
+      .then((profile) => setOnDuty(profile.is_active))
+      .catch((caught) => setError(errorMessage(caught, 'Could not update duty status.')))
+      .finally(() => setTogglingDuty(false));
+  };
 
   const startMoving = () => setMoving(true);
+  const onDelivery = active?.phase === 'picked_up';
 
   return (
     <View style={styles.container}>
@@ -173,17 +313,20 @@ export default function RiderDeliveriesScreen() {
             <View style={styles.headerCopy}>
               <Text style={styles.eyebrow}>DELIVERY RIDER</Text>
               <Text style={styles.title}>My Deliveries</Text>
-              <Text style={styles.subtitle}>{rider.name} · {rider.vehicle}</Text>
+              <Text style={styles.subtitle}>{user?.name ?? 'Rider'}</Text>
             </View>
             <View style={styles.headerBadge}>
-              <Text style={styles.headerBadgeText}>{rider.completedToday}</Text>
-              <Text style={styles.headerBadgeLabel}>done today</Text>
+              <Text style={styles.headerBadgeText}>{history.length}</Text>
+              <Text style={styles.headerBadgeLabel}>done</Text>
             </View>
           </View>
         </View>
       </SafeAreaView>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}>
         <View style={styles.availabilityCard}>
           <View style={styles.availabilityHeader}>
             <View>
@@ -193,74 +336,79 @@ export default function RiderDeliveriesScreen() {
             <View
               style={[
                 styles.currentStatus,
-                rider.status === 'available' && styles.currentStatusOnDuty,
+                onDuty && styles.currentStatusOnDuty,
                 onDelivery && styles.currentStatusOnDelivery,
               ]}>
               <Text style={styles.currentStatusText}>
-                {onDelivery ? 'On Delivery' : rider.status === 'available' ? 'On Duty' : 'Unavailable'}
+                {onDelivery ? 'On Delivery' : onDuty ? 'On Duty' : 'Unavailable'}
               </Text>
             </View>
           </View>
           <Text style={styles.availabilityHint}>
             {onDelivery
               ? 'Finish your active delivery before changing availability.'
-              : 'Only On Duty riders can receive delivery assignments.'}
+              : 'Only On Duty riders receive delivery assignments from staff.'}
           </Text>
           <View style={styles.availabilityActions}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Set rider status to On Duty"
-              disabled={onDelivery}
-              onPress={() => setRiderAvailability(rider.id, 'available')}
+              disabled={!!onDelivery || togglingDuty}
+              onPress={() => toggleDuty(true)}
               style={({ pressed }) => [
                 styles.availabilityButton,
-                rider.status === 'available' && styles.onDutyButton,
-                onDelivery && styles.availabilityButtonDisabled,
+                onDuty && styles.onDutyButton,
+                !!onDelivery && styles.availabilityButtonDisabled,
                 pressed && styles.pressed,
               ]}>
-              <Text
-                style={[
-                  styles.availabilityButtonText,
-                  rider.status === 'available' && styles.availabilityButtonTextActive,
-                ]}>
+              <Text style={[styles.availabilityButtonText, onDuty && styles.availabilityButtonTextActive]}>
                 On Duty
               </Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Set rider status to Unavailable"
-              disabled={onDelivery}
-              onPress={() => setRiderAvailability(rider.id, 'offline')}
+              disabled={!!onDelivery || togglingDuty}
+              onPress={() => toggleDuty(false)}
               style={({ pressed }) => [
                 styles.availabilityButton,
-                rider.status === 'offline' && styles.unavailableButton,
-                onDelivery && styles.availabilityButtonDisabled,
+                !onDuty && styles.unavailableButton,
+                !!onDelivery && styles.availabilityButtonDisabled,
                 pressed && styles.pressed,
               ]}>
-              <Text
-                style={[
-                  styles.availabilityButtonText,
-                  rider.status === 'offline' && styles.availabilityButtonTextActive,
-                ]}>
+              <Text style={[styles.availabilityButtonText, !onDuty && styles.availabilityButtonTextActive]}>
                 Unavailable
               </Text>
             </Pressable>
           </View>
         </View>
 
+        {loading && deliveries.length === 0 ? (
+          <View style={styles.card}>
+            <ActivityIndicator color={RED} size="large" />
+            <Text style={styles.emptyText}>Loading your deliveries…</Text>
+          </View>
+        ) : null}
+        {!!error && (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>⚠ {error}</Text>
+            <Pressable onPress={onRefresh} style={styles.retryButton}><Text style={styles.retryText}>Try again</Text></Pressable>
+          </View>
+        )}
+
         {active ? (
           <View style={styles.card}>
             <View style={styles.orderHeader}>
               <View>
                 <Text style={styles.orderNumber}>{active.orderNumber}</Text>
-                <Text style={styles.orderMeta}>Assigned {active.assignedAt} · {active.distanceKm} km</Text>
+                <Text style={styles.orderMeta}>Assigned {active.assignedAt}</Text>
               </View>
               <View style={styles.codBadge}>
                 <Text style={styles.codText}>COD {peso(active.codAmount)}</Text>
               </View>
             </View>
 
-            <Stepper status={active.status} />
+            <Stepper phase={active.phase} />
 
             <View style={styles.addressBox}>
               <Text style={styles.addressLabel}>Deliver to</Text>
@@ -285,16 +433,20 @@ export default function RiderDeliveriesScreen() {
                 style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
                 <Text style={styles.secondaryButtonText}>🗺️ View map</Text>
               </Pressable>
-              {active.status === 'assigned' ? (
+              {active.phase === 'assigned' ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Mark order picked up"
+                  disabled={busyId === active.id}
                   onPress={() => {
-                    pickupDelivery(active.id);
-                    startMoving();
+                    void advance(active, 'out_for_delivery').then(() => startMoving());
                   }}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-                  <Text style={styles.primaryButtonText}>Pick up order</Text>
+                  {busyId === active.id ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Pick up order</Text>
+                  )}
                 </Pressable>
               ) : (
                 <Text style={styles.movingHint}>{moving ? '🛵 On the way…' : 'Deliver via the map'}</Text>
@@ -302,26 +454,24 @@ export default function RiderDeliveriesScreen() {
             </View>
           </View>
         ) : (
-          <View style={styles.card}>
-            <Text style={styles.emptyIcon}>{readyCount > 0 ? '🛵' : '☕'}</Text>
-            <Text style={styles.emptyTitle}>{readyCount > 0 ? 'No delivery yet' : 'All clear'}</Text>
-            <Text style={styles.emptyText}>
-              {readyCount > 0
-                ? `${readyCount} order${readyCount === 1 ? '' : 's'} ready at the store. Staff will assign you soon.`
-                : 'No deliveries assigned. Enjoy the break!'}
-            </Text>
-          </View>
+          !loading && (
+            <View style={styles.card}>
+              <Text style={styles.emptyIcon}>☕</Text>
+              <Text style={styles.emptyTitle}>All clear</Text>
+              <Text style={styles.emptyText}>No deliveries assigned. Enjoy the break!</Text>
+            </View>
+          )
         )}
 
         {history.length > 0 && (
           <View style={styles.historySection}>
-            <Text style={styles.historyTitle}>Completed today ({history.length})</Text>
+            <Text style={styles.historyTitle}>Completed ({history.length})</Text>
             {history.map((delivery) => (
               <View key={delivery.id} style={styles.historyRow}>
                 <Text style={styles.historyIcon}>✓</Text>
                 <View style={styles.historyCopy}>
                   <Text style={styles.historyOrder}>{delivery.orderNumber} · {delivery.customer}</Text>
-                  <Text style={styles.historyMeta}>Delivered {delivery.deliveredAt} · COD collected {peso(delivery.codAmount)}</Text>
+                  <Text style={styles.historyMeta}>COD collected {peso(delivery.codAmount)}</Text>
                 </View>
               </View>
             ))}
@@ -329,7 +479,15 @@ export default function RiderDeliveriesScreen() {
         )}
       </ScrollView>
 
-      {showMap && active && <DeliveryMapModal delivery={active} onClose={() => setShowMap(false)} />}
+      {showMap && active && (
+        <DeliveryMapModal
+          delivery={active}
+          busy={busyId === active.id}
+          onPickUp={() => void advance(active, 'out_for_delivery')}
+          onComplete={() => void advance(active, 'completed')}
+          onClose={() => setShowMap(false)}
+        />
+      )}
     </View>
   );
 }
@@ -395,6 +553,10 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 42, textAlign: 'center' },
   emptyTitle: { color: TEXT, fontSize: 16, fontWeight: '900', textAlign: 'center', marginTop: 8 },
   emptyText: { color: GRAY, fontSize: 12, lineHeight: 17, textAlign: 'center', marginTop: 5 },
+  errorBox: { gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', marginBottom: 12 },
+  errorText: { color: '#B91C1C', fontSize: 12, fontWeight: '700' },
+  retryButton: { alignSelf: 'flex-start', backgroundColor: RED, borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8 },
+  retryText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   historySection: { marginTop: 18 },
   historyTitle: { color: TEXT, fontSize: 13, fontWeight: '900', marginBottom: 8, paddingHorizontal: 2 },
   historyRow: { flexDirection: 'row', gap: 10, alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 13, padding: 12, marginBottom: 8 },
@@ -422,9 +584,5 @@ const styles = StyleSheet.create({
   completeButton: { marginTop: 13, alignItems: 'center', paddingVertical: 14, borderRadius: 12, backgroundColor: GREEN },
   completeButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '900' },
   mapHint: { marginTop: 13, color: GRAY, fontSize: 11, textAlign: 'center' },
-  riderMarker: { alignItems: 'center', justifyContent: 'center', width: 38, height: 38, borderRadius: 19, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: RED, elevation: 4 },
-  riderMarkerIcon: { fontSize: 17 },
-  houseMarker: { alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 18, backgroundColor: '#FFFFFF', borderWidth: 2, borderColor: '#F59E0B', elevation: 4 },
-  houseMarkerIcon: { fontSize: 16 },
   pressed: { opacity: 0.72 },
 });

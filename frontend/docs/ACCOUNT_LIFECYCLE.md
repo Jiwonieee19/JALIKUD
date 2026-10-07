@@ -273,18 +273,17 @@ token, but no admin exists). Bootstrap manually:
 UPDATE users SET role='admin', updated_at=now() WHERE email='you@email.com';
 ```
 
-### 4.6 Mobile's demo accounts are throwaway — do not migrate them
+### 4.6 Mobile's demo accounts were throwaway — removed during integration ✅
 
-- `mobile/src/context/auth-demo-context.tsx:75` compares passwords with a
-  plaintext `===`
-- `mobile/src/app/login.tsx:145` prints the shared demo password `demo1234`
-  on screen
-- `auth-demo-context.tsx:3-4` states it outright: *"Nothing here is persisted —
-  restarting the app resets every account back to the seeded demo users."*
+This section is retained for history. The in-memory fixtures are **gone**:
 
-These are in-memory fixtures, not a credential store. They must not be carried
-into integration, and the on-screen password disclosure should be removed at the
-same time.
+- `auth-demo-context.tsx` now only re-exports the real `auth-context`
+  (Laravel Sanctum login/register/session)
+- the shared demo password `demo1234` was removed from the login screen
+- registration posts to `POST /api/register` and persists server-side
+
+No demo credentials exist in the app anymore; the plaintext fixtures were never
+migrated.
 
 ---
 
@@ -302,9 +301,9 @@ same time.
 
 ### Frontend / mobile
 
-- [ ] Mobile register keeps **no** role picker (§1)
+- [x] Mobile register keeps **no** role picker (§1)
 - [ ] Web `/admin/users` already has the role dropdown (`src/pages/AdminUsersPage.tsx:342-354`) — no change needed
-- [ ] Delete the on-screen demo password on `mobile/src/app/login.tsx:145` (§4.6)
+- [x] Delete the on-screen demo password on `mobile/src/app/login.tsx:145` (§4.6) — removed, along with all demo fixtures
 
 ### Open design question
 
