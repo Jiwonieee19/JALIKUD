@@ -56,11 +56,12 @@ const emptyForm: FormState = {
  * 8+ characters with at least one lowercase, one uppercase and one digit
  * ($requireSpecial defaults to false, so no symbol is needed).
  *
- * Every composition failure reports ONE message, matching what the API returns.
- * Naming the class of character that is missing ("must contain at least one
- * number") hands anyone probing the form a running tally of what is still
- * missing, so the same wording is used for every way of being too weak. Length
- * stays a separate message because it is already in the field's own hint text.
+ * Every composition failure reports ONE message. The API still names each
+ * missing class individually ("must contain at least one number"), but this
+ * guard runs first so a weak password never reaches it — and naming the class
+ * that is missing hands anyone probing the form a running tally of what is
+ * still missing. Length stays a separate message because it is already in the
+ * field's own hint text.
  *
  * Returns null for an empty string so the same helper serves both the create
  * form (where blank is an error, checked separately below) and the edit form

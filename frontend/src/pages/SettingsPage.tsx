@@ -46,11 +46,12 @@ const feedbackClass = (type: 'success' | 'error') =>
  * Client-side mirror of the backend's App\Rules\StrongPassword, which requires
  * 8+ characters with at least one lowercase, one uppercase and one digit.
  *
- * Every composition failure reports ONE message, matching what the API returns.
- * Naming the class of character that is missing ("must contain at least one
- * number") hands anyone probing this form a running tally of what is still
- * missing, so the same wording is used for every way of being too weak. Length
- * stays a separate message because it is already in the field's own hint text.
+ * Every composition failure reports ONE message. The API still names each
+ * missing class individually ("must contain at least one number"), but this
+ * guard runs first so a weak password never reaches it — and naming the class
+ * that is missing hands anyone probing this form a running tally of what is
+ * still missing. Length stays a separate message because it is already in the
+ * field's own hint text.
  */
 function passwordProblem(password: string): string | null {
   if (password.length === 0) return null
