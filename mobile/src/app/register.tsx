@@ -1,4 +1,5 @@
 import { Link, Stack, useRouter } from 'expo-router';
+import { Image } from 'expo-image';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -103,9 +104,12 @@ export default function RegisterScreen() {
             contentContainerStyle={styles.content}
             keyboardShouldPersistTaps="handled">
             {/* Brand */}
-            <View style={styles.logoCircle}>
-              <Text style={styles.logoLetter}>J</Text>
-            </View>
+            <Image
+              accessibilityLabel="Jalikud logo"
+              contentFit="contain"
+              source={require('@/assets/images/jalikud-logo.png')}
+              style={styles.logo}
+            />
             <Text style={styles.brandName}>Jalikud</Text>
             <Text style={styles.brandTagline}>Customer registration</Text>
 
@@ -237,19 +241,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 32,
   },
-  logoCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: RED,
-    alignItems: 'center',
-    justifyContent: 'center',
+  logo: {
+    width: 82,
+    height: 93,
     alignSelf: 'center',
-  },
-  logoLetter: {
-    fontSize: 34,
-    fontWeight: '700',
-    color: '#FFFFFF',
   },
   brandName: {
     marginTop: 12,
