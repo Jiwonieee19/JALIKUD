@@ -502,7 +502,9 @@ export default function AdminUsersPage() {
                   {formErrors.password_confirmation ??
                     (form.password.length > 0
                       ? 'Re-enter the password exactly as typed above.'
-                      : 'Only needed if you are setting a new password.')}
+                      : // Creating always needs a password, so the "only if setting a
+                        // new one" note is meaningless there — say nothing instead.
+                        editing && 'Only needed if you are setting a new password.')}
                 </p>
               </div>
 <div>

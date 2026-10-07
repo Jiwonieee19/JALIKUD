@@ -4,34 +4,36 @@ import ThemeToggle from '../ui/ThemeToggle'
 import Button from '../ui/Button'
 import Logo from '../ui/Logo'
 
-const navItems = [
-  {
-    to: '/dashboard',
-    label: 'Dashboard',
-    icon: (
-      <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
-        <path
-          fillRule="evenodd"
-          d="M9.293 2.293a1 1 0 0 1 1.414 0l7 7A1 1 0 0 1 17 11h-1v6a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6H3a1 1 0 0 1-.707-1.707l7-7Z"
-          clipRule="evenodd"
-        />
-      </svg>
-    ),
-  },
-  {
-    to: '/settings',
-    label: 'Settings',
-    icon: (
-      <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
-        <path
-          fillRule="evenodd"
-          d="M8.34 1.66a1.5 1.5 0 0 1 3.32 0c.16.72.97 1.08 1.63.74a1.5 1.5 0 0 1 2.35 2.35c-.34.66.02 1.47.74 1.63a1.5 1.5 0 0 1 0 3.32c-.72.16-1.08.97-.74 1.63a1.5 1.5 0 0 1-2.35 2.35c-.66-.34-1.47.02-1.63.74a1.5 1.5 0 0 1-3.32 0c-.16-.72-.97-1.08-1.63-.74a1.5 1.5 0 0 1-2.35-2.35c.34-.66-.02-1.47-.74-1.63a1.5 1.5 0 0 1 0-3.32c.72-.16 1.08-.97.74-1.63a1.5 1.5 0 0 1-2.35-2.35c.34-.66-.02-1.47-.74-1.63a1.5 1.5 0 0 1 0-3.32c.72-.16 1.08-.97.74-1.63a1.5 1.5 0 0 1 2.35-2.35c.66.34 1.47-.02 1.63-.74ZM10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
-          clipRule="evenodd"
-        />
-      </svg>
-    ),
-  },
-]
+const dashboardItem = {
+  to: '/dashboard',
+  label: 'Dashboard',
+  icon: (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+      <path
+        fillRule="evenodd"
+        d="M9.293 2.293a1 1 0 0 1 1.414 0l7 7A1 1 0 0 1 17 11h-1v6a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-6H3a1 1 0 0 1-.707-1.707l7-7Z"
+        clipRule="evenodd"
+      />
+    </svg>
+  ),
+}
+
+const settingsItem = {
+  to: '/settings',
+  label: 'Settings',
+  icon: (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+      <path
+        fillRule="evenodd"
+        d="M8.34 1.66a1.5 1.5 0 0 1 3.32 0c.16.72.97 1.08 1.63.74a1.5 1.5 0 0 1 2.35 2.35c-.34.66.02 1.47.74 1.63a1.5 1.5 0 0 1 0 3.32c-.72.16-1.08.97-.74 1.63a1.5 1.5 0 0 1-2.35 2.35c-.66-.34-1.47.02-1.63.74a1.5 1.5 0 0 1-3.32 0c-.16-.72-.97-1.08-1.63-.74a1.5 1.5 0 0 1-2.35-2.35c.34-.66-.02-1.47-.74-1.63a1.5 1.5 0 0 1 0-3.32c.72-.16 1.08-.97.74-1.63a1.5 1.5 0 0 1 2.35-2.35c.66.34 1.47-.02 1.63-.74ZM10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"
+        clipRule="evenodd"
+      />
+    </svg>
+  ),
+}
+
+/** Shown to every role, and the only two entries in the mobile bottom bar. */
+const navItems = [dashboardItem, settingsItem]
 
 const adminNavItems = [
   {
@@ -90,7 +92,12 @@ export default function AppLayout() {
     navigate('/login')
   }
 
-  const allItems = user?.role === 'admin' ? [...navItems, ...adminNavItems] : navItems
+  // Settings sits after the admin sections rather than straight under Dashboard,
+  // so it reads as the account page at the end of the list.
+  const allItems =
+    user?.role === 'admin'
+      ? [dashboardItem, ...adminNavItems, settingsItem]
+      : navItems
 
   const linkClasses = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-bold transition-colors ${
