@@ -16,6 +16,12 @@ class MenuItemController extends Controller
     {
         $items = MenuItem::query()
             ->when($request->query('category_id'), fn ($q, $cat) => $q->where('category_id', $cat))
+            ->when($request->query('search'), function ($q, $search) {
+                $q->where(function ($sub) use ($search) {
+                    $sub->where('name', 'like', "%{$search}%")
+                        ->orWhere('description', 'like', "%{$search}%");
+                });
+            })
             ->when($request->query('available') === 'true', fn ($q) => $q->where('is_available', true))
             ->when($request->query('featured') === 'true', fn ($q) => $q->where('is_featured', true))
             ->with('category', 'variantGroups.options')
@@ -58,9 +64,9 @@ class MenuItemController extends Controller
         $data = $request->validate([
             'category_id' => ['sometimes', 'exists:categories,id'],
             'name' => ['sometimes', 'string', 'max:150'],
-            'slug' => ['sometimes', 'string', 'max:180', 'unique:menu_items,slug,' . $menuItem->id],
+            'slug' => ['sometimes', 'string', 'max:180', 'unique:menu_items,slug,'.$menuItem->id],
             'description' => ['nullable', 'string'],
-            'sku' => ['nullable', 'string', 'max:50', 'unique:menu_items,sku,' . $menuItem->id],
+            'sku' => ['nullable', 'string', 'max:50', 'unique:menu_items,sku,'.$menuItem->id],
             'base_price' => ['sometimes', 'numeric', 'min:0'],
             'image_url' => ['nullable', 'string'],
             'is_available' => ['boolean'],

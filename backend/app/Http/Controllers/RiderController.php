@@ -3,8 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\General\PaginationRequest;
+use App\Models\RiderProfile;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 /**
  * Staff-facing rider directory used by the order-assignment picker.
@@ -20,5 +23,27 @@ class RiderController extends Controller
             ->paginate($request->perPage(15));
 
         return response()->json(['data' => $riders]);
+    }
+
+    /**
+     * PUT /api/admin/riders/{user}/profile - administer a rider's vehicle,
+     * plate, photo and duty status.
+     */
+    public function updateProfile(Request $request, User $user): JsonResponse
+    {
+        if ($user->role !== User::ROLE_RIDER) {
+            return response()->json(['message' => 'The selected user is not a rider.'], 422);
+        }
+
+        $data = $request->validate([
+            'photo_url' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'vehicle_type' => ['sometimes', 'nullable', 'string', Rule::in(['motorcycle', 'bicycle', 'car'])],
+            'plate_number' => ['sometimes', 'nullable', 'string', 'max:20'],
+            'is_active' => ['sometimes', 'boolean'],
+        ]);
+
+        $profile = RiderProfile::updateOrCreate(['user_id' => $user->id], $data);
+
+        return response()->json(['data' => $profile]);
     }
 }

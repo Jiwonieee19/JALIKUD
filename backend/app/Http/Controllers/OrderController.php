@@ -7,6 +7,7 @@ use App\Models\Cart;
 use App\Models\Coupon;
 use App\Models\CouponRedemption;
 use App\Models\Order;
+use App\Models\RiderProfile;
 use App\Models\StoreSetting;
 use App\Models\User;
 use App\Services\CartPricingService;
@@ -281,6 +282,37 @@ class OrderController extends Controller
     }
 
     /**
+     * POST /api/orders/{order}/cancel - customer cancels their own order while
+     * it is still pending/confirmed. Points spent on a reward are refunded.
+     */
+    public function cancel(Request $request, Order $order): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($order->user_id !== $user->id) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        if (! in_array($order->status, [Order::STATUS_PENDING, Order::STATUS_CONFIRMED], true)) {
+            return response()->json([
+                'message' => "An order with status {$order->status} can no longer be cancelled.",
+            ], 422);
+        }
+
+        $order->update(['status' => Order::STATUS_CANCELLED]);
+
+        $order->statusHistory()->create([
+            'status' => Order::STATUS_CANCELLED,
+            'changed_by' => $user->id,
+            'note' => 'Cancelled by customer.',
+        ]);
+
+        PointLedger::refundForOrder($order->fresh());
+
+        return response()->json(['data' => $order->fresh()]);
+    }
+
+    /**
      * PUT /api/admin/orders/{order}/status - change order status (staff/admin).
      */
     public function updateStatus(Request $request, Order $order): JsonResponse
@@ -369,7 +401,7 @@ class OrderController extends Controller
         }
 
         if (($data['rider_id'] ?? null) !== null) {
-            $profile = \App\Models\RiderProfile::where('user_id', $data['rider_id'])->first();
+            $profile = RiderProfile::where('user_id', $data['rider_id'])->first();
 
             if ($profile === null || ! $profile->is_active) {
                 return response()->json(['message' => 'Selected rider is not on duty.'], 422);

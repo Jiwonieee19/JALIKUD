@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
-import { useAuthDemo } from '@/context/auth-demo-context';
+import { useAuthDemo } from '@/context/auth-context';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';

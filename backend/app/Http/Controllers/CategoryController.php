@@ -52,12 +52,16 @@ class CategoryController extends Controller
         $data = $request->validate([
             'parent_id' => ['nullable', 'exists:categories,id'],
             'name' => ['sometimes', 'string', 'max:100'],
-            'slug' => ['sometimes', 'string', 'max:120', 'unique:categories,slug,' . $category->id],
+            'slug' => ['sometimes', 'string', 'max:120', 'unique:categories,slug,'.$category->id],
             'description' => ['nullable', 'string'],
             'image_url' => ['nullable', 'string'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
             'is_active' => ['boolean'],
         ]);
+
+        if (($data['parent_id'] ?? null) !== null && (int) $data['parent_id'] === $category->id) {
+            return response()->json(['message' => 'A category cannot be its own parent.'], 422);
+        }
 
         $category->update($data);
 
@@ -66,6 +70,14 @@ class CategoryController extends Controller
 
     public function destroy(Category $category): JsonResponse
     {
+        if ($category->children()->exists()) {
+            return response()->json(['message' => 'Cannot delete a category that has child categories.'], 422);
+        }
+
+        if ($category->menuItems()->exists()) {
+            return response()->json(['message' => 'Cannot delete a category that still has menu items.'], 422);
+        }
+
         $category->delete();
 
         return response()->json(['message' => 'Category deleted.']);
