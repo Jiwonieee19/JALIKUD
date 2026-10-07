@@ -6,11 +6,11 @@ import EmptyState from '../components/ui/EmptyState'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
 import Modal from '../components/ui/Modal'
+import Pagination from '../components/ui/Pagination'
 import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
-import Textarea from '../components/ui/Textarea'
 import Tabs from '../components/ui/Tabs'
-import { formatDate, peso } from '../mock'
+import { formatDate, paginate, peso } from '../mock'
 import api, { fieldError } from '../services/api'
 import { unwrapList } from '../services/lists'
 import type { Coupon } from '../types'
@@ -35,9 +35,48 @@ import type { Coupon } from '../types'
  * deliberate rather than faked — once ticket Task 2 adds the param, move the
  * term into the query string and drop the local filter.
  *
- * Coupon money fields (value / min_order_amount / max_discount_amount) are
+ * Coupon money fields (value / min_order_amount) are
  * numeric(12,2) on the backend, so they arrive as strings.
  */
+
+/**
+ * A percentage discount stops here. 100% is a free order and the backend has no
+ * reason to allow it, so the cap sits below it rather than at it.
+ */
+const PERCENT_MAX = 90
+
+/** Rows per page in the coupon table. */
+const PER_PAGE = 7
+
+/** Below this a percentage is not worth a coupon row, so it is not accepted. */
+const PERCENT_MIN = 5
+
+/**
+ * A percentage coupon is required to carry a real minimum spend, so a percent
+ * off an arbitrarily small cart can never be created.
+ */
+const PERCENT_MIN_ORDER = 50
+
+/**
+ * How far a fixed amount has to stay under the minimum order. Without a gap a
+ * fixed amount equal to the minimum would discount 100% of every cart that
+ * qualifies for it.
+ */
+const FIXED_VALUE_GAP = 50
+
+/**
+ * decimal(10,2) arrives as "50.00". A peso amount should read that way at rest,
+ * but a percentage has no cents, and a peso amount being typed into should not
+ * have to be edited around a trailing ".00" — so only the exact ".00" goes.
+ */
+function trimZeroFraction(value: string): string {
+  return value.endsWith('.00') ? value.slice(0, -3) : value
+}
+
+/** ISO-8601 from the API -> the `yyyy-mm-dd` an <input type="date"> expects. */
+function toDateInput(iso: string | null): string {
+  return iso ? iso.slice(0, 10) : ''
+}
 
 function expiryTone(coupon: Coupon): 'success' | 'warning' | 'danger' {
   if (!coupon.expires_at) return 'success'
@@ -58,6 +97,7 @@ function expiryLabel(coupon: Coupon): string {
 export default function AdminCouponsPage() {
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [editing, setEditing] = useState<Coupon | null>(null)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState({
@@ -65,9 +105,10 @@ export default function AdminCouponsPage() {
     type: 'percentage',
     value: '',
     min_order_amount: '',
-    max_discount_amount: '',
     usage_limit: '',
     usage_limit_per_user: '1',
+    starts_at: '',
+    expires_at: '',
   })
   const [toast, setToast] = useState<string | null>(null)
   const [coupons, setCoupons] = useState<Coupon[]>([])
@@ -110,6 +151,14 @@ export default function AdminCouponsPage() {
 
   const activeCount = coupons.filter((coupon) => coupon.is_active).length
 
+  // Paged client-side: the endpoint has no search/status params yet, so the whole
+  // set is fetched at the API's 100-row cap and filtered here first.
+  const { data: pagedRows, meta } = paginate(
+    rows,
+    Math.min(page, Math.max(1, Math.ceil(rows.length / PER_PAGE))),
+    PER_PAGE,
+  )
+
   function flash(message: string) {
     setToast(message)
     window.setTimeout(() => setToast(null), 2600)
@@ -128,14 +177,97 @@ export default function AdminCouponsPage() {
 
     const code = draft.code.trim().toUpperCase()
 
+    /**
+     * Guard clauses the inputs only hint at. A fixed amount needs a minimum to
+     * be measured against, and must stay a gap below it, otherwise it discounts
+     * 100% of every qualifying cart.
+     */
+    if (draft.type === 'fixed') {
+      const amount = Number(draft.value)
+
+      if (draft.min_order_amount === '' || minAmount === null) {
+        setSaving(false)
+        setFormErrors({ min_order_amount: 'Set a minimum order before the discount amount.' })
+        return
+      }
+
+      // Checked before the amount: a negative minimum makes the cap
+      // (minimum - gap) negative, which would otherwise surface as a confusing
+      // "amount must be at most ₱-70.00" instead of the real problem.
+      if (minAmount <= 0) {
+        setSaving(false)
+        setFormErrors({ min_order_amount: 'The minimum order must be above zero.' })
+        return
+      }
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setSaving(false)
+        setFormErrors({ value: 'Enter a discount amount above zero.' })
+        return
+      }
+
+      if (amount > minAmount - FIXED_VALUE_GAP) {
+        setSaving(false)
+        setFormErrors({
+          value: `Must be at most ₱${(minAmount - FIXED_VALUE_GAP).toFixed(2)} — ₱${FIXED_VALUE_GAP} below the ₱${minAmount.toFixed(2)} minimum, so it is never a full discount.`,
+        })
+        return
+      }
+    }
+
+    if (draft.type === 'percentage') {
+      const percent = Number(draft.value)
+
+      // Checked before the percentage, for the same reason the fixed branch
+      // checks its minimum first — report the earlier field when both are wrong.
+      if (draft.min_order_amount === '' || minAmount === null) {
+        setSaving(false)
+        setFormErrors({ min_order_amount: `Set a minimum order of at least ₱${PERCENT_MIN_ORDER}.` })
+        return
+      }
+
+      if (minAmount < PERCENT_MIN_ORDER) {
+        setSaving(false)
+        setFormErrors({ min_order_amount: `Must be at least ₱${PERCENT_MIN_ORDER}.` })
+        return
+      }
+
+      if (!Number.isFinite(percent) || percent < PERCENT_MIN) {
+        setSaving(false)
+        setFormErrors({ value: `Must be at least ${PERCENT_MIN}%.` })
+        return
+      }
+
+      if (percent > PERCENT_MAX) {
+        setSaving(false)
+        setFormErrors({ value: `Must be ${PERCENT_MAX}% or less.` })
+        return
+      }
+    }
+
+    /**
+     * `expires_at` is validated as `after:starts_at`, and that comparison
+     * against a missing `starts_at` 422s. So an end date on its own is treated
+     * as "valid from now until then" rather than being rejected. The end date
+     * is sent at 23:59:59 so the coupon stays usable for the whole picked day
+     * instead of expiring at midnight when it opens.
+     */
+    const startInstant =
+      draft.starts_at !== ''
+        ? `${draft.starts_at}T00:00:00`
+        : draft.expires_at !== ''
+          ? `${toDateInput(new Date().toISOString())}T00:00:00`
+          : null
+
     const payload = {
       code,
       type: draft.type,
       value: draft.value,
       min_order_amount: draft.min_order_amount === '' ? null : draft.min_order_amount,
-      max_discount_amount: draft.max_discount_amount === '' ? null : draft.max_discount_amount,
       usage_limit: draft.usage_limit === '' ? null : Number(draft.usage_limit),
       usage_limit_per_user: draft.usage_limit_per_user === '' ? null : Number(draft.usage_limit_per_user),
+      starts_at: startInstant,
+      expires_at: draft.expires_at === '' ? null : `${draft.expires_at}T23:59:59`,
     }
 
     try {
@@ -197,31 +329,149 @@ export default function AdminCouponsPage() {
     }
   }
 
+  /** Every modal entry point resets the form so a previous attempt's errors never leak in. */
   function openCreate() {
     setDraft({
       code: '',
       type: 'percentage',
       value: '',
       min_order_amount: '',
-      max_discount_amount: '',
       usage_limit: '',
       usage_limit_per_user: '1',
+      starts_at: '',
+      expires_at: '',
     })
+    setFormErrors({})
     setCreating(true)
+  }
+
+  function closeModal() {
+    setCreating(false)
+    setEditing(null)
+    setFormErrors({})
   }
 
   function openEdit(coupon: Coupon) {
     setDraft({
       code: coupon.code,
       type: coupon.type,
-      value: coupon.value,
+      value: coupon.type === 'percentage' ? trimZeroFraction(coupon.value) : coupon.value,
       min_order_amount: coupon.min_order_amount,
-      max_discount_amount: coupon.max_discount_amount ?? '',
       usage_limit: coupon.usage_limit === null ? '' : String(coupon.usage_limit),
       usage_limit_per_user: String(coupon.usage_limit_per_user),
+      starts_at: toDateInput(coupon.starts_at),
+      expires_at: toDateInput(coupon.expires_at),
     })
     setEditing(coupon)
   }
+
+  /**
+   * Switching to percentage has to bring the value into 0-100, since the same
+   * field means peso when fixed and percent otherwise.
+   */
+  function changeType(next: string) {
+    setDraft({
+      ...draft,
+      type: next,
+      value:
+        next === 'percentage'
+          ? trimZeroFraction(
+              Number(draft.value) > PERCENT_MAX ? String(PERCENT_MAX) : draft.value,
+            )
+          : draft.value,
+    })
+
+    // The value rules are type-specific, so a message left over from the other
+    // type ("Must be 90% or less." on a fixed amount) no longer applies.
+    setFormErrors((current) => {
+      if (!current.value) return current
+      const next = { ...current }
+      delete next.value
+      return next
+    })
+  }
+
+  const isFixed = draft.type === 'fixed'
+  const minAmount = draft.min_order_amount === '' ? null : Number(draft.min_order_amount)
+
+  /** A fixed amount is capped against the minimum, so the minimum comes first. */
+  const valueLocked = isFixed && minAmount === null
+
+  /** Fixed amounts are measured against the minimum; percentages stand alone. */
+  const valueMax = isFixed ? (minAmount === null ? undefined : Math.max(minAmount - FIXED_VALUE_GAP, 0)) : PERCENT_MAX
+
+  const valueMin = isFixed ? '0' : PERCENT_MIN
+
+  /** A percentage coupon always needs a real minimum spend behind it. */
+  const orderMin = isFixed ? '0' : PERCENT_MIN_ORDER
+
+  const valueField = (
+    <div>
+      <Label htmlFor="cp-value" className="mb-1.5">
+        {isFixed ? 'Amount value (₱)' : 'Percent value (%)'}
+      </Label>
+      <Input
+        id="cp-value"
+        type="number"
+        min={valueMin}
+        max={valueMax}
+        step={isFixed ? '0.01' : 1}
+        value={draft.value}
+        disabled={valueLocked}
+        onChange={(event) => setDraft({ ...draft, value: event.target.value })}
+        onFocus={() => {
+          // Clear the ".00" while typing a peso amount, so it doesn't have to be
+          // selected and deleted by hand before entering a new figure.
+          if (isFixed && draft.value.endsWith('.00')) {
+            setDraft({ ...draft, value: trimZeroFraction(draft.value) })
+          }
+        }}
+        onBlur={() => {
+          // Put the cents back once the field is left alone.
+          if (isFixed && draft.value !== '' && !draft.value.endsWith('.00')) {
+            setDraft({ ...draft, value: Number(draft.value).toFixed(2) })
+          }
+        }}
+        placeholder={isFixed ? '50.00' : '10'}
+        aria-invalid={Boolean(formErrors.value)}
+        className={
+          formErrors.value
+            ? 'border-red-500 dark:border-red-500'
+            : valueLocked
+              ? 'cursor-not-allowed opacity-50'
+              : ''
+        }
+      />
+      {formErrors.value && (
+        <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">{formErrors.value}</p>
+      )}
+      {!formErrors.value && valueLocked && (
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Enter the minimum order first.</p>
+      )}
+    </div>
+  )
+
+  const minimumField = (
+    <div>
+      <Label htmlFor="cp-min" className="mb-1.5">
+        Minimum order (₱)
+      </Label>
+      <Input
+        id="cp-min"
+        type="number"
+        min={orderMin}
+        step="0.01"
+        value={draft.min_order_amount}
+        onChange={(event) => setDraft({ ...draft, min_order_amount: event.target.value })}
+        placeholder="200.00"
+        aria-invalid={Boolean(formErrors.min_order_amount)}
+        className={formErrors.min_order_amount ? 'border-red-500 dark:border-red-500' : ''}
+      />
+      {formErrors.min_order_amount && (
+        <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">{formErrors.min_order_amount}</p>
+      )}
+    </div>
+  )
 
   return (
     <div className="space-y-6">
@@ -234,7 +484,7 @@ export default function AdminCouponsPage() {
             {activeCount} active of {coupons.length} total
           </p>
         </div>
-        <Button onClick={openCreate}>New coupon</Button>
+        <Button onClick={openCreate}>+ New Coupon</Button>
       </header>
 
       {loadError && (
@@ -245,7 +495,10 @@ export default function AdminCouponsPage() {
 
       <Tabs
         value={filter}
-        onChange={setFilter}
+        onChange={(next) => {
+          setFilter(next)
+          setPage(1)
+        }}
         options={[
           { value: 'all', label: 'All', count: coupons.length },
           { value: 'active', label: 'Active', count: activeCount },
@@ -258,7 +511,10 @@ export default function AdminCouponsPage() {
           <Input
             type="search"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value)
+              setPage(1)
+            }}
             placeholder="Search by code…"
             aria-label="Search coupons"
             className="max-w-xs"
@@ -275,7 +531,7 @@ export default function AdminCouponsPage() {
           <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">Loading…</p>
         ) : (
           <Table
-            rows={rows}
+            rows={pagedRows}
             rowKey={(coupon) => coupon.id}
             columns={[
               {
@@ -305,17 +561,6 @@ export default function AdminCouponsPage() {
                 render: (coupon: Coupon) => (
                   <span className="tabular-nums">{peso(coupon.min_order_amount)}</span>
                 ),
-              },
-              {
-                key: 'cap',
-                header: 'Max discount',
-                align: 'right',
-                render: (coupon: Coupon) =>
-                  coupon.max_discount_amount ? (
-                    <span className="tabular-nums">{peso(coupon.max_discount_amount)}</span>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  ),
               },
               {
                 key: 'usage',
@@ -377,29 +622,31 @@ export default function AdminCouponsPage() {
             ]}
           />
         )}
+
+        <div className="mt-4">
+          <Pagination
+            page={meta.current_page}
+            lastPage={meta.last_page}
+            total={meta.total}
+            perPage={meta.per_page}
+            itemLabel="coupons"
+            onPageChange={setPage}
+          />
+        </div>
       </Card>
 
       <Modal
         open={creating || editing !== null}
-        onClose={() => {
-          setCreating(false)
-          setEditing(null)
-        }}
+        onClose={closeModal}
         title={editing ? `Edit ${editing.code}` : 'New coupon'}
         description="Codes are matched case-insensitively at checkout."
         footer={
           <>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setCreating(false)
-                setEditing(null)
-              }}
-            >
+            <Button variant="secondary" onClick={closeModal}>
               Cancel
             </Button>
             <Button onClick={() => void saveCoupon()} disabled={saving}>
-              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create coupon'}
+              {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Coupon'}
             </Button>
           </>
         }
@@ -438,54 +685,14 @@ export default function AdminCouponsPage() {
             <Select
               id="cp-type"
               value={draft.type}
-              onChange={(event) => setDraft({ ...draft, type: event.target.value })}
+              onChange={(event) => changeType(event.target.value)}
             >
               <option value="percentage">Percentage</option>
               <option value="fixed">Fixed amount</option>
             </Select>
           </div>
-          <div>
-            <Label htmlFor="cp-value" className="mb-1.5">
-              Value
-            </Label>
-            <Input
-              id="cp-value"
-              type="number"
-              min="0"
-              step="0.01"
-              value={draft.value}
-              onChange={(event) => setDraft({ ...draft, value: event.target.value })}
-              placeholder="10.00"
-            />
-          </div>
-          <div>
-            <Label htmlFor="cp-min" className="mb-1.5">
-              Minimum order (₱)
-            </Label>
-            <Input
-              id="cp-min"
-              type="number"
-              min="0"
-              step="0.01"
-              value={draft.min_order_amount}
-              onChange={(event) => setDraft({ ...draft, min_order_amount: event.target.value })}
-              placeholder="200.00"
-            />
-          </div>
-          <div>
-            <Label htmlFor="cp-cap" className="mb-1.5">
-              Max discount (₱)
-            </Label>
-            <Input
-              id="cp-cap"
-              type="number"
-              min="0"
-              step="0.01"
-              value={draft.max_discount_amount}
-              onChange={(event) => setDraft({ ...draft, max_discount_amount: event.target.value })}
-              placeholder="Optional"
-            />
-          </div>
+          {valueField}
+          {minimumField}
           <div>
             <Label htmlFor="cp-usage" className="mb-1.5">
               Total usage limit
@@ -511,15 +718,38 @@ export default function AdminCouponsPage() {
               onChange={(event) => setDraft({ ...draft, usage_limit_per_user: event.target.value })}
             />
           </div>
-          <div className="sm:col-span-2">
-            <Label htmlFor="cp-dates" className="mb-1.5">
-              Start / end dates
+          <div>
+            <Label htmlFor="cp-start" className="mb-1.5">
+              Start date
             </Label>
-            <div className="flex gap-2">
-              <Input type="date" aria-label="Start date" />
-              <Input type="date" aria-label="End date" />
-            </div>
-            <Textarea className="mt-2 hidden" readOnly value="" />
+            <Input
+              id="cp-start"
+              type="date"
+              value={draft.starts_at}
+              onChange={(event) => setDraft({ ...draft, starts_at: event.target.value })}
+              aria-invalid={Boolean(formErrors.starts_at)}
+              className={formErrors.starts_at ? 'border-red-500 dark:border-red-500' : ''}
+            />
+            {formErrors.starts_at && (
+              <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">{formErrors.starts_at}</p>
+            )}
+          </div>
+          <div>
+            <Label htmlFor="cp-end" className="mb-1.5">
+              End date
+            </Label>
+            <Input
+              id="cp-end"
+              type="date"
+              value={draft.expires_at}
+              min={draft.starts_at === '' ? undefined : draft.starts_at}
+              onChange={(event) => setDraft({ ...draft, expires_at: event.target.value })}
+              aria-invalid={Boolean(formErrors.expires_at)}
+              className={formErrors.expires_at ? 'border-red-500 dark:border-red-500' : ''}
+            />
+            {formErrors.expires_at && (
+              <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">{formErrors.expires_at}</p>
+            )}
           </div>
         </div>
       </Modal>

@@ -9,9 +9,18 @@ import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Tabs from '../components/ui/Tabs'
 import Textarea from '../components/ui/Textarea'
-import { formatDate, formatDateTime, mockMenuItems, mockRedemptions, mockRewards, peso, rewardItemName } from '../mock'
+import {
+  formatDate,
+  mockMenuItems,
+  mockRedemptions,
+  mockRewards,
+  paginate,
+  peso,
+  rewardItemName,
+} from '../mock'
 import RewardThumb from '../components/ui/RewardThumb'
-import type { Reward, RewardRedemption, RewardType } from '../types'
+import Pagination from '../components/ui/Pagination'
+import type { Reward, RewardRedemption, RewardRedemptionStatus, RewardType } from '../types'
 
 /**
  * MOCK-DATA PAGE — stands in for:
@@ -60,7 +69,9 @@ function toDraft(reward: Reward): Draft {
   return {
     title: reward.title,
     description: reward.description ?? '',
-    type: reward.type,
+    // A reward is always a free item now — peso discounts live on Coupons — so a
+    // legacy voucher row opens as a free item and asks for its menu item.
+    type: 'free_item',
     points_required: String(reward.points_required),
     monetary_value: reward.monetary_value ?? '',
     menu_item_id: reward.menu_item_id === null ? '' : String(reward.menu_item_id),
@@ -70,15 +81,39 @@ function toDraft(reward: Reward): Draft {
   }
 }
 
-type Tab = 'catalogue' | 'redemptions' | 'orphans'
+type Tab = 'catalogue' | 'redemptions'
+
+/** Rows per page in the reward and redemption tables. */
+const PER_PAGE = 7
+
+const REDEMPTION_STATUSES: RewardRedemptionStatus[] = ['issued', 'used', 'expired', 'revoked']
+
+const redemptionTone: Record<RewardRedemptionStatus, 'success' | 'info' | 'warning' | 'danger'> = {
+  issued: 'info',
+  used: 'success',
+  expired: 'warning',
+  revoked: 'danger',
+}
+
+/** Statuses are stored lowercase; the UI shows them capitalised. */
+function statusLabel(status: RewardRedemptionStatus): string {
+  return status.charAt(0).toUpperCase() + status.slice(1)
+}
 
 export default function AdminRewardsPage() {
   const [tab, setTab] = useState<Tab>('catalogue')
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [redemptionPage, setRedemptionPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused'>('all')
+  const [redemptionSearch, setRedemptionSearch] = useState('')
+  const [redemptionStatus, setRedemptionStatus] = useState<'all' | RewardRedemptionStatus>('all')
   const [editing, setEditing] = useState<Reward | null>(null)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState<Draft>(emptyDraft)
+  // Validation stays quiet until the first save attempt, so an empty "New reward"
+  // form does not open covered in errors.
+  const [submitted, setSubmitted] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   const rows = useMemo(() => {
@@ -93,7 +128,38 @@ export default function AdminRewardsPage() {
     })
   }, [search, statusFilter])
 
+  /** Redemptions get their own search + status filter, like the catalogue. */
+  const redemptionRows = useMemo(() => {
+    const term = redemptionSearch.trim().toLowerCase()
+    return mockRedemptions.filter((redemption) => {
+      const matchesStatus =
+        redemptionStatus === 'all' || redemption.status === redemptionStatus
+      const matchesSearch =
+        term.length === 0 ||
+        redemption.code.toLowerCase().includes(term) ||
+        (redemption.user?.name ?? '').toLowerCase().includes(term) ||
+        (redemption.user?.email ?? '').toLowerCase().includes(term) ||
+        (redemption.reward?.title ?? '').toLowerCase().includes(term)
+      return matchesStatus && matchesSearch
+    })
+  }, [redemptionSearch, redemptionStatus])
+
   const activeCount = mockRewards.filter((reward) => reward.is_active).length
+
+  // The two tables are on separate tabs, so each keeps its own page index.
+  const { data: pagedRows, meta } = paginate(
+    rows,
+    Math.min(page, Math.max(1, Math.ceil(rows.length / PER_PAGE))),
+    PER_PAGE,
+  )
+  const { data: pagedRedemptions, meta: redemptionMeta } = paginate(
+    redemptionRows,
+    Math.min(
+      redemptionPage,
+      Math.max(1, Math.ceil(redemptionRows.length / PER_PAGE)),
+    ),
+    PER_PAGE,
+  )
   const totalPoints = mockRewards.reduce((sum, reward) => sum + reward.points_required, 0)
   const avgRatio =
     mockRewards.length > 0
@@ -107,11 +173,13 @@ export default function AdminRewardsPage() {
 
   function openCreate() {
     setDraft(emptyDraft)
+    setSubmitted(false)
     setCreating(true)
   }
 
   function openEdit(reward: Reward) {
     setDraft(toDraft(reward))
+    setSubmitted(false)
     setCreating(false)
     setEditing(reward)
   }
@@ -119,10 +187,19 @@ export default function AdminRewardsPage() {
   function close() {
     setCreating(false)
     setEditing(null)
+    setSubmitted(false)
   }
 
-  /** Mirrors the backend's eventual validation, so mistakes surface in the form. */
+  /**
+   * Mirrors the backend's eventual validation, so mistakes surface in the form.
+   *
+   * Nothing is reported until `submitted`: an empty form should look like a form
+   * waiting to be filled in, not a list of complaints about itself. The messages
+   * appear on the first Create/Save attempt.
+   */
   const draftErrors = (() => {
+    if (!submitted) return {} as Partial<Record<keyof Draft, string>>
+
     const errors: Partial<Record<keyof Draft, string>> = {}
     if (!draft.title.trim()) errors.title = 'Title is required.'
     if (!Number.isFinite(Number(draft.points_required)) || Number(draft.points_required) <= 0) {
@@ -142,16 +219,12 @@ export default function AdminRewardsPage() {
 
   const hasDraftErrors = Object.keys(draftErrors).length > 0
 
-  // Two open backend questions. Everything the frontend could fix on its own was
-  // resolved on 2026-09-29 (orphan rewards fixed, fries price reconciled).
-  const OPEN_ISSUES = 2
-
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-            Rewards &amp; redemption
+            Rewards &amp; Redemption
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             {activeCount} active of {mockRewards.length} ·{' '}
@@ -159,7 +232,7 @@ export default function AdminRewardsPage() {
             units in stock · avg ₱{avgRatio} per point
           </p>
         </div>
-        <Button onClick={openCreate}>New reward</Button>
+        <Button onClick={openCreate}>+ New Reward</Button>
       </header>
 
       <Tabs
@@ -168,7 +241,6 @@ export default function AdminRewardsPage() {
         options={[
           { value: 'catalogue', label: 'Catalogue', count: mockRewards.length },
           { value: 'redemptions', label: 'Redemptions', count: mockRedemptions.length },
-          { value: 'orphans', label: 'Needs attention', count: OPEN_ISSUES },
         ]}
       />
 
@@ -178,7 +250,10 @@ export default function AdminRewardsPage() {
             <Input
               type="search"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => {
+                setSearch(event.target.value)
+                setPage(1)
+              }}
               placeholder="Search rewards…"
               aria-label="Search rewards"
               className="max-w-xs"
@@ -187,9 +262,12 @@ export default function AdminRewardsPage() {
               <Select
                 aria-label="Filter by status"
                 value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as typeof statusFilter)
+                  setPage(1)
+                }}
               >
-                <option value="all">All statuses</option>
+                <option value="all">All Status</option>
                 <option value="active">Active</option>
                 <option value="paused">Paused</option>
               </Select>
@@ -198,7 +276,7 @@ export default function AdminRewardsPage() {
 
           <Card>
             <Table
-              rows={rows}
+              rows={pagedRows}
               rowKey={(reward) => reward.id}
               empty={
                 <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -335,20 +413,70 @@ export default function AdminRewardsPage() {
                 },
               ]}
             />
+            <div className="mt-4">
+              <Pagination
+                page={meta.current_page}
+                lastPage={meta.last_page}
+                total={meta.total}
+                perPage={meta.per_page}
+                itemLabel="rewards"
+                onPageChange={setPage}
+              />
+            </div>
           </Card>
         </>
       )}
 
       {tab === 'redemptions' && (
-        <Card description="Customers redeem points against this catalogue. Codes are single-use.">
-          <Table
-            rows={mockRedemptions}
-            rowKey={(redemption) => redemption.id}
-            empty={<p className="text-sm text-slate-500">No redemptions yet.</p>}
-            columns={[
-              {
-                key: 'code',
-                header: 'Code',
+        <>
+          <div className="flex flex-wrap gap-3">
+            <Input
+              type="search"
+              value={redemptionSearch}
+              onChange={(event) => {
+                setRedemptionSearch(event.target.value)
+                setRedemptionPage(1)
+              }}
+              placeholder="Search code, customer or reward…"
+              aria-label="Search redemptions"
+              className="max-w-xs"
+            />
+            <div className="w-40">
+              <Select
+                aria-label="Filter redemptions by status"
+                value={redemptionStatus}
+                onChange={(event) => {
+                  setRedemptionStatus(event.target.value as typeof redemptionStatus)
+                  setRedemptionPage(1)
+                }}
+              >
+                <option value="all">All Status</option>
+                {REDEMPTION_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {statusLabel(status)}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+
+          <Card description="Customers redeem points against this catalogue. Codes are single-use.">
+            <Table
+              rows={pagedRedemptions}
+              rowKey={(redemption) => redemption.id}
+              empty={
+                redemptionSearch.trim() !== '' || redemptionStatus !== 'all' ? (
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    No redemptions match. Adjust the search or status filter.
+                  </p>
+                ) : (
+                  <p className="text-sm text-slate-500">No redemptions yet.</p>
+                )
+              }
+              columns={[
+                {
+                  key: 'code',
+                  header: 'Code',
                 render: (redemption: RewardRedemption) => (
                   <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-extrabold tracking-wider text-slate-900 dark:bg-slate-800 dark:text-slate-100">
                     {redemption.code}
@@ -361,9 +489,11 @@ export default function AdminRewardsPage() {
                 render: (redemption: RewardRedemption) => (
                   <div>
                     <p className="font-bold">{redemption.user?.name ?? '—'}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {redemption.user?.email}
-                    </p>
+                    {redemption.user?.email && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {redemption.user.email}
+                      </p>
+                    )}
                   </div>
                 ),
               },
@@ -405,50 +535,26 @@ export default function AdminRewardsPage() {
               {
                 key: 'status',
                 header: 'Status',
-                render: (redemption: RewardRedemption) => {
-                  const tone =
-                    redemption.status === 'used'
-                      ? 'success'
-                      : redemption.status === 'issued'
-                        ? 'info'
-                        : redemption.status === 'expired'
-                          ? 'warning'
-                          : 'danger'
-                  return <Badge tone={tone}>{redemption.status}</Badge>
-                },
+                render: (redemption: RewardRedemption) => (
+                  <Badge tone={redemptionTone[redemption.status]}>
+                    {statusLabel(redemption.status)}
+                  </Badge>
+                ),
               },
             ]}
           />
+          <div className="mt-4">
+            <Pagination
+              page={redemptionMeta.current_page}
+              lastPage={redemptionMeta.last_page}
+              total={redemptionMeta.total}
+              perPage={redemptionMeta.per_page}
+              itemLabel="redemptions"
+              onPageChange={setRedemptionPage}
+            />
+          </div>
         </Card>
-      )}
-
-      {tab === 'orphans' && (
-        <Card description="Outstanding backend work. Nothing here is fixable in the frontend.">
-          <ul className="space-y-3">
-            <li className="rounded-xl bg-amber-50 px-4 py-3 ring-1 ring-amber-200 ring-inset dark:bg-amber-500/10 dark:ring-amber-500/30">
-              <p className="text-sm font-extrabold text-slate-900 dark:text-white">
-                Points accrual is still not modelled anywhere
-              </p>
-              <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                The deleted schema draft specified 1 point per ₱10 spent via an append-only
-                <span className="font-semibold"> reward_point_transactions </span>
-                ledger. There is still no table, model or endpoint, so points never accumulate.
-                Mobile's <span className="font-semibold">rewards.tsx:77</span> hardcodes
-                <span className="font-semibold"> useState(2450) </span>
-                with no setter.
-              </p>
-            </li>
-            <li className="rounded-xl bg-amber-50 px-4 py-3 ring-1 ring-amber-200 ring-inset dark:bg-amber-500/10 dark:ring-amber-500/30">
-              <p className="text-sm font-extrabold text-slate-900 dark:text-white">
-                Stock is not concurrency-safe yet
-              </p>
-              <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                Redemption must lock the stock row and the points balance in one transaction,
-                otherwise two customers can redeem the last unit at once.
-              </p>
-            </li>
-          </ul>
-        </Card>
+        </>
       )}
 
       <Modal
@@ -466,13 +572,17 @@ export default function AdminRewardsPage() {
               Cancel
             </Button>
             <Button
-              disabled={hasDraftErrors}
+              // Not disabled on an empty form — clicking is what reveals the
+              // messages, so a greyed-out button would leave the user stuck.
+              disabled={submitted && hasDraftErrors}
               onClick={() => {
+                setSubmitted(true)
+                if (hasDraftErrors) return
                 flash(editing ? `${editing.title} updated` : `${draft.title || 'Reward'} created`)
                 close()
               }}
             >
-              {editing ? 'Save changes' : 'Create reward'}
+              {editing ? 'Save Changes' : 'Create Reward'}
             </Button>
           </>
         }
@@ -537,27 +647,6 @@ export default function AdminRewardsPage() {
                 <p className="mt-1 text-sm text-red-600 dark:text-red-400">{draftErrors.title}</p>
               )}
             </div>
-
-          <div>
-            <Label htmlFor="rw-type" className="mb-1.5">
-              Type
-            </Label>
-            <Select
-              id="rw-type"
-              value={draft.type}
-              onChange={(event) =>
-                setDraft({
-                  ...draft,
-                  type: event.target.value as RewardType,
-                  // Switching type invalidates the menu item, so clear it.
-                  menu_item_id: event.target.value === 'voucher' ? '' : draft.menu_item_id,
-                })
-              }
-            >
-              <option value="free_item">Free item</option>
-              <option value="voucher">Voucher (₱ off)</option>
-            </Select>
-          </div>
 
           <div>
             <Label htmlFor="rw-emoji" className="mb-1.5">
@@ -680,20 +769,7 @@ export default function AdminRewardsPage() {
             />
           </div>
 
-          {editing && (
-            <div className="sm:col-span-2 rounded-xl bg-slate-50 px-4 py-3 text-xs ring-1 ring-slate-200 ring-inset dark:bg-slate-800/50 dark:ring-slate-700">
-              <p className="font-extrabold text-slate-700 dark:text-slate-300">
-                Prefer pausing over deleting
-              </p>
-              <p className="mt-1 text-slate-500 dark:text-slate-400">
-                Created {formatDateTime(editing.created_at)}. Deleting this reward would orphan the
-                {mockRedemptions.filter((r) => r.reward_id === editing.id).length} redemption
-                {mockRedemptions.filter((r) => r.reward_id === editing.id).length === 1 ? '' : 's'} that
-                reference it — pause it instead so issued codes stay traceable.
-              </p>
-            </div>
-          )}
-        </div>
+          </div>
       </Modal>
 
       {toast && (

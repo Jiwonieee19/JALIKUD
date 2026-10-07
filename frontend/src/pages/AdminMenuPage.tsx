@@ -1,4 +1,5 @@
 import CategoryModal, { slugify, type CategoryPayload } from '../components/CategoryModal'
+import Pagination from '../components/ui/Pagination'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -21,7 +22,9 @@ import type { Category, MenuItem } from '../types'
  * (MenuItemController.php:23), so pass this as `per_page` on integration —
  * `PaginationRequest` caps it at 100.
  */
-const PER_PAGE = 10
+const PER_PAGE = 7
+
+const CATEGORY_PER_PAGE = 7
 
 /**
  * Upper bound accepted by PaginationRequest (min:1, max:100).
@@ -68,6 +71,7 @@ export default function AdminMenuPage() {
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<'all' | string>('all')
   const [page, setPage] = useState(1)
+  const [categoryPage, setCategoryPage] = useState(1)
   const [editing, setEditing] = useState<MenuItem | null>(null)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState({
@@ -150,6 +154,13 @@ export default function AdminMenuPage() {
   const lastPage = Math.max(1, Math.ceil(filtered.length / PER_PAGE))
   const clamped = Math.min(page, lastPage)
   const { data: rows, meta } = paginate(filtered, clamped, PER_PAGE)
+
+  // Categories get their own pager; the two tabs are never on screen at once.
+  const { data: categoryRows, meta: categoryMeta } = paginate(
+    categories,
+    Math.min(categoryPage, Math.max(1, Math.ceil(categories.length / CATEGORY_PER_PAGE))),
+    CATEGORY_PER_PAGE,
+  )
 
   const soldOut = items.filter((item) => !item.is_available).length
 
@@ -304,13 +315,44 @@ export default function AdminMenuPage() {
       return
     }
 
+    const localErrors: Record<string, string> = {}
+
+    if (name.length > 150) {
+      localErrors.name = 'Keep the name to 150 characters or fewer.'
+    }
+
+    // base_price is required and min:0 server-side; an empty field would send
+    // NaN and 422 on the round-trip instead of being caught here.
+    if (draft.base_price.trim() === '') {
+      localErrors.base_price = 'Enter a base price.'
+    } else if (!Number.isFinite(Number(draft.base_price)) || Number(draft.base_price) < 0) {
+      localErrors.base_price = 'Must not be negative.'
+    }
+
+    if (draft.sku.trim().length > 50) {
+      localErrors.sku = 'Keep the SKU to 50 characters or fewer.'
+    }
+
+    const prep = Number(draft.preparation_time_minutes)
+    if (!Number.isInteger(prep) || prep < 0) {
+      localErrors.preparation_time_minutes = 'Must be zero or more whole minutes.'
+    }
+
+    if (Object.keys(localErrors).length > 0) {
+      setFormErrors(localErrors)
+      setSaving(false)
+      return
+    }
+
     const payload = {
       name,
       slug,
       category_id: Number(draft.category_id),
       description: draft.description.trim() === '' ? null : draft.description.trim(),
       sku: draft.sku.trim() === '' ? null : draft.sku.trim(),
-      base_price: draft.base_price,
+      // base_price is `required` on MenuItemController (line 43) and prep time
+      // is `nullable, integer, min:0` — so 0 is a valid prep time, not an error.
+      base_price: Number(draft.base_price),
       preparation_time_minutes: Number(draft.preparation_time_minutes),
       ...(draft.image_url ? { image_url: draft.image_url } : {}),
     }
@@ -388,10 +430,10 @@ export default function AdminMenuPage() {
         </div>
         {tab === 'items' ? (
           <Button onClick={openCreate} disabled={loading || categories.length === 0}>
-            Add menu item
+            + Add Menu Item
           </Button>
         ) : (
-          <Button onClick={openCreateCategory}>Add category</Button>
+          <Button onClick={openCreateCategory}>+ Add Category</Button>
         )}
       </header>
 
@@ -515,16 +557,10 @@ export default function AdminMenuPage() {
                   key: 'price',
                   header: 'Price',
                   align: 'right',
+                  className: 'pr-[212px]',
                   render: (item: MenuItem) => (
                     <span className="font-extrabold tabular-nums">{peso(item.base_price)}</span>
                   ),
-                },
-                {
-                  key: 'featured',
-                  header: 'Featured',
-                  align: 'center',
-                  render: (item: MenuItem) =>
-                    item.is_featured ? <Badge tone="brand">★</Badge> : <span className="text-slate-400">—</span>,
                 },
                 {
                   key: 'availability',
@@ -555,37 +591,24 @@ export default function AdminMenuPage() {
             />
           )}
 
-          {meta.last_page > 1 && (
-            <div className="flex items-center justify-between border-t border-slate-100 pt-4 text-sm text-slate-500 dark:border-slate-800 dark:text-slate-400">
-              <span>
-                Page {meta.current_page} of {meta.last_page}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={meta.current_page <= 1}
-                  onClick={() => setPage((current) => current - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="secondary"
-                  disabled={meta.current_page >= meta.last_page}
-                  onClick={() => setPage((current) => current + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
+          <div className="mt-4">
+            <Pagination
+              page={meta.current_page}
+              lastPage={meta.last_page}
+              total={meta.total}
+              perPage={meta.per_page}
+              itemLabel="items"
+              onPageChange={setPage}
+            />
+          </div>
         </Card>
       ) : (
         <Card>
           <Table
-            rows={categories}
+            rows={categoryRows}
             rowKey={(category) => category.id}
             columns={[
-{
+              {
                   key: 'name',
                   header: 'Category',
                   render: (category) => (
@@ -631,6 +654,16 @@ export default function AdminMenuPage() {
               },
             ]}
           />
+          <div className="mt-4">
+            <Pagination
+              page={categoryMeta.current_page}
+              lastPage={categoryMeta.last_page}
+              total={categoryMeta.total}
+              perPage={categoryMeta.per_page}
+              itemLabel="categories"
+              onPageChange={setCategoryPage}
+            />
+          </div>
         </Card>
       )}
 
@@ -656,7 +689,7 @@ export default function AdminMenuPage() {
               Cancel
             </Button>
             <Button onClick={() => void saveItem()} disabled={saving}>
-              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create item'}
+              {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Item'}
             </Button>
           </>
         }
@@ -732,11 +765,19 @@ export default function AdminMenuPage() {
             </Label>
             <Input
               id="mi-sku"
-              value={draft.sku}
-              onChange={(event) => setDraft({ ...draft, sku: event.target.value })}
-              placeholder="CJ-001"
-            />
-          </div>
+value={draft.sku}
+                onChange={(event) => setDraft({ ...draft, sku: event.target.value })}
+                placeholder="CJ-001"
+                maxLength={50}
+                aria-invalid={Boolean(formErrors.sku)}
+                className={formErrors.sku ? 'border-red-500 dark:border-red-500' : ''}
+              />
+              {formErrors.sku && (
+                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                  {formErrors.sku}
+                </p>
+              )}
+            </div>
           <div>
             <Label htmlFor="mi-price" className="mb-1.5">
               Base price (₱)
@@ -746,23 +787,39 @@ export default function AdminMenuPage() {
               type="number"
               min="0"
               step="0.01"
-              value={draft.base_price}
-              onChange={(event) => setDraft({ ...draft, base_price: event.target.value })}
-              placeholder="109.00"
-            />
-          </div>
+value={draft.base_price}
+                onChange={(event) => setDraft({ ...draft, base_price: event.target.value })}
+                placeholder="109.00"
+                aria-invalid={Boolean(formErrors.base_price)}
+                className={formErrors.base_price ? 'border-red-500 dark:border-red-500' : ''}
+              />
+              {formErrors.base_price && (
+                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                  {formErrors.base_price}
+                </p>
+              )}
+            </div>
           <div>
             <Label htmlFor="mi-prep" className="mb-1.5">
               Prep time (minutes)
             </Label>
             <Input
-              id="mi-prep"
-              type="number"
-              min="1"
-              value={draft.preparation_time_minutes}
-              onChange={(event) => setDraft({ ...draft, preparation_time_minutes: event.target.value })}
-            />
-          </div>
+id="mi-prep"
+                type="number"
+                min="0"
+value={draft.preparation_time_minutes}
+                onChange={(event) => setDraft({ ...draft, preparation_time_minutes: event.target.value })}
+                aria-invalid={Boolean(formErrors.preparation_time_minutes)}
+                className={
+                  formErrors.preparation_time_minutes ? 'border-red-500 dark:border-red-500' : ''
+                }
+              />
+              {formErrors.preparation_time_minutes && (
+                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                  {formErrors.preparation_time_minutes}
+                </p>
+              )}
+            </div>
           <div className="sm:col-span-2">
             <Label htmlFor="mi-desc" className="mb-1.5">
               Description
