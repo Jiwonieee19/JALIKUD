@@ -31,7 +31,7 @@ export default function Table<T>({ columns, rows, rowKey, empty }: Props<T>) {
               <th
                 key={column.key}
                 scope="col"
-                className={`px-4 py-3 text-xs font-extrabold tracking-wider text-slate-500 uppercase dark:text-slate-400 ${alignClass[column.align ?? 'left']} ${column.className ?? ''}`}
+                className={`px-4 py-3 text-xs font-extrabold tracking-wider text-slate-500 uppercase dark:text-slate-400 ${alignClass[column.align ?? 'left']}`}
               >
                 {column.header}
               </th>

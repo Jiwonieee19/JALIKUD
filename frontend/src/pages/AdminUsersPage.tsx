@@ -56,52 +56,21 @@ const emptyForm: FormState = {
  * 8+ characters with at least one lowercase, one uppercase and one digit
  * ($requireSpecial defaults to false, so no symbol is needed).
  *
- * Every composition failure reports ONE message, matching what the API returns.
- * Naming the class of character that is missing ("must contain at least one
- * number") hands anyone probing the form a running tally of what is still
- * missing, so the same wording is used for every way of being too weak. Length
- * stays a separate message because it is already in the field's own hint text.
+ * Without this the form only enforced length, so a weak password passed the
+ * client and came back as a 422 round-trip. Kept in sync with
+ * backend/app/Rules/StrongPassword.php.
  *
  * Returns null for an empty string so the same helper serves both the create
- * form (where blank is an error, checked separately below) and the edit form
- * (where blank means "keep the current password").
+ * form (where blank is an error) and the edit form (where blank means "keep the
+ * current password").
  */
 function passwordProblem(password: string): string | null {
   if (password.length === 0) return null
   if (password.length < 8) return 'Must be at least 8 characters.'
-  const strong = /[a-z]/.test(password) && /[A-Z]/.test(password) && /[0-9]/.test(password)
-  if (!strong) return 'Must contain uppercase, lowercase and a number.'
+  if (!/[a-z]/.test(password)) return 'Must contain at least one lowercase letter.'
+  if (!/[A-Z]/.test(password)) return 'Must contain at least one uppercase letter.'
+  if (!/[0-9]/.test(password)) return 'Must contain at least one number.'
   return null
-}
-
-/**
- * A PH mobile is fixed at +63 9 XXXXXXXX — the country code and the leading 9
- * are both part of the format, so both are static on the field and only the
- * trailing 9 digits are typed. Stored locally that is 09XXXXXXXXX.
- */
-const PH_MOBILE_TAIL = 9
-
-/** Keeps only digits and caps the length — used while typing. */
-function digitsOnly(value: string): string {
-  return value.replace(/\D/g, '').slice(0, PH_MOBILE_TAIL)
-}
-
-/**
- * A stored phone ("09XXXXXXXXX", or an older "+63..." row) -> just the typed
- * tail, dropping the +63 and the 9 the field already shows. Both prefixes are
- * stripped before the cap, so an 11-digit local value is not truncated to 9.
- */
-function toTailDigits(value: string): string {
-  return value
-    .replace(/\D/g, '')
-    .replace(/^(?:63|0)/, '')
-    .replace(/^9/, '')
-    .slice(0, PH_MOBILE_TAIL)
-}
-
-/** What the field holds -> the local form the API and database store. */
-function toStoredPhone(value: string): string | null {
-  return value === '' ? null : `09${value}`
 }
 
 export default function AdminUsersPage() {
@@ -153,7 +122,7 @@ export default function AdminUsersPage() {
     setForm({
       name: user.name,
       email: user.email,
-      phone: toTailDigits(user.phone ?? ''),
+      phone: user.phone ?? '',
       password: '',
       password_confirmation: '',
       role: user.role,
@@ -200,7 +169,7 @@ export default function AdminUsersPage() {
         await api.put(`/admin/users/${editing.id}`, {
           name: form.name,
           email: form.email,
-          phone: toStoredPhone(form.phone),
+          phone: form.phone || null,
           role: form.role,
           // Omitted entirely when blank so the API leaves the stored hash alone
           // ('password' is 'sometimes' on UpdateUserRequest). 'role' is not
@@ -211,7 +180,7 @@ export default function AdminUsersPage() {
         await api.post('/admin/users', {
           name: form.name,
           email: form.email,
-          phone: toStoredPhone(form.phone),
+          phone: form.phone || null,
           role: form.role,
           ...(form.password ? { password: form.password } : {}),
         })
@@ -418,27 +387,13 @@ export default function AdminUsersPage() {
                 <Label htmlFor="au-phone" className="mb-1.5">
                   Phone
                 </Label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-sm text-slate-500 dark:text-slate-400">
-                    +63 9
-                  </span>
-                  <Input
-                    id="au-phone"
-                    type="tel"
-                    inputMode="numeric"
-                    autoComplete="tel-national"
-                    maxLength={PH_MOBILE_TAIL}
-                    value={form.phone}
-                    onChange={(e) => setForm({ ...form, phone: digitsOnly(e.target.value) })}
-                    placeholder="123456789"
-                    aria-invalid={Boolean(formErrors.phone)}
-                    // Both branches are complete literals so Tailwind's scanner
-                    // finds pl-12; interpolated prefixes are never generated.
-                    className={
-                      formErrors.phone ? 'pl-12 border-red-500 dark:border-red-500' : 'pl-12'
-                    }
-                  />
-                </div>
+                <Input
+                  id="au-phone"
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  placeholder="e.g. +63 912 345 6789"
+                />
                 {formErrors.phone && (
                   <p className="mt-1 text-sm text-red-600 dark:text-red-400">{formErrors.phone}</p>
                 )}

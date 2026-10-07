@@ -304,44 +304,13 @@ export default function AdminMenuPage() {
       return
     }
 
-    const localErrors: Record<string, string> = {}
-
-    if (name.length > 150) {
-      localErrors.name = 'Keep the name to 150 characters or fewer.'
-    }
-
-    // base_price is required and min:0 server-side; an empty field would send
-    // NaN and 422 on the round-trip instead of being caught here.
-    if (draft.base_price.trim() === '') {
-      localErrors.base_price = 'Enter a base price.'
-    } else if (!Number.isFinite(Number(draft.base_price)) || Number(draft.base_price) < 0) {
-      localErrors.base_price = 'Must not be negative.'
-    }
-
-    if (draft.sku.trim().length > 50) {
-      localErrors.sku = 'Keep the SKU to 50 characters or fewer.'
-    }
-
-    const prep = Number(draft.preparation_time_minutes)
-    if (!Number.isInteger(prep) || prep < 0) {
-      localErrors.preparation_time_minutes = 'Must be zero or more whole minutes.'
-    }
-
-    if (Object.keys(localErrors).length > 0) {
-      setFormErrors(localErrors)
-      setSaving(false)
-      return
-    }
-
     const payload = {
       name,
       slug,
       category_id: Number(draft.category_id),
       description: draft.description.trim() === '' ? null : draft.description.trim(),
       sku: draft.sku.trim() === '' ? null : draft.sku.trim(),
-      // base_price is `required` on MenuItemController (line 43) and prep time
-      // is `nullable, integer, min:0` — so 0 is a valid prep time, not an error.
-      base_price: Number(draft.base_price),
+      base_price: draft.base_price,
       preparation_time_minutes: Number(draft.preparation_time_minutes),
       ...(draft.image_url ? { image_url: draft.image_url } : {}),
     }
@@ -546,10 +515,16 @@ export default function AdminMenuPage() {
                   key: 'price',
                   header: 'Price',
                   align: 'right',
-                  className: 'pr-[212px]',
                   render: (item: MenuItem) => (
                     <span className="font-extrabold tabular-nums">{peso(item.base_price)}</span>
                   ),
+                },
+                {
+                  key: 'featured',
+                  header: 'Featured',
+                  align: 'center',
+                  render: (item: MenuItem) =>
+                    item.is_featured ? <Badge tone="brand">★</Badge> : <span className="text-slate-400">—</span>,
                 },
                 {
                   key: 'availability',
@@ -757,19 +732,11 @@ export default function AdminMenuPage() {
             </Label>
             <Input
               id="mi-sku"
-value={draft.sku}
-                onChange={(event) => setDraft({ ...draft, sku: event.target.value })}
-                placeholder="CJ-001"
-                maxLength={50}
-                aria-invalid={Boolean(formErrors.sku)}
-                className={formErrors.sku ? 'border-red-500 dark:border-red-500' : ''}
-              />
-              {formErrors.sku && (
-                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
-                  {formErrors.sku}
-                </p>
-              )}
-            </div>
+              value={draft.sku}
+              onChange={(event) => setDraft({ ...draft, sku: event.target.value })}
+              placeholder="CJ-001"
+            />
+          </div>
           <div>
             <Label htmlFor="mi-price" className="mb-1.5">
               Base price (₱)
@@ -779,39 +746,23 @@ value={draft.sku}
               type="number"
               min="0"
               step="0.01"
-value={draft.base_price}
-                onChange={(event) => setDraft({ ...draft, base_price: event.target.value })}
-                placeholder="109.00"
-                aria-invalid={Boolean(formErrors.base_price)}
-                className={formErrors.base_price ? 'border-red-500 dark:border-red-500' : ''}
-              />
-              {formErrors.base_price && (
-                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
-                  {formErrors.base_price}
-                </p>
-              )}
-            </div>
+              value={draft.base_price}
+              onChange={(event) => setDraft({ ...draft, base_price: event.target.value })}
+              placeholder="109.00"
+            />
+          </div>
           <div>
             <Label htmlFor="mi-prep" className="mb-1.5">
               Prep time (minutes)
             </Label>
             <Input
-id="mi-prep"
-                type="number"
-                min="0"
-value={draft.preparation_time_minutes}
-                onChange={(event) => setDraft({ ...draft, preparation_time_minutes: event.target.value })}
-                aria-invalid={Boolean(formErrors.preparation_time_minutes)}
-                className={
-                  formErrors.preparation_time_minutes ? 'border-red-500 dark:border-red-500' : ''
-                }
-              />
-              {formErrors.preparation_time_minutes && (
-                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
-                  {formErrors.preparation_time_minutes}
-                </p>
-              )}
-            </div>
+              id="mi-prep"
+              type="number"
+              min="1"
+              value={draft.preparation_time_minutes}
+              onChange={(event) => setDraft({ ...draft, preparation_time_minutes: event.target.value })}
+            />
+          </div>
           <div className="sm:col-span-2">
             <Label htmlFor="mi-desc" className="mb-1.5">
               Description
