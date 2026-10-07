@@ -120,7 +120,7 @@ function OrderCard({
 }
 
 export default function StaffOrdersScreen() {
-  const { riders, assignRider, deliveries } = useDeliveryDemo();
+  const { riders, assignDelivery } = useDeliveryDemo();
   const { orders, confirmOrder, rejectOrder, addActivity } = useStaffDemo();
   const { current } = useAuthDemo();
   const staffInitials = (current?.name ?? 'ST')
@@ -176,26 +176,24 @@ export default function StaffOrdersScreen() {
       setAssignError('Select a rider first.');
       return;
     }
-    const matchingDelivery = deliveries.find((delivery) => delivery.status === 'ready');
-    const target = matchingDelivery ?? {
+    const target = {
       id: `d-${assigningOrder.id}`,
       orderNumber: assigningOrder.orderNumber,
       customer: assigningOrder.customer,
-      phone: '0917 000 0000',
-      address: 'Customer address on file',
+      phone: assigningOrder.phone ?? '0917 000 0000',
+      address: assigningOrder.address ?? 'Customer address on file',
       items: assigningOrder.items.map((item) => ({ name: item.name, quantity: item.quantity })),
       codAmount: assigningOrder.total,
       distanceKm: 5.2,
       deliveryFee: 49,
-      status: 'ready' as const,
-      riderId: null,
       store: { latitude: 7.1904, longitude: 125.4539 },
-      destination: { latitude: 7.0832, longitude: 125.5907, destinationName: "Customer's House" },
-      assignedAt: null,
-      pickedUpAt: null,
-      deliveredAt: null,
+      destination: {
+        latitude: 7.0832,
+        longitude: 125.5907,
+        destinationName: assigningOrder.destinationName ?? "Customer's House",
+      },
     };
-    assignRider(target.id, rider.id);
+    assignDelivery(target, rider.id);
     addActivity({
       kind: 'rider_assigned',
       title: `${rider.name} assigned to ${assigningOrder.orderNumber}`,
@@ -312,8 +310,8 @@ export default function StaffOrdersScreen() {
             <Text style={styles.modalTitle}>Assign rider · {assigningOrder?.orderNumber}</Text>
             <Text style={styles.modalSubtitle}>
               {availableRiders.length
-                ? 'Pick an available rider. They will see the delivery in their app.'
-                : 'No riders are available right now.'}
+                ? 'Pick an On Duty rider. They will see the delivery in their app.'
+                : 'No riders are On Duty right now.'}
             </Text>
             <View style={styles.reasonList}>
               {riders.map((rider) => {
@@ -332,7 +330,11 @@ export default function StaffOrdersScreen() {
                     </View>
                     <View style={[styles.riderStatusChip, rider.status === 'available' && styles.riderStatusAvailable, rider.status === 'on_delivery' && styles.riderStatusBusy]}>
                       <Text style={styles.riderStatusText}>
-                        {rider.status === 'available' ? 'Available' : rider.status === 'on_delivery' ? 'Busy' : 'Offline'}
+                        {rider.status === 'available'
+                          ? 'On Duty'
+                          : rider.status === 'on_delivery'
+                            ? 'On Delivery'
+                            : 'Unavailable'}
                       </Text>
                     </View>
                   </Pressable>

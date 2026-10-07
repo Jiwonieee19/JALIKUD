@@ -183,16 +183,17 @@ export default function AdminRewardsPage() {
               aria-label="Search rewards"
               className="max-w-xs"
             />
-            <Select
-              aria-label="Filter by status"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
-              className="w-40"
-            >
-              <option value="all">All statuses</option>
-              <option value="active">Active</option>
-              <option value="paused">Paused</option>
-            </Select>
+            <div className="w-40">
+              <Select
+                aria-label="Filter by status"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+              >
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="paused">Paused</option>
+              </Select>
+            </div>
           </div>
 
           <Card>

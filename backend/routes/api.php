@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AddressController;
 use App\Http\Controllers\AdminUserController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CartController;
@@ -21,6 +22,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/profile', [AuthController::class, 'updateProfile']);
     Route::put('/password', [AuthController::class, 'updatePassword'])->middleware('throttle:password');
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    // Addresses (customer). Required for delivery checkout: POST /orders
+    // demands an address_id owned by the caller when order_type=delivery, so
+    // without these routes a customer who registered through the public API
+    // could only ever check out for pickup.
+    Route::get('/addresses', [AddressController::class, 'index']);
+    Route::post('/addresses', [AddressController::class, 'store']);
+    Route::match(['put', 'patch'], '/addresses/{address}', [AddressController::class, 'update']);
+    Route::delete('/addresses/{address}', [AddressController::class, 'destroy']);
 
     // Cart (customer)
     Route::get('/cart', [CartController::class, 'index']);
@@ -65,4 +75,3 @@ Route::get('/menu', [MenuItemController::class, 'index']);
 Route::get('/menu/{menuItem}', [MenuItemController::class, 'show']);
 Route::get('/categories', [CategoryController::class, 'index']);
 Route::get('/categories/{category}', [CategoryController::class, 'show']);
-

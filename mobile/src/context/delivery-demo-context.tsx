@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 
+import { useCustomerOrder } from '@/context/customer-order-context';
+
 // Demo bridge between the staff UI and the rider UI. Staff assign riders to
 // confirmed delivery orders here; the rider app sees the same data. In-memory
 // only — restarting the app resets every rider and delivery.
@@ -39,7 +41,7 @@ export type Delivery = {
 type DeliveryDemoContextValue = {
   riders: Rider[];
   deliveries: Delivery[];
-  assignRider: (deliveryId: string, riderId: string) => void;
+  assignDelivery: (delivery: Omit<Delivery, 'status' | 'riderId' | 'assignedAt' | 'pickedUpAt' | 'deliveredAt'>, riderId: string) => void;
   pickupDelivery: (deliveryId: string) => void;
   completeDelivery: (deliveryId: string) => void;
   setRiderAvailability: (riderId: string, status: RiderStatus) => void;
@@ -109,7 +111,7 @@ const INITIAL_DELIVERIES: Delivery[] = [
     '0918 222 4411',
     '17 Gemilina St., Bajada, Davao City',
     "Mika's Residence",
-    { latitude: 7.0918, longitude: 125.6319 },
+    { latitude: 7.2628, longitude: 125.3891 },
     [
       { name: 'Chickenjoy 6pc', quantity: 1 },
       { name: 'Palabok Fiesta', quantity: 2 },
@@ -126,23 +128,34 @@ function currentTime(): string {
 }
 
 export function DeliveryDemoProvider({ children }: { children: ReactNode }) {
+  const { updateOrderStatus } = useCustomerOrder();
   const [riders, setRiders] = useState(INITIAL_RIDERS);
   const [deliveries, setDeliveries] = useState(INITIAL_DELIVERIES);
 
-  const assignRider = useCallback((deliveryId: string, riderId: string) => {
-    setDeliveries((current) =>
-      current.map((delivery) =>
-        delivery.id === deliveryId && delivery.status === 'ready'
-          ? { ...delivery, status: 'assigned', riderId, assignedAt: currentTime() }
-          : delivery,
-      ),
-    );
+  const assignDelivery = useCallback((delivery: Omit<Delivery, 'status' | 'riderId' | 'assignedAt' | 'pickedUpAt' | 'deliveredAt'>, riderId: string) => {
+    setDeliveries((current) => {
+      const assigned: Delivery = {
+        ...delivery,
+        status: 'assigned',
+        riderId,
+        assignedAt: currentTime(),
+        pickedUpAt: null,
+        deliveredAt: null,
+      };
+      const existingIndex = current.findIndex(
+        (candidate) => candidate.id === delivery.id || candidate.orderNumber === delivery.orderNumber,
+      );
+      if (existingIndex === -1) return [assigned, ...current];
+      return current.map((candidate, index) => (index === existingIndex ? assigned : candidate));
+    });
     setRiders((current) =>
       current.map((rider) => (rider.id === riderId ? { ...rider, status: 'on_delivery' } : rider)),
     );
   }, []);
 
   const pickupDelivery = useCallback((deliveryId: string) => {
+    const delivery = deliveries.find((candidate) => candidate.id === deliveryId);
+    if (!delivery || delivery.status !== 'assigned') return;
     setDeliveries((current) =>
       current.map((delivery) =>
         delivery.id === deliveryId && delivery.status === 'assigned'
@@ -150,7 +163,8 @@ export function DeliveryDemoProvider({ children }: { children: ReactNode }) {
           : delivery,
       ),
     );
-  }, []);
+    updateOrderStatus(delivery.orderNumber, 'out_for_delivery');
+  }, [deliveries, updateOrderStatus]);
 
   const completeDelivery = useCallback((deliveryId: string) => {
     const delivery = deliveries.find((candidate) => candidate.id === deliveryId);
@@ -171,17 +185,22 @@ export function DeliveryDemoProvider({ children }: { children: ReactNode }) {
           : rider,
       ),
     );
-  }, [deliveries]);
+    updateOrderStatus(delivery.orderNumber, 'completed');
+  }, [deliveries, updateOrderStatus]);
 
   const setRiderAvailability = useCallback((riderId: string, status: RiderStatus) => {
     setRiders((current) =>
-      current.map((rider) => (rider.id === riderId ? { ...rider, status } : rider)),
+      current.map((rider) =>
+        rider.id === riderId && rider.status !== 'on_delivery' && status !== 'on_delivery'
+          ? { ...rider, status }
+          : rider,
+      ),
     );
   }, []);
 
   const value = useMemo(
-    () => ({ riders, deliveries, assignRider, pickupDelivery, completeDelivery, setRiderAvailability }),
-    [riders, deliveries, assignRider, pickupDelivery, completeDelivery, setRiderAvailability],
+    () => ({ riders, deliveries, assignDelivery, pickupDelivery, completeDelivery, setRiderAvailability }),
+    [riders, deliveries, assignDelivery, pickupDelivery, completeDelivery, setRiderAvailability],
   );
 
   return <DeliveryDemoContext.Provider value={value}>{children}</DeliveryDemoContext.Provider>;

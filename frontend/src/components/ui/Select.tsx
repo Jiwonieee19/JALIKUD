@@ -8,6 +8,16 @@ import { forwardRef, type SelectHTMLAttributes } from 'react'
 const base =
   'block w-full appearance-none rounded-lg border-0 bg-white px-3 py-2 pr-9 text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-inset focus:ring-red-600 dark:bg-slate-800 dark:text-white dark:ring-slate-700 dark:focus:ring-red-500 sm:text-sm'
 
+/**
+ * WARNING: `className` is applied to the `<select>`, NOT to the `relative`
+ * wrapper the chevron is positioned against. Constraining the width via
+ * className (`w-52`, `max-w-xs`, ...) therefore shrinks the select while the
+ * wrapper stays full width, and the chevron lands at the wrapper's right edge —
+ * outside the visible box.
+ *
+ * To use a narrower width, constrain a parent instead:
+ *   <div className="w-52"><Select /></div>
+ */
 const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
   function Select({ className = '', children, ...props }, ref) {
     return (

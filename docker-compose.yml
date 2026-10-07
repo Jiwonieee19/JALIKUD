@@ -15,6 +15,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - jalikud
     restart: unless-stopped
 
   backend:
@@ -32,8 +34,36 @@ services:
       - DB_DATABASE=${POSTGRES_DB:-jalikud}
       - DB_USERNAME=${POSTGRES_USER:-jalikud}
       - DB_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}
+      # Trust X-Forwarded-* from the known proxies ONLY (their pinned IPs
+      # below). This makes rate-limit buckets key on the real client IP instead
+      # of the proxy IP; without it every proxied request shares ONE bucket and
+      # a single client can 429 every other user. Trusting the whole compose
+      # subnet instead would re-trust the clients and collapse the buckets
+      # again, so this must list the proxy addresses specifically.
+      # See bootstrap/app.php.
+      #
+      # Three hops can terminate in front of Laravel, so all three are listed:
+      #   172.30.0.1  docker bridge gateway — ONLY when an external agent on the
+      #               host (e.g. `ngrok http 5173`) publishes into the frontend
+      #               port. Docker's port publishing makes nginx see the gateway
+      #               as $remote_addr, which nginx then appends to
+      #               X-Forwarded-For, so Laravel would otherwise report the
+      #               gateway as the client IP for every request.
+      #   172.30.0.20 the nginx (frontend) container, serving proxied /api.
+      #   172.30.0.30 the cloudflared container, which dials the backend
+      #               directly and bypasses nginx entirely.
+      # Symfony walks X-Forwarded-For right-to-left and stops at the first
+      # untrusted address, so every hop listed above must be present or client
+      # IPs collapse into a single rate-limit bucket.
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-172.30.0.1,172.30.0.20,${CLOUDFLARE_IP:-172.30.0.30}}
+      - APP_ENV=${APP_ENV:-production}
+      - APP_DEBUG=${APP_DEBUG:-false}
+      - APP_URL=${APP_URL:-http://localhost:8000}
     ports:
       - "8000:8000"
+    networks:
+      jalikud:
+        ipv4_address: ${BACKEND_IP:-172.30.0.10}
     restart: unless-stopped
 
   frontend:
@@ -44,7 +74,36 @@ services:
       - backend
     ports:
       - "5173:80"
+    networks:
+      jalikud:
+        ipv4_address: ${FRONTEND_IP:-172.30.0.20}
     restart: unless-stopped
+
+# Exposes the Laravel API directly at its Cloudflare hostname. This bypasses
+  # the nginx container entirely, which is why its IP (not nginx's) also has to
+  # appear in TRUSTED_PROXIES above. Set CLOUDFLARE_TUNNEL_TOKEN in the root
+  # .env; ingress routing (hostname -> http://backend:8000) is configured in the
+  # Cloudflare dashboard, not here.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: jalikud-cloudflared
+    depends_on:
+      - backend
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in the root .env}
+    networks:
+      jalikud:
+        ipv4_address: ${CLOUDFLARE_IP:-172.30.0.30}
+    restart: unless-stopped
+
+networks:
+  jalikud:
+    driver: bridge
+    ipam:
+      config:
+        # Fixed subnet so the nginx container keeps a stable address, which is
+        # what TRUSTED_PROXIES must point at (a CIDR covering the whole subnet
+        # would also trust the clients and collapse every rate-limit bucket).
+        - subnet: ${SUBNET:-172.30.0.0/24}
 
 volumes:
   pgdata:

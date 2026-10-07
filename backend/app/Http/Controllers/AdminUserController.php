@@ -55,10 +55,18 @@ class AdminUserController extends Controller
         $data = $request->validated();
 
         $user = User::create([
-            ...$data,
+            'name' => $data['name'],
+            'email' => $data['email'],
             'phone' => $data['phone'] ?? null,
             'password' => $data['password'],
         ]);
+
+        // Assign the role explicitly rather than spreading it into create():
+        // 'role' is not mass-assignable, which keeps the public registration
+        // endpoint from ever accepting one. StoreUserRequest still validates the
+        // role against the enum; this assignment is what enforces it.
+        $user->role = $data['role'] ?? User::ROLE_CUSTOMER;
+        $user->save();
 
         return response()->json([
             'message' => 'User created.',
@@ -101,11 +109,15 @@ class AdminUserController extends Controller
             $update['password'] = $data['password'];
         }
 
-        if (array_key_exists('role', $data)) {
-            $update['role'] = $data['role'];
-        }
-
         $user->update($update);
+
+        // 'role' is not mass-assignable, so it is applied explicitly. Setting it
+        // separately also keeps the self-demotion guard above honest: that check
+        // only fires when a role was actually submitted.
+        if (array_key_exists('role', $data)) {
+            $user->role = $data['role'];
+            $user->save();
+        }
 
         return response()->json([
             'message' => 'User updated.',

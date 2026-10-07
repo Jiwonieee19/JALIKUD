@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -10,20 +10,30 @@ import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Textarea from '../components/ui/Textarea'
 import Tabs from '../components/ui/Tabs'
-import { formatDate, mockCoupons, peso } from '../mock'
+import { formatDate, peso } from '../mock'
+import api, { fieldError } from '../services/api'
+import { unwrapList } from '../services/lists'
 import type { Coupon } from '../types'
 
 /**
- * MOCK-DATA PAGE — stands in for:
- *   GET|POST       /api/admin/coupons
- *   PUT|PATCH      /api/admin/coupons/{coupon}
- *   DELETE         /api/admin/coupons/{coupon}
+ * Talks to the real API:
+ *   GET    /api/admin/coupons   ?active=true&per_page=
+ *   POST   /api/admin/coupons
+ *   PUT    /api/admin/coupons/{coupon}
+ *   DELETE /api/admin/coupons/{coupon}
  *
- * TODO(next-dev): replace mock imports with api calls, e.g.
- *   const { data } = await api.get('/admin/coupons')
- *   await api.post('/admin/coupons', payload)
+ * Auth: admin token required (EnsureAdmin middleware). A customer or staff token
+ * gets a 403 with "Forbidden. Administrator access required." which surfaces in
+ * the page-level error banner rather than as an empty table.
  *
- * Auth: admin token required (EnsureAdmin middleware).
+ * The list endpoint returns a raw LengthAwarePaginator, so its rows arrive at
+ * `data.data` until backend ticket Task 1 normalises the envelope; unwrapList()
+ * reads either shape. See services/lists.ts.
+ *
+ * KNOWN GAP: the endpoint only understands `active`, not `search`, so the search
+ * box filters the fetched page in memory rather than on the server. That is
+ * deliberate rather than faked — once ticket Task 2 adds the param, move the
+ * term into the query string and drop the local filter.
  *
  * Coupon money fields (value / min_order_amount / max_discount_amount) are
  * numeric(12,2) on the backend, so they arrive as strings.
@@ -60,22 +70,131 @@ export default function AdminCouponsPage() {
     usage_limit_per_user: '1',
   })
   const [toast, setToast] = useState<string | null>(null)
+  const [coupons, setCoupons] = useState<Coupon[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
+  /**
+   * Fetched once at the API's 100-row cap so the active/inactive tab counts and
+   * the client-side search box cover the whole set. Once ticket Task 2 adds
+   * `search`, this becomes a server-side query with a real paginator.
+   */
+  const refresh = useCallback(async () => {
+    try {
+      const response = await api.get('/admin/coupons', { params: { per_page: 100 } })
+      setCoupons(unwrapList<Coupon>(response.data).data)
+      setLoadError('')
+    } catch (err) {
+      const errors = fieldError(err)
+      setLoadError(errors.form ?? 'Could not load coupons.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
-    return mockCoupons.filter((coupon) => {
+    return coupons.filter((coupon) => {
       const matchesFilter =
         filter === 'all' || (filter === 'active' ? coupon.is_active : !coupon.is_active)
       const matchesSearch = term.length === 0 || coupon.code.toLowerCase().includes(term)
       return matchesFilter && matchesSearch
     })
-  }, [filter, search])
+  }, [coupons, filter, search])
 
-  const activeCount = mockCoupons.filter((coupon) => coupon.is_active).length
+  const activeCount = coupons.filter((coupon) => coupon.is_active).length
 
   function flash(message: string) {
     setToast(message)
     window.setTimeout(() => setToast(null), 2600)
+  }
+
+  /**
+   * POST when creating, PUT /{id} when editing.
+   *
+   * CouponController validates `code` as unique, `expires_at` as `after:starts_at`,
+   * and both usage limits as min:1. Numeric fields are sent as null when blank
+   * rather than '', since the columns are numeric and '' would 422.
+   */
+  async function saveCoupon() {
+    setSaving(true)
+    setFormErrors({})
+
+    const code = draft.code.trim().toUpperCase()
+
+    const payload = {
+      code,
+      type: draft.type,
+      value: draft.value,
+      min_order_amount: draft.min_order_amount === '' ? null : draft.min_order_amount,
+      max_discount_amount: draft.max_discount_amount === '' ? null : draft.max_discount_amount,
+      usage_limit: draft.usage_limit === '' ? null : Number(draft.usage_limit),
+      usage_limit_per_user: draft.usage_limit_per_user === '' ? null : Number(draft.usage_limit_per_user),
+    }
+
+    try {
+      if (editing) {
+        await api.put(`/admin/coupons/${editing.id}`, payload)
+      } else {
+        await api.post('/admin/coupons', payload)
+      }
+
+      await refresh()
+      setCreating(false)
+      setEditing(null)
+      flash(editing ? `${payload.code} updated` : `${payload.code} created`)
+    } catch (err) {
+      const errors = fieldError(err)
+      setFormErrors(errors)
+      flash(errors.form ?? Object.values(errors)[0] ?? 'Could not save the coupon.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /** DELETE /api/admin/coupons/{id}. */
+  async function deleteCoupon(coupon: Coupon) {
+    if (!window.confirm(`Delete coupon ${coupon.code}? This cannot be undone.`)) return
+
+    try {
+      await api.delete(`/admin/coupons/${coupon.id}`)
+      await refresh()
+      flash(`${coupon.code} deleted`)
+    } catch (err) {
+      const errors = fieldError(err)
+      flash(errors.form ?? Object.values(errors)[0] ?? 'Could not delete the coupon.')
+    }
+  }
+
+  /** PUT /api/admin/coupons/{id} { is_active } — the activate/pause toggle. */
+  async function toggleActive(coupon: Coupon) {
+    const next = !coupon.is_active
+
+    setCoupons((current) =>
+      current.map((candidate) =>
+        candidate.id === coupon.id ? { ...candidate, is_active: next } : candidate,
+      ),
+    )
+
+    try {
+      await api.put(`/admin/coupons/${coupon.id}`, { is_active: next })
+      flash(`${coupon.code} ${next ? 'activated' : 'paused'}`)
+    } catch (err) {
+      // Roll the optimistic flip back so the tabs never disagree with the API.
+      setCoupons((current) =>
+        current.map((candidate) =>
+          candidate.id === coupon.id ? { ...candidate, is_active: coupon.is_active } : candidate,
+        ),
+      )
+      const errors = fieldError(err)
+      flash(errors.form ?? Object.values(errors)[0] ?? 'Could not update the coupon.')
+    }
   }
 
   function openCreate() {
@@ -112,19 +231,25 @@ export default function AdminCouponsPage() {
             Coupons &amp; deals
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {activeCount} active of {mockCoupons.length} total
+            {activeCount} active of {coupons.length} total
           </p>
         </div>
         <Button onClick={openCreate}>New coupon</Button>
       </header>
 
+      {loadError && (
+        <p className="rounded-lg bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">
+          {loadError}
+        </p>
+      )}
+
       <Tabs
         value={filter}
         onChange={setFilter}
         options={[
-          { value: 'all', label: 'All', count: mockCoupons.length },
+          { value: 'all', label: 'All', count: coupons.length },
           { value: 'active', label: 'Active', count: activeCount },
-          { value: 'inactive', label: 'Inactive', count: mockCoupons.length - activeCount },
+          { value: 'inactive', label: 'Inactive', count: coupons.length - activeCount },
         ]}
       />
 
@@ -140,12 +265,14 @@ export default function AdminCouponsPage() {
           />
         </div>
 
-        {rows.length === 0 ? (
+        {rows.length === 0 && !loading && !loadError ? (
           <EmptyState
             title="No coupons found"
             description="Create one to start running a promotion."
             action={<Button onClick={openCreate}>New coupon</Button>}
           />
+        ) : rows.length === 0 ? (
+          <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">Loading…</p>
         ) : (
           <Table
             rows={rows}
@@ -230,12 +357,19 @@ export default function AdminCouponsPage() {
                     <Button
                       variant="ghost"
                       className="px-2.5 py-1 text-xs"
-                      onClick={() => flash(`${coupon.code} ${coupon.is_active ? 'paused' : 'activated'}`)}
+                      onClick={() => void toggleActive(coupon)}
                     >
                       {coupon.is_active ? 'Pause' : 'Activate'}
                     </Button>
                     <Button variant="ghost" className="px-2.5 py-1 text-xs" onClick={() => openEdit(coupon)}>
                       Edit
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="px-2.5 py-1 text-xs text-red-600 hover:text-red-700 dark:text-red-400"
+                      onClick={() => void deleteCoupon(coupon)}
+                    >
+                      Delete
                     </Button>
                   </div>
                 ),
@@ -264,14 +398,8 @@ export default function AdminCouponsPage() {
             >
               Cancel
             </Button>
-            <Button
-              onClick={() => {
-                flash(editing ? `${editing.code} updated` : `${draft.code || 'Coupon'} created`)
-                setCreating(false)
-                setEditing(null)
-              }}
-            >
-              {editing ? 'Save changes' : 'Create coupon'}
+            <Button onClick={() => void saveCoupon()} disabled={saving}>
+              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create coupon'}
             </Button>
           </>
         }
@@ -286,8 +414,22 @@ export default function AdminCouponsPage() {
               value={draft.code}
               onChange={(event) => setDraft({ ...draft, code: event.target.value.toUpperCase() })}
               placeholder="JALI50"
-              className="font-bold tracking-wider"
+              required
+              maxLength={50}
+              aria-invalid={Boolean(formErrors.code)}
+              className={`font-bold tracking-wider${
+                formErrors.code ? ' border-red-500 dark:border-red-500' : ''
+              }`}
             />
+            <p
+              className={`mt-1 text-xs ${
+                formErrors.code
+                  ? 'font-semibold text-red-600 dark:text-red-400'
+                  : 'text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {formErrors.code ?? 'Unique, up to 50 characters. Customers type this at checkout.'}
+            </p>
           </div>
           <div>
             <Label htmlFor="cp-type" className="mb-1.5">

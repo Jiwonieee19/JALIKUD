@@ -84,10 +84,25 @@ jobs:
 
       - name: Pull and restart stack
         shell: pwsh
+        env:
+          # Forwarded from the runner's environment / repo secrets so the
+          # cloudflared service can be recreated with its tunnel token.
+          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
         run: |
           docker compose pull backend frontend
           docker compose up -d --no-build backend frontend
           docker image prune -f
+
+      - name: Restart Cloudflare tunnel
+        shell: pwsh
+        env:
+          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: |
+          if (-not $env:CLOUDFLARE_TUNNEL_TOKEN) {
+            Write-Host "CLOUDFLARE_TUNNEL_TOKEN secret not set; skipping tunnel."
+            exit 0
+          }
+          docker compose up -d cloudflared
 
       - name: Log out of GHCR
         if: always()

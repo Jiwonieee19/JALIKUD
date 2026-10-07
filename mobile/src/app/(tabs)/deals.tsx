@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
+import { useCustomerOrder } from '@/context/customer-order-context';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -73,10 +74,36 @@ const DEALS: Deal[] = [
 ];
 
 export default function DealsScreen() {
-  const [added, setAdded] = useState<Set<string>>(new Set());
+  const router = useRouter();
+  const { addToCart, quantityInCart } = useCustomerOrder();
 
   const handleAddToCart = (deal: Deal) => {
-    setAdded((prev) => new Set(prev).add(deal.id));
+    Alert.alert(
+      'Add Deal to Cart',
+      `${deal.title}\n\nAdd this deal to your cart for ₱${deal.price.toLocaleString('en-PH')}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Add to Cart',
+          onPress: () => {
+            addToCart({
+              id: `deal-${deal.id}`,
+              name: deal.title,
+              unitPrice: deal.price,
+              emoji: deal.emoji,
+              variant: `Deal · ${deal.includes.join(' · ')}`,
+              source: 'deal',
+              maxQuantity: 1,
+            });
+            router.replace('/(tabs)/cart');
+            setTimeout(
+              () => Alert.alert('Deal Added', `${deal.title} was added to your cart.`),
+              250,
+            );
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -102,7 +129,7 @@ export default function DealsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
         {DEALS.map((deal) => {
-          const isAdded = added.has(deal.id);
+          const isAdded = quantityInCart(`deal-${deal.id}`) > 0;
           return (
             <View key={deal.id} style={styles.card}>
               {/* Image area with badges + overlaid title */}

@@ -1,16 +1,16 @@
-import { useEffect, useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import MapView, { Marker, Polyline } from 'react-native-maps';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import DeliverySchematicMap from '@/components/delivery-schematic-map';
 
 import { BottomTabInset } from '@/constants/theme';
 import { useDeliveryDemo, type Delivery } from '@/context/delivery-demo-context';
@@ -20,8 +20,6 @@ const BG = '#F4F4F6';
 const TEXT = '#1C1C1E';
 const GRAY = '#74747C';
 const GREEN = '#16A34A';
-
-const STORE_NAME = 'JALIKUD · SM Lanang Premier';
 
 type LatLng = { latitude: number; longitude: number };
 
@@ -69,8 +67,6 @@ function Stepper({ status }: { status: Delivery['status'] }) {
 /** Full-screen map modal: JALIKUD store → customer's house, with simulated rider movement. */
 function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: () => void }) {
   const { completeDelivery } = useDeliveryDemo();
-  const mapRef = useRef<MapView>(null);
-  const markerRef = useRef<ComponentRef<typeof Marker>>(null);
   const [route] = useState<LatLng[]>(() => buildRoute(delivery.store, delivery.destination));
   const [progress, setProgress] = useState(delivery.status === 'picked_up' ? 0.35 : 0.1);
   const [moving, setMoving] = useState(false);
@@ -85,50 +81,16 @@ function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: 
 
   const position = route[Math.floor(progress * (route.length - 1))];
 
-  useEffect(() => {
-    if (moving && markerRef.current && Platform.OS === 'android') {
-      markerRef.current.animateMarkerToCoordinate(position, 850);
-    }
-    if (moving && mapRef.current) {
-      mapRef.current.animateCamera({ center: position, zoom: 13 }, { duration: 800 });
-    }
-  }, [position, moving]);
-
-  const fitToRoute = () => {
-    mapRef.current?.fitToCoordinates([delivery.store, delivery.destination], {
-      edgePadding: { top: 130, right: 60, bottom: 320, left: 60 },
-      animated: true,
-    });
-  };
-
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.mapModal}>
-        <MapView
-          ref={mapRef}
-          style={StyleSheet.absoluteFill}
-          initialRegion={{
-            latitude: (delivery.store.latitude + delivery.destination.latitude) / 2,
-            longitude: (delivery.store.longitude + delivery.destination.longitude) / 2,
-            latitudeDelta: Math.abs(delivery.store.latitude - delivery.destination.latitude) * 2.4 + 0.05,
-            longitudeDelta: Math.abs(delivery.store.longitude - delivery.destination.longitude) * 2.4 + 0.05,
-          }}
-          onMapReady={fitToRoute}>
-          <Polyline coordinates={route} strokeColor={RED} strokeWidth={4} />
-          <Marker coordinate={delivery.store} title="JALIKUD" description={STORE_NAME} pinColor={RED} />
-          <Marker coordinate={delivery.destination} title={delivery.destination.destinationName} description={delivery.address}>
-            <View style={styles.houseMarker}>
-              <Text style={styles.houseMarkerIcon}>🏠</Text>
-            </View>
-          </Marker>
-          {delivery.status === 'picked_up' && (
-            <Marker ref={markerRef} coordinate={position} title="Rider" description={STORE_NAME}>
-              <View style={styles.riderMarker}>
-                <Text style={styles.riderMarkerIcon}>🛵</Text>
-              </View>
-            </Marker>
-          )}
-        </MapView>
+        <DeliverySchematicMap
+          route={route}
+          rider={delivery.status === 'picked_up' ? position : null}
+          showRider={delivery.status === 'picked_up'}
+          progress={progress}
+          customerName={delivery.customer}
+        />
 
         <SafeAreaView edges={['top']} style={styles.mapHeaderSafe}>
           <View style={styles.mapHeader}>
@@ -186,8 +148,9 @@ function DeliveryMapModal({ delivery, onClose }: { delivery: Delivery; onClose: 
 }
 
 export default function RiderDeliveriesScreen() {
-  const { riders, deliveries, pickupDelivery } = useDeliveryDemo();
+  const { riders, deliveries, pickupDelivery, setRiderAvailability } = useDeliveryDemo();
   const rider = riders[0];
+  const onDelivery = rider.status === 'on_delivery';
   const [showMap, setShowMap] = useState(false);
   const [moving, setMoving] = useState(false);
 
@@ -221,6 +184,70 @@ export default function RiderDeliveriesScreen() {
       </SafeAreaView>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.availabilityCard}>
+          <View style={styles.availabilityHeader}>
+            <View>
+              <Text style={styles.availabilityEyebrow}>AVAILABILITY</Text>
+              <Text style={styles.availabilityTitle}>Choose your duty status</Text>
+            </View>
+            <View
+              style={[
+                styles.currentStatus,
+                rider.status === 'available' && styles.currentStatusOnDuty,
+                onDelivery && styles.currentStatusOnDelivery,
+              ]}>
+              <Text style={styles.currentStatusText}>
+                {onDelivery ? 'On Delivery' : rider.status === 'available' ? 'On Duty' : 'Unavailable'}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.availabilityHint}>
+            {onDelivery
+              ? 'Finish your active delivery before changing availability.'
+              : 'Only On Duty riders can receive delivery assignments.'}
+          </Text>
+          <View style={styles.availabilityActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Set rider status to On Duty"
+              disabled={onDelivery}
+              onPress={() => setRiderAvailability(rider.id, 'available')}
+              style={({ pressed }) => [
+                styles.availabilityButton,
+                rider.status === 'available' && styles.onDutyButton,
+                onDelivery && styles.availabilityButtonDisabled,
+                pressed && styles.pressed,
+              ]}>
+              <Text
+                style={[
+                  styles.availabilityButtonText,
+                  rider.status === 'available' && styles.availabilityButtonTextActive,
+                ]}>
+                On Duty
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Set rider status to Unavailable"
+              disabled={onDelivery}
+              onPress={() => setRiderAvailability(rider.id, 'offline')}
+              style={({ pressed }) => [
+                styles.availabilityButton,
+                rider.status === 'offline' && styles.unavailableButton,
+                onDelivery && styles.availabilityButtonDisabled,
+                pressed && styles.pressed,
+              ]}>
+              <Text
+                style={[
+                  styles.availabilityButtonText,
+                  rider.status === 'offline' && styles.availabilityButtonTextActive,
+                ]}>
+                Unavailable
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
         {active ? (
           <View style={styles.card}>
             <View style={styles.orderHeader}>
@@ -320,6 +347,22 @@ const styles = StyleSheet.create({
   headerBadgeText: { color: '#FFFFFF', fontSize: 18, fontWeight: '900' },
   headerBadgeLabel: { color: 'rgba(255,255,255,0.78)', fontSize: 9, fontWeight: '700' },
   content: { padding: 14, paddingBottom: BottomTabInset + 24 },
+  availabilityCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, marginBottom: 12 },
+  availabilityHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
+  availabilityEyebrow: { color: GRAY, fontSize: 9, fontWeight: '800', letterSpacing: 0.6 },
+  availabilityTitle: { color: TEXT, fontSize: 15, fontWeight: '900', marginTop: 3 },
+  currentStatus: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, backgroundColor: '#F3F4F6' },
+  currentStatusOnDuty: { backgroundColor: '#DCFCE7' },
+  currentStatusOnDelivery: { backgroundColor: '#FEF3C7' },
+  currentStatusText: { color: TEXT, fontSize: 9, fontWeight: '800' },
+  availabilityHint: { color: GRAY, fontSize: 11, lineHeight: 16, marginTop: 8 },
+  availabilityActions: { flexDirection: 'row', gap: 9, marginTop: 12 },
+  availabilityButton: { flex: 1, alignItems: 'center', paddingVertical: 12, borderRadius: 11, borderWidth: 1, borderColor: '#D8D8DE', backgroundColor: '#F8F8FA' },
+  onDutyButton: { borderColor: GREEN, backgroundColor: GREEN },
+  unavailableButton: { borderColor: '#6B7280', backgroundColor: '#6B7280' },
+  availabilityButtonDisabled: { opacity: 0.45 },
+  availabilityButtonText: { color: TEXT, fontSize: 12, fontWeight: '800' },
+  availabilityButtonTextActive: { color: '#FFFFFF' },
   card: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 15 },
   orderHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
   orderNumber: { color: TEXT, fontSize: 17, fontWeight: '900' },
@@ -359,7 +402,7 @@ const styles = StyleSheet.create({
   historyCopy: { flex: 1 },
   historyOrder: { color: TEXT, fontSize: 12, fontWeight: '800' },
   historyMeta: { color: GRAY, fontSize: 10, marginTop: 2 },
-  mapModal: { flex: 1, backgroundColor: '#000000' },
+  mapModal: { flex: 1, backgroundColor: '#E5E7EB', overflow: 'hidden' },
   mapHeaderSafe: { position: 'absolute', top: 0, left: 0, right: 0 },
   mapHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginHorizontal: 14, marginTop: 8, padding: 11, borderRadius: 14, backgroundColor: '#FFFFFF', elevation: 4, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
   mapBackButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#F0F0F3', alignItems: 'center', justifyContent: 'center' },

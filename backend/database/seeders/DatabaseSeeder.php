@@ -15,6 +15,10 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $this->call([
+            UserSeeder::class,
+        ]);
+
         // Seed a default store setting if none exists
         if (\App\Models\StoreSetting::count() === 0) {
             \App\Models\StoreSetting::create([

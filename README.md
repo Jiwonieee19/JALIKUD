@@ -2,7 +2,7 @@
 
 A full-stack, mobile-first financial platform built to **sustain economical and financial growth** by helping people and businesses structure, track, and grow their money. JALIKUD is a monorepo containing a Laravel REST API, a React web client, an Expo (React Native) mobile app, and a shared Postman collection for testing the API.
 
-> **Status:** Early-stage scaffolding. Core authentication (register / login / profile / password) and basic **admin user management** are implemented end-to-end. The dashboard is currently a placeholder and the mobile app is a fresh Expo starter.
+> **Status:** Core authentication (register / login / profile / password) and **admin user management** are implemented end-to-end, with the API published publicly through a Cloudflare Tunnel and the web SPA through ngrok. The web dashboard currently renders **mock data** (`frontend/src/mock/`), and the mobile app is a standalone Expo prototype backed by in-memory demo data. See [Exposing the Stack via Tunnels](#exposing-the-stack-via-tunnels).
 
 ---
 
@@ -20,6 +20,7 @@ A full-stack, mobile-first financial platform built to **sustain economical and 
 - [Authentication & Roles](#authentication--roles)
 - [Testing with Postman](#testing-with-postman)
 - [CI/CD & Deployment](#cicd--deployment)
+- [Exposing the Stack via Tunnels](#exposing-the-stack-via-tunnels)
 - [Environment Variables](#environment-variables)
 - [Useful Commands](#useful-commands)
 - [Troubleshooting](#troubleshooting)
@@ -79,20 +80,29 @@ JALIKUD/
 
 ## Architecture
 
-The system is a classic **client ? API ? database** split. The web SPA and the mobile app both talk to the same Laravel JSON API (though the mobile app is only scaffolded at this stage). In Docker, the frontend is served by **Nginx**, which also reverses proxies all `/api/*` traffic to the Laravel container so the browser only ever talks to one origin.
+The system is a classic **client ? API ? database** split. The web SPA and the mobile app both talk to the same Laravel JSON API. In Docker, the frontend is served by **Nginx**, which also reverses proxies all `/api/*` traffic to the Laravel container so the browser only ever talks to one origin. The mobile app has no proxy in front of it and therefore must call the API by absolute URL.
 
 ```mermaid
 graph LR
-    subgraph Browser/Client
-        FE[React Web SPA] -->|/api/* over proxy| NG
-        M[Expo Mobile App] -.->|future| API
+    subgraph Clients
+        FE[React Web SPA] -->|relative /api over proxy| NG
+        M[Expo Mobile App] -->|absolute URL, no proxy| API
+    end
+
+    subgraph Tunnels
+        CF[Cloudflare Tunnel<br/>cloudflared]
     end
 
     subgraph Docker
         NG[Nginx :80 -> host 5173] --> API
+        CF -->|direct, bypasses nginx| API
         API[Laravel API<br/>php artisan serve :8000] --> DB[(PostgreSQL 17<br/>:5432)]
     end
+
+    FE -.->|ngrok, host| NG
 ```
+
+Note that the Cloudflare Tunnel dials the backend **directly**, so it never traverses nginx. That is why `TRUSTED_PROXIES` has to cover both hops separately - see [Exposing the Stack via Tunnels](#exposing-the-stack-via-tunnels).
 
 ### Request flow (web)
 
@@ -108,9 +118,23 @@ graph LR
 
 - **Sanctum tokens** � `POST /login` / `POST /register` return a `plainTextToken`. Send it as `Authorization: Bearer <token>`.
 - **Token expiry** � Sanctum tokens expire after **7 days** by default (`SANCTUM_TOKEN_EXPIRATION`, see `config/sanctum.php`).
-- **Rate limiting** � `/login` and `/register` are capped at **5 requests per minute** (`throttle:5,1`) to slow brute-force attempts.
 - **Role guard** � `/api/admin/*` returns `403` unless the authenticated user has `role = admin`.
 - **Self-protection** � an admin cannot demote or delete their own account.
+- **Proxy trust** � `TRUSTED_PROXIES` lists only the known reverse proxies. An untrusted peer's `X-Forwarded-For` is ignored, so a client cannot spoof its IP to mint a fresh rate-limit bucket.
+
+### Rate limiting
+
+Every `api/*` route carries the `api` limiter, plus stricter named limiters on abuse-prone endpoints.
+
+| Limiter | Limit | Keyed by | Applies to |
+| ------- | ----- | -------- | ---------- |
+| `api` (global) | 60/min anonymous, 120/min authenticated | client IP / user ID | every `api/*` route |
+| `throttle:5,1` | 5/min | client IP | `POST /register`, `POST /login` |
+| `orders` | 10/min | user ID (or IP) | `POST /orders` |
+| `coupons` | 6/min | user ID (or IP) | `POST /cart/coupon` |
+| `password` | 5/min | user ID | `PUT /password` |
+
+> These buckets are keyed on `$request->ip()`, which is why `TRUSTED_PROXIES` must list every proxy hop. A missing entry does not disable rate limiting - it collapses *everyone* behind that hop into one bucket, so a single client can lock out all other users with `429`s.
 
 ---
 
@@ -132,13 +156,21 @@ You can run everything with **Docker alone** � PHP, Composer, and Node are onl
 
 ### Option A � Docker Compose (recommended)
 
-This spins up **three** services defined in `docker-compose.yml`:
+This spins up **four** services defined in `docker-compose.yml`:
 
-| Service   | Container name      | Exposed port | Purpose                          |
-| --------- | ------------------- | ------------ | -------------------------------- |
-| `postgres` | `jalikud-postgres` | `5432`       | Application database (volume `pgdata`) |
-| `backend` | `jalikud-api`     | `8000`       | Laravel API (auto-migrates on boot)   |
-| `frontend`| `jalikud-web`      | `5173`       | Nginx serving the React SPA       |
+| Service     | Container name        | Exposed port | Purpose                                                     |
+| ----------- | --------------------- | ------------ | ----------------------------------------------------------- |
+| `postgres`  | `jalikud-postgres`    | `5432`       | Application database (volume `pgdata`, health-checked)      |
+| `backend`   | `jalikud-api`         | `8000`       | Laravel API (auto-migrates on boot)                         |
+| `frontend`  | `jalikud-web`         | `5173`       | Nginx serving the React SPA and proxying `/api`             |
+| `cloudflared` | `jalikud-cloudflared` | *none*     | Cloudflare Tunnel connector; publishes the API. **Requires `CLOUDFLARE_TUNNEL_TOKEN`** |
+
+The tunnel container exposes no host port - it dials out to Cloudflare and reaches the backend over the internal `jalikud` network. Leave it out of a plain start if you are not using a tunnel:
+
+```bash
+docker compose up --build -d                       # includes cloudflared (needs the token)
+docker compose up --build -d postgres backend frontend   # local-only, no token needed
+```
 
 #### 1. Configure the environment
 
@@ -149,7 +181,7 @@ The compose file is driven by a **root `.env`** (not the one inside `backend/`).
 cp .env.example .env
 ```
 
-The two required variables are `POSTGRES_PASSWORD` and `APP_KEY`. Set them for real:
+The three required variables are `POSTGRES_PASSWORD`, `APP_KEY` and - when the tunnel is started - `CLOUDFLARE_TUNNEL_TOKEN`. Set them for real:
 
 ```bash
 # .env
@@ -157,6 +189,7 @@ POSTGRES_DB=jalikud
 POSTGRES_USER=jalikud
 POSTGRES_PASSWORD=supersecret
 APP_KEY=base64:PASTE-A-GENERATED-KEY-HERE
+CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoi...   # only if you run cloudflared
 ```
 
 Generate a valid `APP_KEY` (must start with `base64:`):
@@ -166,7 +199,7 @@ Generate a valid `APP_KEY` (must start with `base64:`):
 php -r "echo 'base64:'.base64_encode(random_bytes(32));"
 ```
 
-> If `POSTGRES_PASSWORD` or `APP_KEY` is missing, `docker compose up` will abort with `Set ... in the root .env`.
+> If `POSTGRES_PASSWORD` or `APP_KEY` is missing, `docker compose up` will abort with `Set ... in the root .env`. The same applies to `CLOUDFLARE_TUNNEL_TOKEN` when the `cloudflared` service is included - either provide it or omit that service from the `up` command.
 
 #### 2. Build & start
 
@@ -183,7 +216,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-You should see all three containers `Running` and `healthy`.
+You should see every container `Up`. Only `postgres` has a healthcheck and reports `(healthy)`; the others have no healthcheck defined, so `Up` alone is the signal.
 
 #### 4. Open the app
 
@@ -281,20 +314,33 @@ The database schema is managed by **Laravel migrations**:
 | `create_personal_access_tokens_table` | Sanctum API token storage |
 | `create_framework_tables` | Laravel cache / queue / session tables |
 
-### Database design documents
+### Database reference
 
-| Document | Content |
-| -------- | ------- |
-| [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTIONARY.md) | Complete data dictionary: every table, attribute, data type, length, PK/FK, nullability, purpose, keys/constraints, relationship map and normalization evidence |
-| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | Data model: Mermaid ERD, cardinality matrix, M—N resolution, normalization summary |
-| [`docs/DATA_MODEL.drawio`](docs/DATA_MODEL.drawio) | Editable diagram (draw.io): page 1 ERD with PK/FK and crow's-foot cardinality, page 2 normalization evidence |
-| [`DATABASE_SCHEMA.md`](DATABASE_SCHEMA.md) | Earlier design draft / ideas for not-yet-implemented features (branches, deals, rewards) |
+The authoritative schema description is the migration set itself in `backend/database/migrations`, plus the live models:
+
+```bash
+cd backend
+php artisan migrate:status     # applied / pending migrations
+php artisan db:show            # tables, sizes, indexes
+```
+
+- **[`backend/README.md`](backend/README.md)** - API route table, auth flow, and worked request examples.
+- **[`frontend/docs/API_WIRING.md`](frontend/docs/API_WIRING.md)** - the data contract between the Laravel serialisers and the clients, including which fields must stay in sync.
+
+> The standalone design documents (`DATA_DICTIONARY.md`, `DATA_MODEL.md`, `DATA_MODEL.drawio`, `DATABASE_SCHEMA.md`) were removed in commit `14dd219` and no longer exist. The migration table above is the source of truth - regenerate it with `php artisan migrate:status` rather than looking for an external document.
 
 ---
 
 ## API Reference
 
 All endpoints live under the `/api` prefix (an API prefix middleware is applied automatically by Laravel, and Nginx/Vite proxy this path to the backend). The backend responds with JSON (configured via `shouldRenderJsonWhen(...)` in `bootstrap/app.php`).
+
+### Response conventions
+
+- **Always JSON, never a redirect.** An unauthenticated call to a protected `api/*` route returns `401` with `{"message":"Unauthenticated."}` regardless of the `Accept` header. This app is API-only and defines no `login` route, so Laravel's default guest redirect target (`route('login')`) is overridden in `bootstrap/app.php` - without that, a `curl` or browser request with no `Accept: application/json` would throw and surface as a misleading `500`.
+- **Validation errors return `422`** with a top-level `message` plus a per-field `errors` object.
+- **Bad credentials return `422`**, not `401`, so clients can treat it like any other validation failure.
+- **CORS** is configured in `backend/config/cors.php` (`paths: api/*`, wildcard origins, `supports_credentials: false`). Wildcard origins are safe here because auth is a bearer token rather than a cookie; if you ever move to Sanctum's cookie-based stateful domains you must lock `allowed_origins` down **and** enable `supports_credentials`.
 
 ### Public endpoints
 
@@ -331,6 +377,38 @@ Both return:
 
 **Update profile body:** `{ "name": "...", "email": "..." }`
 **Change password body:** `{ "current_password": "...", "password": "...", "password_confirmation": "..." }`
+
+> **Role cannot be set here.** `role` is not mass-assignable on the `User` model, so
+> `POST /api/register` silently ignores a `role` key and always creates a **customer**.
+> Staff, rider, and admin accounts are created through `POST /api/admin/users`.
+> See [RoleEscalationTest.php](backend/tests/Feature/RoleEscalationTest.php).
+
+#### Addresses
+
+A customer's own delivery addresses. These routes are **required for delivery checkout**:
+`POST /api/orders` demands an `address_id` owned by the caller whenever `order_type` is
+`delivery`, so without them a customer who registered through the public API could only
+ever check out for **pickup**.
+
+| Method         | Path                       | Description                                |
+| -------------- | -------------------------- | ------------------------------------------ |
+| `GET`          | `/api/addresses`           | List own addresses (default first)         |
+| `POST`         | `/api/addresses`           | Create an address                          |
+| `PUT` / `PATCH` | `/api/addresses/{address}` | Update own address (PATCH-like, partial)   |
+| `DELETE`       | `/api/addresses/{address}` | Delete own address                         |
+
+**Create body:** `{ "label": "Home", "line1": "...", "line2": "...", "city": "...", "state": "...", "postal_code": "...", "country": "Philippines", "latitude": 14.6254, "longitude": 121.043, "is_default": false }`
+
+Only `line1` and `city` are required (and only on create). A few behaviours worth knowing:
+
+- The **first** address becomes the default automatically, so a checkout UI always has
+  something to pre-select.
+- Promoting an address **demotes** the previous default - a user never has two.
+- Deleting the default **promotes** the most recent survivor, so an account is never left
+  with no default.
+- `user_id` is never read from the request; ownership always comes from the token.
+- Addresses are private: another user's address id returns `422` and is left untouched.
+
 
 ### Admin endpoints (require a user with `role = admin`)
 
@@ -495,6 +573,122 @@ For the "deploy onto the host machine" flow, `deploy.ps1` logs into GHCR, pulls 
 
 ---
 
+## Exposing the Stack via Tunnels
+
+The stack can be published to the internet using **two different tunnels on purpose**:
+
+| What | Tunnel | Where it runs | Reaches |
+| ---- | ------ | ------------- | ------- |
+| **Laravel API** | Cloudflare Tunnel (`cloudflared`) | **Inside Docker** as the `cloudflared` service | `backend:8000` directly |
+| **React web app** | ngrok | **Outside Docker**, on the host | `localhost:5173` (nginx) |
+
+The reason for the split is that each tunnel only needs to front the service it actually serves. `cloudflared` dials the backend directly and never touches nginx; ngrok publishes the already-published frontend port, and nginx keeps proxying `/api` to the backend over the internal network. Because the SPA uses a relative Axios `baseURL` (`/api`, see `frontend/src/services/api.ts`), the browser keeps talking to a single origin and needs no CORS changes.
+
+```text
+internet --+-- ngrok (host)  --> localhost:5173 -> frontend:80 --+--> SPA
+           |                                                   +--> /api --+
+           +-- cloudflared --> backend:8000 -------------------------------+
+```
+
+### 1. Cloudflare Tunnel (the API, in Docker)
+
+**Step 1 - Create the tunnel.** Zero Trust -> **Networks** -> **Tunnels** (older UI: *Connectivity* -> *Tunnels*) -> **Create a tunnel** -> **Cloudflared** -> name it `jalikud-api` -> **Next**.
+
+**Step 2 - Grab the token (ignore the printed command).** Choose the **Docker** tab and copy the token out of the command Cloudflare shows:
+
+```bash
+docker run cloudflare/cloudtunnel:latest tunnel --no-autoupdate run --token eyJhIjoi...
+```
+
+Do **not** run that command. The `cloudflared` service in `docker-compose.yml` already runs the connector; the only thing needed from this page is the token. Put it in the root `.env`:
+
+```bash
+CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoi...
+```
+
+The connector then reports **Healthy** on the Tunnels list.
+
+**Step 3 - Add the published application route.** **Routes** tab (older UI: **Public Hostname**) -> **Add route** -> **Published application**:
+
+| Field | Value |
+| ----- | ----- |
+| Subdomain | `api` |
+| Domain | your domain |
+| Path | *(leave blank)* |
+| **Service URL** | **`http://backend:8000`** |
+
+> **The Service URL must be `http://backend:8000`, not `http://localhost:8000`.**
+> The dashboard suggests `localhost`, and that is the most common mistake here. `cloudflared`
+> runs *inside* the compose network, so `localhost` points at the cloudflared container itself:
+> the tunnel connects successfully and then returns `502` on every request. `backend` is
+> resolved through Docker's internal DNS.
+
+> **Leave Path blank.** Scoping the route to `/api` does not strip the prefix - Cloudflare
+> matches on the prefix but forwards the original path, so Laravel would receive
+> `/api/api/...`. Point the route at the service root and let paths pass through.
+
+> **Prerequisites.** The route needs a hostname Cloudflare manages as a nameserver zone, or
+> the Domain dropdown will not offer it. A multi-level subdomain (`api.dev.example.com`)
+> additionally requires an Advanced Certificate ordered for that hostname.
+
+**Step 4 - Start it and verify.**
+
+```bash
+docker compose up -d cloudflared
+docker compose logs -f cloudflared      # look for "Registered tunnel connection" (x4)
+curl https://api.yourdomain.com/api/menu?per_page=1
+```
+
+Then set the public origin so Laravel generates absolute URLs against the tunnel rather than
+localhost:
+
+```bash
+# root .env
+APP_URL=https://api.yourdomain.com
+```
+
+```bash
+docker compose up -d backend
+```
+
+> Requires a domain on your Cloudflare account. The free `trycloudflare.com` quick tunnels
+> cannot be pinned via token and get a new hostname on every restart.
+
+### 2. ngrok (the web app, outside Docker)
+
+```bash
+ngrok config add-authtoken <your token>   # once
+ngrok http 5173
+```
+
+This forwards to the frontend container's published port, so the SPA and its `/api` calls are served from one ngrok URL. On the free tier the URL changes each session and browsers show an interstitial notice on first visit.
+
+### 3. Trusted proxies (`TRUSTED_PROXIES`)
+
+**This is the setting to watch when adding or changing tunnels.** Rate-limit buckets are keyed on `$request->ip()`, so any hop in front of Laravel that is not listed makes every client behind it share **one** bucket, and a single caller can then `429` everyone else.
+
+Three hops can terminate in front of the API, so all three must be trusted:
+
+| Entry | Hop |
+| ----- | --- |
+| `172.30.0.1` | Docker bridge gateway - reached only because ngrok runs on the host and hits the published port. Docker's port publishing makes nginx see the gateway as `$remote_addr`, and nginx appends it to `X-Forwarded-For`. |
+| `172.30.0.20` | The nginx (`frontend`) container that proxies `/api`. |
+| `172.30.0.30` | The `cloudflared` container, which bypasses nginx entirely. |
+
+Laravel walks `X-Forwarded-For` right-to-left and stops at the first address it does **not** trust. Trust a specific address, never the whole `172.30.0.0/24` subnet - trusting the subnet re-trusts the clients themselves and collapses the buckets again.
+
+If you change `CLOUDFLARE_IP` (or `BACKEND_IP` / `FRONTEND_IP`), update `TRUSTED_PROXIES` to match. Regression coverage for all three hops lives in `backend/tests/Feature/TrustedProxyTest.php`.
+
+### 4. Production mode
+
+The Compose defaults are `APP_ENV=production` and `APP_DEBUG=false`, because a tunnel makes the API reachable from the internet and debug mode would leak stack traces and `.env` values. For local debugging set `APP_ENV=local` and `APP_DEBUG=true` in the root `.env`. Set `APP_URL` to the tunnel hostname so Laravel generates URLs against the right origin.
+
+### 5. Securing the exposed API
+
+Anyone can reach the API hostname once the tunnel is up. `POST /api/register` and `POST /api/login` are publicly reachable (throttled to 5/min), and `/api/admin/*` is protected only by a bearer token plus the `EnsureAdmin` middleware. Add a **Cloudflare Access** policy on the tunnel to require authentication in front of the API.
+
+---
+
 ## Environment Variables
 
 ### Root `.env` (used by Docker Compose)
@@ -506,6 +700,11 @@ For the "deploy onto the host machine" flow, `deploy.ps1` logs into GHCR, pulls 
 | `POSTGRES_PASSWORD` | **yes** | �         | Database password (**Compose aborts if empty**)     |
 | `APP_KEY`         | **yes**  | �         | Laravel app key, must be `base64:`-prefixed (**Compose aborts if empty**) |
 | `GHCR_TOKEN`      | no       | �         | Used by the deploy workflow for `docker login`      |
+| `CLOUDFLARE_TUNNEL_TOKEN` | with the tunnel | � | Cloudflare tunnel token (**Compose aborts if `cloudflared` is started and this is empty**) |
+| `CLOUDFLARE_IP`   | no       | `172.30.0.30` | Pinned IP of the `cloudflared` container. **Must be listed in `TRUSTED_PROXIES`**, or every remote API caller shares one rate-limit bucket |
+| `TRUSTED_PROXIES` | no       | `172.30.0.1,172.30.0.20,$CLOUDFLARE_IP` | Proxies trusted for `X-Forwarded-*`. Keep in sync with the pinned container IPs |
+| `APP_URL`         | no       | `http://localhost:8000` | Set to the tunnel hostname so Laravel generates absolute URLs against it |
+| `APP_ENV` / `APP_DEBUG` | no | `production` / `false` | Use `local` / `true` only for local debugging |
 
 ### Laravel `backend/.env` (used for non-Docker runs)
 
@@ -532,7 +731,9 @@ Standard Laravel variables, notably:
 | Logs for one service | `docker compose logs backend` (or `frontend`, `postgres`) |
 | Stop stack (keep data) | `docker compose down` |
 | Reset everything | `docker compose down -v` |
-| Backend tests | `cd backend && composer test` |
+| Backend tests | `cd backend && vendor/bin/phpunit` |
+| Run one test class | `cd backend && vendor/bin/phpunit --filter=TrustedProxyTest` |
+| Start / restart the tunnel | `docker compose up -d --force-recreate cloudflared` |
 | Backend formatter | `cd backend && vendor/bin/pint` |
 | Frontend lint | `cd frontend && npm run lint` |
 | Frontend typecheck+build | `cd frontend && npm run build` |
@@ -551,6 +752,10 @@ Standard Laravel variables, notably:
 | Backend logs show DB "Connection refused" | The API starts before Postgres is ready even with `depends_on`; check `docker compose logs backend` and restart once Postgres is healthy |
 | Frontend loads, API returns 502 | Backend not reachable; `docker compose logs backend` |
 | `429 Too Many Requests` on auth | Rate limiter (5/min). Wait a moment and retry |
+| `Compose up` fails with "Set CLOUDFLARE_TUNNEL_TOKEN ..." | Fill `CLOUDFLARE_TUNNEL_TOKEN` in the root `.env`, or drop `cloudflared` from the `up` command |
+| Tunnel hostname returns `502` | The route's **Service URL** is wrong. It must be `http://backend:8000` (the Compose service name), not `http://localhost:8000` - from inside the cloudflared container `localhost` is the tunnel container itself |
+| Tunnel returns `/api/api/...` or `404` | The published route has a **Path** set to `/api`. Cloudflare matches the prefix but does not strip it, so Laravel receives a doubled prefix. Leave Path blank |
+| Every user shares one rate-limit bucket | A proxy hop is missing from `TRUSTED_PROXIES`. All three (`172.30.0.1` gateway, `172.30.0.20` nginx, cloudflared's IP) must be listed, and `CLOUDFLARE_IP` must match the value in `TRUSTED_PROXIES` |
 | `403` on `/api/admin/*` | Account role is not `admin` � promote via psql/tinker (see [Authentication & Roles](#authentication--roles)) |
 | Port `8000`/`5173`/`5432` in use | Change the `ports:` mapping in `docker-compose.yml`, then re-run `docker compose up -d` |
 
@@ -558,19 +763,42 @@ Standard Laravel variables, notably:
 
 ## Roadmap / What's Next
 
-- [ ] Real financial domain models (accounts, transactions, budgets, reporting)
-- [ ] Populate the dashboard with real data and charts
-- [ ] Wire the Expo mobile app to the API (register/login + dashboard)
-- [ ] Add feature tests (Pest/PHPUnit) for auth + admin, e.g. 403 checks
+- [x] Add feature tests for auth + admin, and trusted-proxy regression coverage
+- [x] Address CRUD so **delivery** checkout is reachable for public-API customers
+- [x] Remove `role` from `User::$fillable` (was only safe by accident)
+- [ ] Put a **Cloudflare Access** policy in front of the public API hostname
+- [ ] Rider assignment (`PUT /api/admin/orders/{order}/rider`) + `GET /api/admin/riders`
+- [ ] Staff / rider role capabilities (queues) - `isRider()` and `isStaff()` are still unused
+- [ ] Variant-group admin CRUD, reviews, and payments endpoints (tables exist, no routes)
+- [ ] Wire the Expo mobile app to the live API (absolute base URL + `expo-secure-store` tokens)
+- [ ] Replace the web dashboard's `frontend/src/mock/` data with real API calls
 - [ ] Add automated tests to CI before pushing images
+- [ ] Real financial domain models (accounts, transactions, budgets, reporting)
 
 ---
 
 # JALIKUD Mobile
 
-Expo (React Native) app for JALIKUD — a role-based food-ordering prototype with **Customer**, **Staff**, and **Rider** experiences. It runs on **in-memory demo data**, so no backend is required to try it.
+Expo (React Native) app for JALIKUD — a role-based food-ordering prototype with **Customer**, **Staff**, and **Rider** experiences. It currently runs on **in-memory demo data**, so no backend is needed to try it as-is.
 
 > Expo SDK 57 · React Native 0.86 · expo-router
+
+## Connecting it to the API
+
+The app has **no network layer yet** — `mobile/src/services/` does not exist and there are no `fetch`/`axios` calls anywhere. If you wire it up, the following applies:
+
+- **Use an absolute base URL.** Unlike the web SPA (which uses a relative `/api` and relies on nginx), React Native has no proxy in front of it. Point it at the tunnel hostname, e.g. `https://api.yourdomain.com/api`, driven by an `EXPO_PUBLIC_API_URL` env var so the bundle is not tied to one environment:
+
+  ```bash
+  # mobile/.env
+  EXPO_PUBLIC_API_URL=https://api.yourdomain.com/api
+  ```
+
+- **No ATS exception is needed** when the API is behind `https://`. Reaching a plain-`http://` host from a device would otherwise require an App Transport Security exception in `app.json` and `usesCleartextTraffic` on Android.
+- **Store the token in `expo-secure-store`, not `AsyncStorage`.** The web client keeps its Sanctum token in `localStorage`, which React Native does not have; and a bearer token in plain AsyncStorage is readable by anything with filesystem access on a compromised device.
+- **Any network works.** A physical device reaches the API over the internet via the tunnel, so the "same Wi-Fi" requirement below no longer applies — the tunnel just has to be connected.
+- **Mind the rate limits.** `/login` and `/register` are capped at 5/min per IP, and because `TRUSTED_PROXIES` resolves your real client IP, device traffic buckets separately from your `localhost` calls.
+- Expo Go uses a native fetch stack and does **not** enforce CORS, so `backend/config/cors.php` is only relevant if you later add a web view.
 
 ## 1. Get Expo Go
 

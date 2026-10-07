@@ -122,16 +122,17 @@ export default function AdminOrdersPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Select
-            aria-label="Filter by fulfilment type"
-            value={typeFilter}
-            onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)}
-            className="w-36"
-          >
-            <option value="all">All types</option>
-            <option value="delivery">Delivery</option>
-            <option value="pickup">Pickup</option>
-          </Select>
+          <div className="w-36">
+            <Select
+              aria-label="Filter by fulfilment type"
+              value={typeFilter}
+              onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)}
+            >
+              <option value="all">All types</option>
+              <option value="delivery">Delivery</option>
+              <option value="pickup">Pickup</option>
+            </Select>
+          </div>
         </div>
       </header>
 

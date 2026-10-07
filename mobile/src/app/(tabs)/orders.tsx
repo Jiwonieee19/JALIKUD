@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
+import { useCustomerOrder, type CustomerOrderStatus } from '@/context/customer-order-context';
 
 const RED = '#DC2626';
 const BG = '#F4F4F6';
@@ -11,76 +12,23 @@ const CARD = '#FFFFFF';
 const TEXT_DARK = '#1C1C1E';
 const TEXT_GRAY = '#8E8E93';
 
-type OrderStatus = 'preparing' | 'out_for_delivery' | 'completed' | 'canceled';
 type OrderTab = 'active' | 'completed' | 'canceled';
 
-type Order = {
-  id: string;
-  orderNumber: string;
-  date: string;
-  status: OrderStatus;
-  items: string;
-  total: number;
-  deliveryType: 'delivery' | 'pickup';
-  pickupCode?: string;
-  cancelReason?: string;
-};
-
-const STATUS_LABELS: Record<OrderStatus, string> = {
+const STATUS_LABELS: Record<CustomerOrderStatus, string> = {
+  pending: 'Pending',
   preparing: 'Preparing',
   out_for_delivery: 'On the Way',
   completed: 'Delivered',
   canceled: 'Canceled',
 };
 
-const STATUS_COLORS: Record<OrderStatus, { bg: string; text: string }> = {
+const STATUS_COLORS: Record<CustomerOrderStatus, { bg: string; text: string }> = {
+  pending: { bg: '#FEF3C7', text: '#B45309' },
   preparing: { bg: '#FFEDD5', text: '#C2410C' },
   out_for_delivery: { bg: '#E0E7FF', text: '#4338CA' },
   completed: { bg: '#DCFCE7', text: '#15803D' },
   canceled: { bg: '#F0F0F3', text: TEXT_GRAY },
 };
-
-// Static orders for now — will be replaced by the backend API later.
-const ORDERS: Order[] = [
-  {
-    id: '1',
-    orderNumber: 'JAL-230001',
-    date: 'Aug 29, 12:47 PM',
-    status: 'preparing',
-    items: 'Chickenjoy 1pc ×2',
-    total: 327,
-    deliveryType: 'delivery',
-  },
-  {
-    id: '2',
-    orderNumber: 'JAL-229987',
-    date: 'Aug 27, 6:12 PM',
-    status: 'out_for_delivery',
-    items: 'Yumburger ×1 · Champ Burger ×2',
-    total: 487,
-    deliveryType: 'delivery',
-  },
-  {
-    id: '3',
-    orderNumber: 'JAL-229902',
-    date: 'Aug 25, 11:03 AM',
-    status: 'completed',
-    items: 'Jolly Spaghetti ×2 · Regular Fries ×1',
-    total: 269,
-    deliveryType: 'pickup',
-    pickupCode: 'A42',
-  },
-  {
-    id: '4',
-    orderNumber: 'JAL-229764',
-    date: 'Aug 22, 7:21 PM',
-    status: 'canceled',
-    items: 'Palabok Fiesta ×1',
-    total: 115,
-    deliveryType: 'delivery',
-    cancelReason: 'User requested cancellation',
-  },
-];
 
 function peso(value: number): string {
   return `₱${value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
@@ -88,13 +36,17 @@ function peso(value: number): string {
 
 // UI only — order actions (details, cancel, reorder) are not implemented yet.
 export default function OrdersScreen() {
+  const { orders } = useCustomerOrder();
   const [tab, setTab] = useState<OrderTab>('active');
 
-  const active = ORDERS.filter(
-    (order) => order.status === 'preparing' || order.status === 'out_for_delivery',
+  const active = orders.filter(
+    (order) =>
+      order.status === 'pending' ||
+      order.status === 'preparing' ||
+      order.status === 'out_for_delivery',
   );
-  const completed = ORDERS.filter((order) => order.status === 'completed');
-  const canceled = ORDERS.filter((order) => order.status === 'canceled');
+  const completed = orders.filter((order) => order.status === 'completed');
+  const canceled = orders.filter((order) => order.status === 'canceled');
   const shown = tab === 'active' ? active : tab === 'completed' ? completed : canceled;
 
   return (
@@ -158,13 +110,22 @@ export default function OrdersScreen() {
                 <Text style={styles.orderItems}>{order.items}</Text>
 
                 {/* Progress tracker for active orders */}
-                {(order.status === 'preparing' || order.status === 'out_for_delivery') && (
+                {(order.status === 'pending' ||
+                  order.status === 'preparing' ||
+                  order.status === 'out_for_delivery') && (
                   <View style={styles.progressWrap}>
                     <View style={styles.progressTrack}>
                       <View
                         style={[
                           styles.progressFill,
-                          { width: order.status === 'preparing' ? '33%' : '66%' },
+                           {
+                             width:
+                               order.status === 'pending'
+                                 ? '10%'
+                                 : order.status === 'preparing'
+                                   ? '33%'
+                                   : '66%',
+                           },
                         ]}
                       />
                     </View>
