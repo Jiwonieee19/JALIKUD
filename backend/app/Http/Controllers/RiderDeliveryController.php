@@ -8,6 +8,7 @@ use App\Models\RiderProfile;
 use App\Services\PointLedger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 /**
  * The authenticated rider's own delivery queue. Riders see only orders
@@ -98,5 +99,43 @@ class RiderDeliveryController extends Controller
         }
 
         return response()->json(['data' => $record->fresh()]);
+    }
+
+    /**
+     * GET /api/rider/profile - the authenticated rider's own profile.
+     */
+    public function showProfile(Request $request): JsonResponse
+    {
+        $profile = RiderProfile::query()
+            ->where('user_id', $request->user()->id)
+            ->first();
+
+        if ($profile === null) {
+            $profile = RiderProfile::create([
+                'user_id' => $request->user()->id,
+                'is_active' => false,
+            ]);
+        }
+
+        return response()->json(['data' => $profile]);
+    }
+
+    /**
+     * PUT /api/rider/profile - rider edits their own vehicle / plate / photo.
+     */
+    public function updateProfile(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'photo_url' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'vehicle_type' => ['sometimes', 'nullable', 'string', Rule::in(['motorcycle', 'bicycle', 'car'])],
+            'plate_number' => ['sometimes', 'nullable', 'string', 'max:20'],
+        ]);
+
+        $profile = RiderProfile::updateOrCreate(
+            ['user_id' => $request->user()->id],
+            $data
+        );
+
+        return response()->json(['data' => $profile]);
     }
 }

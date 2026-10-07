@@ -1,9 +1,10 @@
 # JALIKUD Backend (Laravel REST API)
 
 JALIKUD is a food-ordering platform. This Laravel 13 API powers the React web
-client — customers browse the catalog, build a cart, place delivery/pickup
-orders, and apply coupons; staff/admins manage catalog, coupons, settings,
-orders, and users.
+client and the Expo mobile app — customers browse the catalog, build a cart,
+place delivery/pickup orders, apply coupons, redeem loyalty rewards, and review
+completed orders; staff/admins run the order queue and manage the catalog,
+variants, coupons, settings, and users; riders work their own delivery queue.
 
 Base URL (local): `http://localhost:8000` — every endpoint below is prefixed
 with `/api`. So `POST /register` means `POST http://localhost:8000/api/register`.
@@ -14,13 +15,16 @@ with `/api`. So `POST /register` means `POST http://localhost:8000/api/register`
 - [4. Conventions](#4-conventions-read-this-first)
 - [5. Endpoint reference](#5-endpoint-reference)
   - [5.1 Auth](#51-auth-public--self)
-  - [5.2 Public catalog](#52-public-catalog--store-info-no-auth)
+  - [5.2 Public catalog & store info](#52-public-catalog--store-info-no-auth)
   - [5.3 Cart](#53-cart-authenticated)
   - [5.4 Orders](#54-orders-authenticated)
-  - [5.5 Admin users](#55-admin--users-admin-only)
-  - [5.6 Admin catalog](#56-admin--categories--menu-items-admin-only)
-  - [5.7 Admin coupons](#57-admin--coupons-admin-only)
-  - [5.8 Admin settings & orders](#58-admin--store-setting--order-management)
+  - [5.5 Reviews](#55-reviews-authenticated--public)
+  - [5.6 Rider](#56-rider-rider-only)
+  - [5.7 Admin users](#57-admin--users-admin-only)
+  - [5.8 Admin catalog](#58-admin--categories--menu-items--variants-admin-only)
+  - [5.9 Admin coupons](#59-admin--coupons-admin-only)
+  - [5.10 Admin orders & payments](#510-admin--orders--payments-staffadmin)
+  - [5.11 Admin store setting, stats & uploads](#511-admin--store-setting-stats--uploads-admin-only)
 - [6. Usage examples](#6-usage-examples-curl)
 - [7. Validation cheat sheet](#7-validation-rules-cheat-sheet)
 - [8. Known limitations](#8-known-limitations--not-yet-implemented)
@@ -32,7 +36,7 @@ with `/api`. So `POST /register` means `POST http://localhost:8000/api/register`
 | Framework | Laravel 13, PHP `^8.3` (developed on 8.4) |
 | Auth | Laravel Sanctum 4 bearer tokens, 7-day expiry (`config/sanctum.php`) |
 | Database | PostgreSQL 17 in Docker/prod; SQLite works for local dev & tests |
-| Routes file | `routes/api.php` — single source of truth (40 routes) |
+| Routes file | `routes/api.php` — single source of truth (77 routes) |
 | Tests | PHPUnit; `phpunit.xml` uses in-memory SQLite |
 
 Verify the route table any time with `php artisan route:list --path=api`.
@@ -52,9 +56,9 @@ Docker for the whole stack is in the **root** `README.md`; the backend container
 auto-migrates on boot. `php artisan migrate:fresh --seed` runs:
 
 - `UserSeeder` — five demo accounts: `admin@jalikud.test`, `staff@jalikud.test`,
-  `rider@jalikud.test`, `customer@jalikud.test` (with a default address) and
-  `customer2@jalikud.test`, all with password `Jalikud123` (override with
-  `SEED_USER_PASSWORD`).
+  `rider@jalikud.test` (with a `rider_profiles` row), `customer@jalikud.test`
+  (with a default address) and `customer2@jalikud.test`, all with password
+  `Jalikud123` (override with `SEED_USER_PASSWORD`).
 - One open `store_settings` row (`JALIKUD`, delivery + pickup, 08:00–22:00) if
   the table is empty.
 - `MenuSeeder` — seeds the real 4-category / 10-item catalog and purges rows the
@@ -78,40 +82,49 @@ UPDATE users SET role = 'admin' WHERE email = 'you@example.com';
 3. `POST /api/logout` revokes only the current token. Tokens live 7 days.
 
 **Rate limits** — register/login are throttled to 5 reqs/min per IP
-(`throttle:5,1`); exceeding returns `429`.
+(`throttle:5,1`); order placement (`throttle:orders`, 10/min), coupon apply
+(`throttle:coupons`, 6/min), and password change (`throttle:password`, 5/min)
+are also capped. Exceeding returns `429`.
 
 **Roles** — `users.role` is `customer | staff | admin | rider` (Postgres CHECK
-constraint + request validation).
+constraint + request validation). The role lives on the user row and is resolved
+server-side from the bearer token; tokens themselves carry no role/scope.
 
 | Role | Capabilities |
 |---|---|
-| `customer` (default) | Own profile, cart, orders |
-| `rider` | Same as customer today (no rider-only endpoints yet) |
-| `staff` | Same as customer; status-change code allows staff (but §8: route is admin-gated) |
-| `admin` | + user mgmt, catalog/coupon/setting CRUD, read all orders |
+| `customer` (default) | Own profile, addresses, cart, orders, reviews, loyalty (rewards/points) |
+| `rider` | Own delivery queue, profile and duty availability (`EnsureRider`) |
+| `staff` | Order queue: list orders, advance status, confirm payment, assign riders, toggle menu availability, list riders (`EnsureStaff` = staff **or** admin) |
+| `admin` | Everything above, plus user management, full catalog (categories/menu/variants), coupons, store settings, reviews moderation, stats, uploads (`EnsureAdmin`) |
 
-Admin routes sit behind `auth:sanctum` + `EnsureAdmin`; non-admins get
-`403 { "message": "Forbidden. Administrator access required." }`.
+Role middleware errors:
+
+- `EnsureAdmin` → `403 { "message": "Forbidden. Administrator access required." }`
+- `EnsureStaff` → `403 { "message": "Forbidden. Staff access required." }`
+- `EnsureRider` → `403 { "message": "Forbidden. Rider access required." }`
+
 - Errors: validation → `422 { message, errors: { field: […] } }`;
   unauthenticated → `401`; forbidden → `403 { message }`; missing model → `404`.
 - Pagination (every list): `?page=` (≥ 1), `?per_page=` (1–100, default 15;
   order lists default 10). Invalid values → `422`.
-- Money fields (`base_price`, `subtotal`, totals, coupon `value`, …) are
-  `decimal(10,2)` and serialize as **strings** (`"129.00"`) — parse accordingly.
+- Money fields (`base_price`, `subtotal`, totals, coupon `value`, `price_delta`,
+  …) are `decimal(10,2)` and serialize as **strings** (`"129.00"`) — parse
+  accordingly.
 - Route-model binding (`{category}`, `{menuItem}`, `{coupon}`, `{user}`,
-  `{order}`, `{cart}`, `{cartItem}`) binds by id. Mismatched cart↔item pairs on
-  cart-item update/delete return `403`, not `404`.
+  `{order}`, `{cart}`, `{cartItem}`, `{variantGroup}`, `{variantOption}`,
+  `{review}`, `{payment}`) binds by id. Mismatched cart↔item pairs on cart-item
+  update/delete return `403`, not `404`.
 - Timestamps are ISO-8601 with timezone.
-
 
 ## 4. Conventions (read this first)
 
 - Headers: `Authorization: Bearer <token>`, `Accept: application/json`,
   `Content-Type: application/json`.
 - Envelopes: single resource → `{ message?, data? | user? }`; deletes →
-  `{ message }`; catalog/coupon/customer-order lists → default Laravel paginator
+  `{ message }`; catalog/coupon/order/review lists → default Laravel paginator
   (`{ data, links, current_page… }`); admin user list → custom
-  `{ data: [...], meta: { current_page, last_page, per_page, total } }`.
+  `{ data: [...], meta: { current_page, last_page, per_page, total } }`;
+  admin stats → `{ data: { … } }`.
 
 ## 5. Endpoint reference
 
@@ -133,17 +146,32 @@ strong: ≥ 8 chars + lowercase + UPPERCASE + digit). `201` → `{ message, user
 unique except self. Returns `{ message, user }`.
 
 **`PUT /api/password`** — auth. Fields: `current_password` (must match),
-`password` + `password_confirmation` (strong + confirmed). All required.
+`password` + `password_confirmation` (strong + confirmed). All required. Revokes
+every other token.
 
 **`POST /api/logout`** — auth. Revokes current token.
 Returns `{ message: "Logged out successfully." }`.
 
 ### 5.2 Public catalog & store info (no auth)
 
-Lists accept `?page=&per_page=` (default 15, max 100).
-
 **`GET /api/store-setting`** — returns `{ data: { store_name, is_open,
 accepts_delivery, accepts_pickup, min_order_amount, delivery_fee,
+tax_rate_percent, opening_time, closing_time, updated_at } | null }`.
+`data` is `null` when no row is seeded — clients must handle it.
+
+**`GET /api/categories` / `GET /api/categories/{category}`** — list supports
+`?active=true`, ordered by `sort_order`, each with `children`; detail loads
+`children` + `menuItems`.
+
+**`GET /api/menu` / `GET /api/menu/{menuItem}`** — list filters:
+`?category_id=`, `?available=true`, `?featured=true`, `?search=` (matches
+name/description, case-insensitive); ordered by name; each item includes
+`category` + `variantGroups.options`. Detail loads the same relations.
+
+**`GET /api/menu/{menuItem}/reviews`** — public rating summary for an item:
+`{ data: { average, count, reviews: [...] } }`.
+
+
 ### 5.3 Cart (authenticated)
 
 One cart per user, auto-created on first use (`order_type` defaults to
@@ -151,8 +179,8 @@ One cart per user, auto-created on first use (`order_type` defaults to
 `cartItems.options.variantOption`, plus `address`/`coupon` where loaded.
 
 **Every cart endpoint returns the same authoritative representation** (`GET`,
-item create/update/delete, clear, coupon apply), so clients can render totals
-from any response without a follow-up fetch:
+item create/update/delete, clear, coupon apply, reward apply/remove), so clients
+can render totals from any response without a follow-up fetch:
 
 ```json
 {
@@ -181,8 +209,8 @@ from any response without a follow-up fetch:
 }
 ```
 
-Money values are two-decimal strings. Lines are re-priced from the live
-catalog on every response, so stale snapshots never override current prices:
+Money values are two-decimal strings. Lines are re-priced from the live catalog
+on every response, so stale snapshots never override current prices:
 
 ```text
 line_total      = (live base_price + live option deltas) × quantity
@@ -216,30 +244,32 @@ with the refreshed cart payload.
 **`POST /api/cart/coupon`** — body `{ code }` (required, ≤ 50). Attaches an
 *active* coupon by code after checking it against the authoritative cart
 subtotal (window, usage limits, and minimum are enforced at attach time).
-Unknown/inactive/rejected → `422 { message: "..." }` (plain message, no
-`errors` object). Success returns the refreshed cart payload.
+Unknown/inactive/rejected → `422 { message: "…" }`. Success returns the
+refreshed cart payload.
+
+**`POST /api/cart/reward`** — body `{ reward_key }`. Reserves a loyalty reward
+on the cart (points are deducted only at checkout). `DELETE /api/cart/reward`
+clears it.
+
 
 ### 5.4 Orders (authenticated)
 
 **`GET /api/orders`** — paginated (default 10/page). Customers see only their
-orders; **admins see all** (`isAdmin()` branch). Staff/riders see only their own.
-Each order embeds the safe relations mobile cards need: `address` (id, label,
-lines, city/state/postal/country, `is_default` — no coordinates) and
-`order_items` (`item_name`, `quantity`, `subtotal`). The related `user` object
-is never included in the index.
+orders; **staff/admins see all**. Each order embeds `address` (no coordinates)
+and `order_items` (`item_name`, `quantity`, `subtotal`). The `user` object is
+never included in the customer index.
 
 **`GET /api/orders/{order}`** — detail with `user, address, rider, coupon,
-orderItems.options, statusHistory, payments, reviews`. Owner or admin only,
+orderItems.options, statusHistory, payments, reviews`. Owner or staff/admin,
 else `403 { message: "Forbidden." }`.
 
 **`POST /api/orders`** → `201`. Checkout: snapshots the cart into an order, then
 empties it. Empty cart → `422 { message: "Your cart is empty." }`. Fields:
-`order_type` (required: `delivery|pickup`), `address_id` (optional, must exist;
-omit/`null` for pickup), `coupon_code` (optional ≤ 50 — unknown, inactive, or
-rejected codes fail closed with `422 { message, errors: { coupon_code: [...] } }`
-instead of being silently ignored; when omitted, the cart's attached coupon is
-used), `notes` (optional ≤ 2000 chars),
-`scheduled_for` (optional date; `null` = ASAP). Server-side totals:
+`order_type` (required: `delivery|pickup`), `address_id` (optional, must be
+owned by you; omit/`null` for pickup), `coupon_code` (optional ≤ 50 — rejected
+codes fail closed; when omitted, the cart's attached coupon is used), `notes`
+(optional ≤ 2000 chars), `scheduled_for` (optional date; `null` = ASAP),
+`payment_method` (optional `cod|gcash`, default `cod`). Server-side totals:
 
 ```text
 discount     = fixed → min(coupon.value, subtotal)
@@ -248,7 +278,54 @@ delivery_fee = delivery ? store_settings.delivery_fee : 0
 tax          = subtotal × tax_rate_percent / 100   (on pre-discount subtotal)
 total        = subtotal − discount + delivery_fee + tax
 ```
-### 5.5 Admin — users (admin only)
+
+Created as `status: pending`, `payment_status: unpaid`,
+`order_number: ORD-YYYYMMDD-XXXX`, with a `pending` row in
+`order_status_history` and a `coupon_redemptions` row when a valid coupon is
+applied.
+
+**`POST /api/orders/{order}/cancel`** — customer cancels their **own** order
+while it is still `pending`/`confirmed` (before the kitchen starts). Refunds any
+loyalty points spent on a reward. `403` for someone else's order, `422` once the
+order has progressed past `confirmed`.
+
+### 5.5 Reviews (authenticated + public)
+
+**`POST /api/orders/{order}/review`** — customer reviews their own **completed**
+order. Fields: `rating` (required, int 1–5), `comment` (optional ≤ 1000),
+`menu_item_id` (optional — must be an item actually in the order; omit for an
+order-level review). One review per (order, user, item) — a repeat returns `422`.
+`201` → `{ data: review }`.
+
+**`GET /api/menu/{menuItem}/reviews`** — public, see §5.2.
+
+**`GET /api/admin/reviews`** — admin moderation list (paginated, with
+`user`/`menuItem`). **`DELETE /api/admin/reviews/{review}`** — remove a review.
+
+
+### 5.6 Rider (rider only)
+
+All routes require the `rider` role (`EnsureRider`).
+
+**`GET /api/rider/deliveries`** — the authenticated rider's own queue
+(`rider_id = me`), paginated, newest first, with `user`, `address` and
+`orderItems`.
+
+**`GET /api/rider/deliveries/{order}`** — detail for an order assigned to me
+(`404` for anyone else's order).
+
+**`PUT /api/rider/deliveries/{order}/status`** — advance only the delivery leg:
+`ready → out_for_delivery → completed`. Kitchen states are refused (`422`).
+Completing an order awards loyalty points.
+
+**`PUT /api/rider/availability`** — body `{ is_available: bool }`. Toggles the
+rider's duty status (staff can only assign on-duty riders).
+
+**`GET /api/rider/profile`** — the rider's own profile (creates an inactive one
+if missing). **`PUT /api/rider/profile`** — edit `photo_url`,
+`vehicle_type` (`motorcycle|bicycle|car`), `plate_number`.
+
+### 5.7 Admin — users (admin only)
 
 `role` accepts `customer | staff | admin | rider` everywhere.
 
@@ -258,7 +335,8 @@ total        = subtotal − discount + delivery_fee + tax
 
 **`POST /api/admin/users`** → `201`. `name`/`email` as register (email unique),
 `phone` optional ≤ 30, `password` required strong (**no** confirmation needed),
-`role` optional (defaults `customer`). Returns `{ message, data }`.
+`role` optional (defaults `customer`). Creating a `rider` auto-creates a
+`rider_profiles` row (on duty by default). Returns `{ message, data }`.
 
 **`GET /api/admin/users/{user}`** → `{ data }`.
 
@@ -270,27 +348,43 @@ optional (omit/`null` keeps); `phone` optional; `role` optional. Changing your
 `{ errors: { user: ["You cannot delete your own account."] } }`, else
 `200 { message: "User <email> deleted." }`.
 
-### 5.6 Admin — categories & menu items (admin only)
 
-Categories: `POST /api/admin/categories`, `PUT|PATCH
+### 5.8 Admin — categories, menu items & variants (admin only)
+
+**Categories** — `POST /api/admin/categories`, `PUT|PATCH
 /api/admin/categories/{category}`, `DELETE /api/admin/categories/{category}`.
-Menu items mirror under `/api/admin/menu-items` (plural, hyphenated;
-binding `{menu_item}`).
+Create: `name` required ≤ 100, `slug` required ≤ 120 unique, `parent_id`
+nullable must exist, `description`/`image_url` nullable strings, `sort_order`
+nullable int ≥ 0, `is_active` boolean. Update: same but `sometimes` (slug unique
+except self). A category **cannot be its own parent**, and deleting a category
+that still has children or menu items returns `422`.
 
-Category create: `name` required ≤ 100, `slug` required ≤ 120 unique,
-`parent_id` nullable must exist, `description`/`image_url` nullable strings,
-`sort_order` nullable int ≥ 0, `is_active` boolean. Update: same but `sometimes`
-(slug unique except self). Delete → `{ message: "Category deleted." }`.
-No guard against self-parenting; deleting a parent orphans children
-(`parent_id → null`) — see §8.
-
-Menu-item create: `category_id` required must exist, `name` ≤ 150, `slug` ≤ 180
-unique, `sku` nullable ≤ 50 unique, `base_price` required numeric ≥ 0,
+**Menu items** — `POST /api/admin/menu-items` (create), `PUT|PATCH
+/api/admin/menu-items/{menuItem}` (update — also available to staff for
+availability toggling), `DELETE /api/admin/menu-items/{menuItem}` (soft-delete).
+Create: `category_id` required must exist, `name` ≤ 150, `slug` ≤ 180 unique,
+`sku` nullable ≤ 50 unique, `base_price` required numeric ≥ 0,
 `is_available`/`is_featured` booleans, `preparation_time_minutes`/`calories`
-nullable ints ≥ 0. Update: `sometimes` variants. No variant-group endpoints —
-groups/options are read-only via `GET /api/menu*` includes (manage in DB).
+nullable ints ≥ 0. Update: `sometimes` variants.
 
-### 5.7 Admin — coupons (admin only)
+**Variants** (admin only):
+
+- `GET /api/admin/menu-items/{menuItem}/variant-groups` — list groups (with
+  `options`) for an item.
+- `POST /api/admin/menu-items/{menuItem}/variant-groups` — create a group:
+  `name` required ≤ 100, `selection_type` (`single|multiple`), `is_required`
+  boolean, `min_select`/`max_select` ints ≥ 0, `sort_order` int ≥ 0.
+- `PUT|PATCH /api/admin/variant-groups/{variantGroup}` — update a group.
+- `DELETE /api/admin/variant-groups/{variantGroup}` — delete a group (cascades
+  its options).
+- `POST /api/admin/variant-groups/{variantGroup}/options` — create an option:
+  `name` required ≤ 100, `price_delta` numeric, `is_default`/`is_available`
+  booleans, `sort_order` int ≥ 0.
+- `PUT|PATCH /api/admin/variant-options/{variantOption}` / `DELETE
+  /api/admin/variant-options/{variantOption}` — update/delete an option.
+
+
+### 5.9 Admin — coupons (admin only)
 
 Full resource except `create`/`edit`:
 `GET|POST /api/admin/coupons`, `GET|PUT|PATCH|DELETE /api/admin/coupons/{coupon}`.
@@ -299,46 +393,68 @@ Fields: `code` required ≤ 50 unique (except self); `type` required
 ≥ 0; `min_order_amount`/`max_discount_amount` optional ≥ 0;
 `usage_limit`/`usage_limit_per_user` optional int ≥ 1; `starts_at`/`expires_at`
 optional dates (`expires_at` after `starts_at` when both sent); `is_active`
-boolean. List supports `?active=true`. Limits/windows are stored but **not
-enforced** at cart/checkout — see §8.
+boolean. List supports `?active=true`. Validity window, usage limits and minimum
+are **enforced** at cart attach and checkout.
 
-### 5.8 Admin — store setting & order management
+**`GET /api/admin/coupons/{coupon}/redemptions`** — who redeemed this coupon
+(paginated, with `user` + `order`).
+
+### 5.10 Admin — orders & payments (staff/admin)
+
+Order routes here sit behind `EnsureStaff` (staff **or** admin), so staff can run
+the queue without full admin rights.
+
+**`GET /api/admin/orders` · `GET /api/admin/orders/{order}`** — same handlers as
+the customer routes but unscoped: staff/admins see every order.
+
+**`PUT /api/admin/orders/{order}/status`** — advance an order. Fields: `status`
+(required, one of the 7 values), `note` (optional ≤ 500, stored in
+`order_status_history`). Transitions are enforced:
+`pending → confirmed|cancelled → preparing → ready → out_for_delivery →
+completed`, with `cancelled` reachable up to `ready`. Completing awards points;
+cancelling refunds points.
+
+**`PUT /api/admin/orders/{order}/payment`** — confirm (or fail) payment. Body
+`{ payment_status: paid|failed }`. Marking a completed order paid awards points.
+
+**`PUT /api/admin/orders/{order}/rider`** — assign (or unassign) a rider. Body
+`{ rider_id: int|null }`. The assignee must hold the `rider` role, be on duty,
+and the order must be `delivery` and not yet out for delivery/completed.
+
+**`GET /api/admin/riders`** — list rider accounts (with `riderProfile`).
+**`PUT|PATCH /api/admin/riders/{user}/profile`** — administer a rider's
+`photo_url`, `vehicle_type`, `plate_number`, `is_active` (admin only).
+
+**Payments** (staff/admin):
+
+- `GET /api/admin/orders/{order}/payments` — list payment records for an order.
+- `POST /api/admin/orders/{order}/payments` — record a payment: `provider`
+  required (`cod|gcash|stripe|paypal`), `amount` required ≥ 0, `currency`
+  optional (default `PHP`), `status` optional
+  (`pending|succeeded|failed|refunded`, default `pending`),
+  `provider_transaction_id` optional ≤ 150. A `succeeded` payment sets
+  `order.payment_status = paid` and (once completed) awards points.
+- `PUT|PATCH /api/admin/payments/{payment}` — update a payment's `status`
+  (settle/refund), keeping the order's `payment_status` in sync.
+
+
+### 5.11 Admin — store setting, stats & uploads (admin only)
 
 **`PUT /api/admin/store-setting`** — admin upsert (creates row if missing):
 `store_name` required ≤ 150; `is_open`/`accepts_delivery`/`accepts_pickup`
 booleans; `min_order_amount`/`delivery_fee`/`tax_rate_percent` optional ≥ 0
-(`min_order_amount` stored but not enforced); `opening_time`/`closing_time`
-optional `H:i` (`"08:00"`).
+(all enforced at checkout); `opening_time`/`closing_time` optional `H:i`
+(`"08:00"`).
 
-**`GET /api/admin/orders` · `GET /api/admin/orders/{order}`** — same handlers as
-customer routes but unscoped: admins see every order. (Staff/riders get `403`
-from `EnsureAdmin` on these paths.)
+**`GET /api/admin/stats`** — dashboard summary:
+`{ data: { revenue, orders_by_status, total_orders, total_customers,
+total_staff, total_riders, active_riders, menu_items_available,
+menu_items_total } }`. `revenue` is the sum of `total_amount` for
+completed+paid orders (money string).
 
-**`PUT /api/admin/orders/{order}/status`** — staff-or-admin *in code*
-(`isStaff()`), but the route lives under the admin-only group so **staff get
-`403` before reaching it** (see §8). Fields: `status` (required, one of
-`pending, confirmed, preparing, ready, out_for_delivery, completed, cancelled`),
-`note` (optional ≤ 500, stored in `order_status_history`). Appends a history row
-(`status`, `changed_by` = you). No transition validation — any → any.
-
-
-Created as `status: pending`, `payment_status: unpaid`,
-`order_number: ORD-YYYYMMDD-XXXX`, with a `pending` row in
-`order_status_history` and a `coupon_redemptions` row when a valid coupon applied.
-
-tax_rate_percent, opening_time, closing_time, updated_at } | null }`.
-`data` is `null` when no row seeded — clients must handle it.
-
-**`GET /api/categories` / `GET /api/categories/{category}`** — list supports
-`?active=true`, ordered by `sort_order`, each with `children`; detail loads
-`children` + `menuItems`.
-
-**`GET /api/menu` / `GET /api/menu/{menuItem}`** — list filters:
-`?category_id=`, `?available=true`, `?featured=true`; ordered by name; each item
-includes `category` + `variantGroups.options`. Detail loads the same relations.
-
-An admin cannot change their own role or delete their own account.
-
+**`POST /api/admin/uploads/image`** — multipart field `image` (image, jpg/png/
+webp/gif ≤ 5 MB). **`POST /api/admin/uploads/document`** — field `document`
+(pdf/doc/docx/xls/xlsx/csv/txt ≤ 10 MB). Both return `{ data: { url, path } }`.
 
 ## 6. Usage examples (cURL)
 
@@ -367,16 +483,35 @@ curl -s -X POST $BASE/orders -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' -H 'Accept: application/json' \
   -d '{"order_type":"delivery","coupon_code":"WELCOME10"}'
 
+# Review a completed order
+curl -s -X POST $BASE/orders/12/review -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -H 'Accept: application/json' \
+  -d '{"rating":5,"comment":"Great!"}'
+
+# Rider: toggle availability and read the queue
+curl -s -X PUT $BASE/rider/availability -H "Authorization: Bearer $RIDER_TOKEN" \
+  -H 'Content-Type: application/json' -H 'Accept: application/json' \
+  -d '{"is_available":true}'
+curl -s "$BASE/rider/deliveries" -H "Authorization: Bearer $RIDER_TOKEN" -H 'Accept: application/json'
+
 # Admin (log in as an admin for $ADMIN_TOKEN first)
 curl -s "$BASE/admin/users?per_page=5" -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Accept: application/json'
 
 curl -s -X PUT $BASE/admin/orders/9/status -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' -H 'Accept: application/json' \
   -d '{"status":"confirmed","note":"Kitchen acknowledged"}'
+
+# Admin: create a variant group + option, then stats
+curl -s -X POST $BASE/admin/menu-items/7/variant-groups -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' -H 'Accept: application/json' \
+  -d '{"name":"Size","selection_type":"single","is_required":true}'
+curl -s "$BASE/admin/stats" -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Accept: application/json'
 ```
 
-The React client (`frontend/src/services/api.ts`, Axios + `localStorage` token)
-and the `postman/` collection mirror this flow.
+The React client (`frontend/src/services/api.ts`, Axios + `localStorage` token),
+the Expo app (`mobile/src/lib/*.ts`, `fetch` + `expo-secure-store` token) and the
+`postman/` collection mirror this flow.
+
 
 ## 7. Validation rules cheat sheet
 
@@ -387,7 +522,11 @@ and the `postman/` collection mirror this flow.
 | Roles | `customer, staff, admin, rider` wherever a role is accepted (register excludes role). |
 | Order type | `delivery, pickup`. |
 | Order status | `pending, confirmed, preparing, ready, out_for_delivery, completed, cancelled`. |
-| Payment status | `unpaid, paid, refunded, failed` (DB-level; no endpoint writes it yet). |
+| Payment status | `unpaid, paid, refunded, failed` (order); `pending, succeeded, failed, refunded` (payment record). |
+| Payment provider | `cod, gcash, stripe, paypal`. |
+| Rider vehicle type | `motorcycle, bicycle, car`. |
+| Review rating | int `1..5`. |
+| Variant `selection_type` | `single, multiple`. |
 | Coupon type | `fixed, percentage`. |
 | Pagination | `page` ≥ 1 int; `per_page` 1–100 int, else `422`. |
 | Slugs/codes | Category `slug` ≤ 120 unique; menu `slug` ≤ 180 + `sku` ≤ 50 unique; coupon `code` ≤ 50 unique. |
@@ -395,22 +534,17 @@ and the `postman/` collection mirror this flow.
 
 ## 8. Known limitations / not yet implemented
 
-So clients don't rely on behavior that doesn't exist:
-
-1. **No rider / review / payment / variant-management endpoints.** Those tables
-   and models exist, but there are no routes to assign riders, write reviews,
-   create/charge payments, or manage variant groups/options. Customer-facing
-   writes are limited to addresses, cart, and checkout.
-2. **Staff role is half-wired.** `updateStatus()` allows staff, but the route is
-   inside the admin-only group, so staff get `403` before reaching it.
-3. **Tax is on the pre-discount subtotal** (`subtotal × rate`), not `(subtotal −
-   discount) × rate`.
-4. **Category tree is unguarded.** Self-parenting allowed; deleting a parent
-   orphans children; deleting a category with items orphans the items.
-5. **No customer cancel endpoint** — cancellation only via the admin status route.
-6. **Payments are read-only.** `payments` appear in order detail, but no endpoint
-   creates/charges/refunds them; `payment_status` never leaves `unpaid` via API.
-7. **Admin user JSON** omits `email_verified_at`/`updated_at`; delete returns a
+1. **Tax is on the pre-discount subtotal** (`subtotal × rate`), not
+   `(subtotal − discount) × rate`.
+2. **Payments are recorded, not charged.** `Payment` rows and order
+   `payment_status` are managed through the API, but there is no live gateway
+   (GCash/Stripe) integration, webhook, or automatic refund; `payment_method`
+   is informational only.
+3. **No push notifications / activity feed.** Status changes are persisted to
+   `order_status_history` but do not notify customers, staff or riders in-app.
+4. **Single store.** `store_settings` is a single row; there is no multi-branch
+   model.
+5. **Order lists have no status filter** — clients filter client-side.
+6. **Admin user JSON** omits `email_verified_at`/`updated_at`; delete returns a
    plain message with no `data`.
-
 

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\Admin\ListUsersRequest;
 use App\Http\Requests\Admin\StoreUserRequest;
 use App\Http\Requests\Admin\UpdateUserRequest;
+use App\Models\RiderProfile;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -68,6 +69,8 @@ class AdminUserController extends Controller
         $user->role = $data['role'] ?? User::ROLE_CUSTOMER;
         $user->save();
 
+        $this->provisionRiderProfile($user);
+
         return response()->json([
             'message' => 'User created.',
             'data' => $this->present($user),
@@ -119,6 +122,8 @@ class AdminUserController extends Controller
             $user->save();
         }
 
+        $this->provisionRiderProfile($user->fresh());
+
         return response()->json([
             'message' => 'User updated.',
             'data' => $this->present($user),
@@ -142,6 +147,19 @@ class AdminUserController extends Controller
         return response()->json([
             'message' => "User {$user->email} deleted.",
         ]);
+    }
+
+    /**
+     * Ensure a rider account has a rider_profiles row so staff can assign it
+     * without the rider first toggling availability in the app.
+     */
+    private function provisionRiderProfile(User $user): void
+    {
+        if ($user->role !== User::ROLE_RIDER) {
+            return;
+        }
+
+        RiderProfile::firstOrCreate(['user_id' => $user->id], ['is_active' => true]);
     }
 
     /**

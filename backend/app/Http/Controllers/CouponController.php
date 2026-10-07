@@ -50,7 +50,7 @@ class CouponController extends Controller
     public function update(Request $request, Coupon $coupon): JsonResponse
     {
         $data = $request->validate([
-            'code' => ['sometimes', 'string', 'max:50', 'unique:coupons,code,' . $coupon->id],
+            'code' => ['sometimes', 'string', 'max:50', 'unique:coupons,code,'.$coupon->id],
             'type' => ['sometimes', 'in:fixed,percentage'],
             'value' => ['sometimes', 'numeric', 'min:0'],
             'min_order_amount' => ['nullable', 'numeric', 'min:0'],
@@ -72,5 +72,18 @@ class CouponController extends Controller
         $coupon->delete();
 
         return response()->json(['message' => 'Coupon deleted.']);
+    }
+
+    /**
+     * GET /api/admin/coupons/{coupon}/redemptions - who redeemed this coupon.
+     */
+    public function redemptions(PaginationRequest $request, Coupon $coupon): JsonResponse
+    {
+        $redemptions = $coupon->redemptions()
+            ->with(['user:id,name,email', 'order:id,order_number'])
+            ->orderByDesc('id')
+            ->paginate($request->perPage(15));
+
+        return response()->json(['data' => $redemptions]);
     }
 }
