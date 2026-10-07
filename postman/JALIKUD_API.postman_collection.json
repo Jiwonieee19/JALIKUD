@@ -22,14 +22,14 @@
             "url": "{{base_url}}/register",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"{{input_name}}\",\n  \"email\": \"{{input_email}}\",\n  \"phone\": \"{{input_phone}}\",\n  \"password\": \"{{input_password}}\",\n  \"password_confirmation\": \"{{input_password}}\"\n}",
+              "raw": "{\n  \"name\": \"{{input_name}}\",\n  \"email\": \"{{input_email}}\",\n  \"phone\": \"{{input_phone}}\",\n  \"password\": \"{{input_password}}\",\n  \"password_confirmation\": \"{{input_password}}\",\n  \"role\": \"admin\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Creates a NORMAL user (role = user). TEST INPUT: input_name, input_email, input_password."
+            "description": "Creates a NORMAL user (role = customer - there is no 'user' role). The body deliberately sends role=admin: 'role' is NOT mass-assignable on the User model, so the server MUST ignore it and create a customer. The 'Register ignores role escalation' test below is the regression guard for that. TEST INPUT: input_name, input_email, input_password."
           },
           "event": [
             {
@@ -54,7 +54,15 @@
                   "pm.test('Register returns 201', function () { pm.response.to.have.status(201); });",
                   "const json = pm.response.json();",
                   "if (json && json.token) { pm.environment.set('token', json.token); }",
-                  "pm.test('Register sets customer role', function () { pm.expect(pm.response.json().user.role).to.eql('customer'); });"
+                  "pm.test('Register sets customer role', function () { pm.expect(pm.response.json().user.role).to.eql('customer'); });",
+                  "// PRIVILEGE-ESCALATION REGRESSION GUARD: the request body above sends",
+                  "// \"role\": \"admin\". role is deliberately NOT in User::$fillable, so the",
+                  "// server must ignore it. If this test fails, the mass-assignment hole",
+                  "// has been reopened and any anonymous caller can mint an admin account.",
+                  "pm.test('Register ignores role escalation (sent role=admin, got customer)', function () {",
+                  "  const role = pm.response.json().user.role;",
+                  "  pm.expect(role, 'role must never be client-settable').to.eql('customer');",
+                  "});"
                 ]
               }
             }
@@ -246,6 +254,343 @@
       ]
     },
     {
+      "name": "Addresses",
+      "item": [
+        {
+          "name": "Addresses without token (expect 401)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/addresses",
+            "description": "NEGATIVE TEST: addresses are private to the token owner. An anonymous caller must get 401 - never 200 with somebody else's rows."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Addresses require auth (401)', function () { pm.response.to.have.status(401); });",
+                  "const body = pm.response.json();",
+                  "pm.test('401 says Unauthenticated', function () { pm.expect(body.message).to.eql('Unauthenticated.'); });",
+                  "pm.test('401 leaks no address data', function () { pm.expect(body).to.not.have.property('data'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Addresses (baseline)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/addresses",
+            "description": "AUTH: token. Returns {data: [...]} - a FLAT array, not a paginator, because a customer only ever holds a handful. Sorted default-first. Captures the baseline count used by the invariant check at the end of this folder."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List Addresses 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "if (!body || !Array.isArray(body.data)) {",
+                  "  pm.expect.fail('Expected {data: [...]} but got status ' + pm.response.code + ': ' + JSON.stringify(body));",
+                  "}",
+                  "pm.test('List Addresses returns a flat array under data', function () { pm.expect(body.data).to.be.an('array'); });",
+                  "pm.environment.set('address_count_before', String(Array.isArray(body.data) ? body.data.length : 0));",
+                  "pm.test('at most one address is default', function () {",
+                  "  pm.expect(body.data.filter(a => a.is_default).length).to.be.at.most(1);",
+                  "});",
+                  "pm.test('the default address, if any, is listed first', function () {",
+                  "  const idx = body.data.findIndex(a => a.is_default);",
+                  "  if (idx > 0) { pm.expect.fail('a default exists at index ' + idx + ' but is not first'); }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Address",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/addresses",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Home\",\n  \"line1\": \"123 Katipunan Avenue\",\n  \"line2\": \"Brgy. Loyola Heights\",\n  \"city\": \"Quezon City\",\n  \"state\": \"Metro Manila\",\n  \"postal_code\": \"1108\",\n  \"country\": \"Philippines\",\n  \"latitude\": 14.6537,\n  \"longitude\": 121.0685,\n  \"is_default\": true,\n  \"user_id\": 999999\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "AUTH: token. Only line1 + city are required on POST. The body deliberately includes \"user_id\": 999999 - user_id is never read from the request, ownership always comes from the token, so the server must ignore it. That is what makes delivery checkout (POST /orders with address_id) safe."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create Address 201', function () { pm.response.to.have.status(201); });",
+                  "const body = pm.response.json();",
+                  "const a = body.data;",
+                  "pm.test('Create Address returns message + data', function () {",
+                  "  pm.expect(body).to.have.property('message');",
+                  "  pm.expect(a, 'address object').to.be.an('object');",
+                  "  pm.expect(a.id, 'address id, used by PUT/DELETE and orders.address_id').to.exist;",
+                  "});",
+                  "if (a && a.id) { pm.environment.set('address_id', String(a.id)); }",
+                  "pm.test('user_id comes from the token, not the body (999999 ignored)', function () {",
+                  "  pm.expect(Number(a.user_id), 'spoofed user_id must be rejected').to.not.eql(999999);",
+                  "});",
+                  "pm.test('is_default is a real boolean', function () { pm.expect(a.is_default).to.be.a('boolean'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Second Address",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/addresses",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Work\",\n  \"line1\": \"Ayala Avenue\",\n  \"city\": \"Makati\",\n  \"is_default\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "AUTH: token. A second, explicitly non-default address so the next request can promote it and prove the single-default invariant holds."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create Second Address 201', function () { pm.response.to.have.status(201); });",
+                  "const a = pm.response.json().data;",
+                  "if (a && a.id) { pm.environment.set('address_id_2', String(a.id)); }",
+                  "pm.test('second address did not steal the default', function () {",
+                  "  pm.expect(a.is_default, 'a non-default create must stay non-default').to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Promote Second Address",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/addresses/{{address_id_2}}",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_default\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "AUTH: token. PATCH-like: only is_default is sent, so this doubles as proof that a partial update does not require resending the whole address (no line1/city needed). Promoting must demote the previous default."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Promote address 200 (partial update needs no required fields)', function () { pm.response.to.have.status(200); });",
+                  "const a = pm.response.json().data;",
+                  "pm.test('address is now the default', function () { pm.expect(a.is_default).to.eql(true); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Default Address",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/addresses/{{address_id_2}}",
+            "description": "AUTH: token. Deletes the address that is CURRENTLY the default, so the survivor must be promoted automatically - otherwise the account is left with no default and delivery checkout breaks."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Delete Address 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Delete returns a confirmation message', function () {",
+                  "  pm.expect(body.message).to.be.a('string').and.include('removed');",
+                  "  pm.expect(body).to.not.have.property('data');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Addresses (invariants after delete)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/addresses",
+            "description": "AUTH: token. The invariant check for this folder: after creating 2 and deleting 1, exactly one address remains AND it must be default - a customer is never left with 0 or 2 defaults."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List Addresses 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "if (!body || !Array.isArray(body.data)) {",
+                  "  pm.expect.fail('Expected {data: [...]} but got status ' + pm.response.code + ': ' + JSON.stringify(body));",
+                  "}",
+                  "const before = Number(pm.environment.get('address_count_before') || 0);",
+                  "pm.test('count = baseline + 1 (2 created, 1 deleted)', function () {",
+                  "  pm.expect(body.data.length, 'unexpected address count').to.eql(before + 1);",
+                  "});",
+                  "pm.test('exactly one default survives the delete', function () {",
+                  "  const defaults = body.data.filter(a => a.is_default);",
+                  "  pm.expect(defaults.length, 'account must have exactly one default').to.eql(1);",
+                  "});",
+                  "pm.test('the survivor was promoted to the front', function () {",
+                  "  pm.expect(String(body.data[0].id)).to.eql(String(pm.environment.get('address_id')));",
+                  "  pm.expect(body.data[0].is_default).to.eql(true);",
+                  "});",
+                  "pm.test('deleted address is really gone', function () {",
+                  "  const ids = body.data.map(a => String(a.id));",
+                  "  pm.expect(ids).to.not.include(String(pm.environment.get('address_id_2')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Address (again -> 404)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/addresses/{{address_id_2}}",
+            "description": "AUTH: token. Deleting the same id twice must fail cleanly rather than silently succeeding, which would hide a real bug in the route-model binding."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Deleting an already-deleted address fails with 404', function () { pm.response.to.have.status(404); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Admin",
       "item": [
         {
@@ -331,6 +676,9 @@
                   "  const role = json && json.user && json.user.role;",
                   "  pm.test('Admin login returns 200', function () { pm.response.to.have.status(200); });",
                   "  if (json && json.token) { pm.environment.set('admin_token', json.token); }",
+                  "  // Remember the admin's own id so Delete User can tell whether it is about",
+                  "  // to target this same account (the API blocks self-deletion with 422).",
+                  "  if (json && json.user && json.user.id) { pm.environment.set('admin_self_id', String(json.user.id)); }",
                   "  if (role !== 'admin') {",
                   "    pm.expect.fail('Logged in but role = ' + role + '. Set admin_username/admin_password to a user whose role is admin.');",
                   "  }",
@@ -386,8 +734,31 @@
                 }
               ]
             },
-            "description": "AUTH: admin_token. QUERY INPUT: page, admin_search."
-          }
+            "description": "AUTH: admin_token. QUERY INPUT: page, admin_search. NOTE: this endpoint returns the FLAT shape {data: [...], meta: {...}} - unlike /menu and /admin/coupons, which nest a paginator under data."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List Users 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('List Users returns flat data + meta', function () {",
+                  "  pm.expect(body).to.have.property('data');",
+                  "  pm.expect(body).to.have.property('meta');",
+                  "  pm.expect(body.data, 'data must be an array').to.be.an('array');",
+                  "  pm.expect(body.meta, 'meta must carry pagination').to.include.keys('current_page', 'per_page', 'total');",
+                  "});",
+                  "if (Array.isArray(body.data) && body.data.length) {",
+                  "  pm.test('List Users items expose no password hash', function () {",
+                  "    body.data.forEach(u => pm.expect(u).to.not.have.property('password'));",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Search Users",
@@ -405,8 +776,54 @@
             "method": "GET",
             "header": [],
             "url": "{{base_url}}/admin/users?search={{admin_search}}",
-            "description": "AUTH: admin_token. QUERY INPUT: admin_search."
-          }
+            "description": "AUTH: admin_token. QUERY INPUT: admin_search (name or email substring). The pre-request seeds a real substring from the user this run created, so the assertion can prove the filter narrows the result set rather than merely returning 200."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Seed a term guaranteed to match a real row: 'admin' matches the seeded",
+                  "// admin@jalikud.test on any environment, so this stays valid whether or",
+                  "// not Create User ran first.",
+                  "const term = pm.environment.get('admin_search') || 'admin';",
+                  "pm.environment.set('admin_search', term);",
+                  "console.log('[Search Users] search = ' + term);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Search Users 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "if (body && Array.isArray(body.data)) {",
+                  "  pm.test('Search Users returns flat data + meta', function () {",
+                  "    pm.expect(body.meta, 'flat envelope carries meta').to.include.keys('current_page', 'total');",
+                  "  });",
+                  "  const term = (pm.environment.get('admin_search') || '').toLowerCase();",
+                  "  if (term && body.data.length) {",
+                  "    pm.test('Search actually filters (every row matches \"' + term + '\")', function () {",
+                  "      body.data.forEach(u => {",
+                  "        const hay = ((u.name || '') + ' ' + (u.email || '')).toLowerCase();",
+                  "        pm.expect(hay).to.include(term);",
+                  "      });",
+                  "    });",
+                  "  }",
+                  "} else {",
+                  "  // A 401/429 body has no data array. Report the real cause instead of",
+                  "  // throwing a TypeError that hides it behind an unreadable stack trace.",
+                  "  pm.test('Search Users response shape', function () {",
+                  "    pm.expect.fail('Expected {data, meta} but got status ' + pm.response.code + ': ' + JSON.stringify(body));",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Create User",
@@ -487,8 +904,31 @@
             "method": "GET",
             "header": [],
             "url": "{{base_url}}/admin/users/{{user_id}}",
-            "description": "AUTH: admin_token. INPUT: user_id."
-          }
+            "description": "AUTH: admin_token. INPUT: user_id (set by Register or Create User)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Show User 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Show User wraps a single object in data', function () {",
+                  "  pm.expect(body).to.have.property('data');",
+                  "  pm.expect(body.data).to.be.an('object').that.is.not.an('array');",
+                  "  pm.expect(String(body.data.id)).to.eql(String(pm.environment.get('user_id')));",
+                  "});",
+                  "pm.test('Show User never returns the password hash', function () {",
+                  "  pm.expect(body.data).to.not.have.property('password');",
+                  "});",
+                  "pm.test('Show User role is a valid enum value', function () {",
+                  "  pm.expect(['customer', 'staff', 'admin', 'rider']).to.include(body.data.role);",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Update User (PUT)",
@@ -563,8 +1003,32 @@
             "method": "DELETE",
             "header": [],
             "url": "{{base_url}}/admin/users/{{user_id}}",
-            "description": "AUTH: admin_token. INPUT: user_id."
-          }
+            "description": "AUTH: admin_token. INPUT: user_id (the row Create User made). Soft-deletes it. The API refuses to let an admin delete their OWN account (422), so the test asserts the outcome matches which id is in play."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const deletingSelf = String(pm.environment.get('user_id')) === String(pm.environment.get('admin_self_id') || '');",
+                  "if (deletingSelf) {",
+                  "  pm.test('Admin cannot delete own account (422)', function () { pm.response.to.have.status(422); });",
+                  "} else {",
+                  "  pm.test('Delete User 200', function () { pm.response.to.have.status(200); });",
+                  "  pm.test('Delete User returns a confirmation message', function () {",
+                  "    pm.expect(body).to.have.property('message');",
+                  "    pm.expect(body.message).to.be.a('string').and.include('deleted');",
+                  "  });",
+                  "}",
+                  "// Deleting must actually hide the row: it is soft-deleted, so a follow-up",
+                  "// Show returns 404/422 rather than resurrecting it.",
+                  "console.log('[Delete User] status = ' + pm.response.code + ' body = ' + JSON.stringify(body));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -595,19 +1059,8 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/categories?active=true&per_page=5",
-              "query": [
-                {
-                  "key": "active",
-                  "value": "true"
-                },
-                {
-                  "key": "per_page",
-                  "value": "5"
-                }
-              ]
-            }
+            "url": "{{base_url}}/categories?active=true&per_page=5",
+            "description": "Public. QUERY INPUT: active, per_page. URL kept as a plain string - the previous object form omitted 'host', which Postman tolerates but Newman resolves to http:///?... and aborts the request."
           },
           "event": [
             {
@@ -615,7 +1068,20 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('List categories 200', function () { pm.response.to.have.status(200); });"
+                  "pm.test('List categories 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "// /categories nests its paginator (data.data), unlike /admin/users (flat).",
+                  "const rows = Array.isArray(body.data) ? body.data : (body.data && body.data.data);",
+                  "if (Array.isArray(rows)) {",
+                  "  pm.test('List categories returns rows under data', function () { pm.expect(rows.length).to.be.above(0); });",
+                  "  // Capture a REAL id. The environment default (1) is a stale guess -",
+                  "  // previous runs' Delete Category removed it, which made Show Category",
+                  "  // 404 for everyone afterwards.",
+                  "  const first = rows.find(c => c && c.id);",
+                  "  if (first && first.id) { pm.environment.set('category_id', String(first.id)); }",
+                  "} else {",
+                  "  pm.expect.fail('Unexpected /categories shape: ' + JSON.stringify(body).slice(0, 200));",
+                  "}"
                 ]
               }
             }
@@ -650,19 +1116,8 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{base_url}}/menu?available=true&per_page=5",
-              "query": [
-                {
-                  "key": "available",
-                  "value": "true"
-                },
-                {
-                  "key": "per_page",
-                  "value": "5"
-                }
-              ]
-            }
+            "url": "{{base_url}}/menu?available=true&per_page=5",
+            "description": "Public. QUERY INPUT: available, per_page. Plain string URL - the object form omitted 'host' and Newman resolved it to http:///?..., aborting the request. Also captures the first item id; the rows live at data.data because this endpoint nests its paginator."
           },
           "event": [
             {
@@ -822,6 +1277,88 @@
           ]
         },
         {
+          "name": "Remove Cart Item",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "DELETE",
+            "header": [],
+            "url": "{{base_url}}/cart/items/{{cart_id}}/{{cart_item_id}}",
+            "description": "AUTH: token. MUST run before Place Order - POST /orders empties the cart, so a delete after checkout always 404s. Placed here it actually exercises the endpoint."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Remove item 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('Remove returns a confirmation message', function () {",
+                  "  pm.expect(body.message).to.be.a('string').and.include('removed');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Re-add Item (restock cart for checkout)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/cart/items",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"menu_item_id\": \"{{menu_item_id}}\",\n  \"quantity\": 1,\n  \"notes\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "AUTH: token. Put an item back so the cart is non-empty for Place Order (checkout on an empty cart is a 422). Refreshes cart_id / cart_item_id for anything downstream."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Re-add item 201 (cart must be non-empty for checkout)', function () { pm.response.to.have.status(201); });",
+                  "var c = pm.response.json().data;",
+                  "if (c) { pm.environment.set('cart_id', String(c.id)); }",
+                  "var it = c && c.cart_items && c.cart_items[c.cart_items.length - 1];",
+                  "if (it) { pm.environment.set('cart_item_id', String(it.id)); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Apply Coupon",
           "request": {
             "auth": {
@@ -962,35 +1499,6 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Show order 200', function () { pm.response.to.have.status(200); });"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Remove Cart Item",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "DELETE",
-            "header": [],
-            "url": "{{base_url}}/cart/items/{{cart_id}}/{{cart_item_id}}"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Remove item 200', function () { pm.response.to.have.status(200); });"
                 ]
               }
             }
@@ -1332,6 +1840,94 @@
               }
             }
           ]
+        },
+        {
+          "name": "List Coupons",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/admin/coupons?per_page=5",
+            "description": "AUTH: admin_token. READ side of coupon CRUD (previously untested). NOTE the shape: unlike /admin/users (flat {data, meta}), this nests a paginator under data - {data: {current_page, data: [...]}}. Asserting both shapes keeps them from silently drifting apart."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List Coupons 200', function () { pm.response.to.have.status(200); });",
+                  "const body = pm.response.json();",
+                  "pm.test('List Coupons nests a paginator under data', function () {",
+                  "  pm.expect(body).to.have.property('data');",
+                  "  pm.expect(body.data, 'paginator object').to.be.an('object');",
+                  "  pm.expect(body.data).to.include.keys('current_page', 'data');",
+                  "  pm.expect(body.data.data, 'the rows live at data.data').to.be.an('array');",
+                  "  pm.expect(body).to.not.have.property('meta', '/admin/coupons does not use the flat meta envelope');",
+                  "});",
+                  "// Capture the newest coupon so Show Coupon has a real id to fetch.",
+                  "const rows = body.data.data || [];",
+                  "if (rows.length) {",
+                  "  pm.environment.set('coupon_id', String(rows[0].id));",
+                  "  if (rows[0].code) { pm.environment.set('coupon_code', rows[0].code); }",
+                  "  pm.test('coupon rows never leak a password column', function () {",
+                  "    rows.forEach(c => pm.expect(c).to.not.have.property('password'));",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Show Coupon (:id)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/admin/coupons/{{coupon_id}}",
+            "description": "AUTH: admin_token. INPUT: coupon_id (set by Create Coupon or List Coupons). Single coupon wrapped in data."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Show Coupon 200', function () { pm.response.to.have.status(200); });",
+                  "const c = pm.response.json().data;",
+                  "pm.test('Show Coupon returns one object in data', function () {",
+                  "  pm.expect(c).to.be.an('object').that.is.not.an('array');",
+                  "  pm.expect(String(c.id)).to.eql(String(pm.environment.get('coupon_id')));",
+                  "});",
+                  "pm.test('coupon type is fixed|percentage', function () {",
+                  "  pm.expect(['fixed', 'percentage']).to.include(c.type);",
+                  "});",
+                  "pm.test('coupon carries an is_active flag', function () {",
+                  "  pm.expect(c).to.have.property('is_active');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -1373,73 +1969,6 @@
                   "  console.log('-----------------------------------');",
                   "  pm.expect(keys.length).to.be.above(0);",
                   "});"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "Teardown",
-      "item": [
-        {
-          "name": "Logout (normal user)",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{token}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "POST",
-            "header": [],
-            "url": "{{base_url}}/logout",
-            "description": "Revokes the normal user token."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Logout (user) returns 200', function () { pm.response.to.have.status(200); });",
-                  "pm.environment.unset('token');"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Logout (admin)",
-          "request": {
-            "auth": {
-              "type": "bearer",
-              "bearer": [
-                {
-                  "key": "token",
-                  "value": "{{admin_token}}",
-                  "type": "string"
-                }
-              ]
-            },
-            "method": "POST",
-            "header": [],
-            "url": "{{base_url}}/logout",
-            "description": "Revokes the admin token."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('Logout (admin) returns 200', function () { pm.response.to.have.status(200); });",
-                  "pm.environment.unset('admin_token');"
                 ]
               }
             }
@@ -1653,7 +2182,7 @@
           ]
         },
         {
-          "name": "Delete Category",
+          "name": "Delete Category (occupied -> 422)",
           "request": {
             "auth": {
               "type": "bearer",
@@ -1667,7 +2196,8 @@
             },
             "method": "DELETE",
             "header": [],
-            "url": "{{base_url}}/admin/categories/{{category_id}}"
+            "url": "{{base_url}}/admin/categories/{{category_id}}",
+            "description": "AUTH: admin_token. INPUT: category_id (populated by this run: Create Category planted an item there). The delete MUST be refused with 422 - a 500 means the RESTRICT guard regressed. The happy-path delete (an empty category) is covered by 'Delete Own Category' next."
           },
           "event": [
             {
@@ -1675,7 +2205,155 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Delete category 200', function () { pm.response.to.have.status(200); });"
+                  "const body = pm.response.json();",
+                  "if (pm.response.code === 422 && body.errors && body.errors.category) {",
+                  "  pm.test('Category with items cannot be deleted (422 FK guard)', function () { pm.response.to.have.status(422); });",
+                  "  pm.test('FK guard explains what to do next', function () {",
+                  "    pm.expect(body.errors.category[0]).to.include('menu items');",
+                  "  });",
+                  "} else if (pm.response.code === 200) {",
+                  "  pm.test('Category was already empty (200)', function () { pm.response.to.have.status(200); });",
+                  "} else {",
+                  "  pm.test('Delete category handled (422 occupied / 200 empty, never 500)', function () {",
+                  "    pm.expect.fail('Expected 422-occupied or 200-empty but got ' + pm.response.code + ': ' + JSON.stringify(body));",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Own Category",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/admin/categories",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"To Delete\",\n  \"slug\": \"PLACEHOLDER\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "AUTH: admin_token. Creates a throwaway EMPTY category and deletes it inside the test script - the inline happy path (the stale {{category_id}} may point at a populated category and mislead). Follows the Create Category pre-request idiom for a unique slug."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('throwaway_slug', 'del-' + Date.now().toString(36));",
+                  "var b = JSON.parse(pm.request.body.raw);",
+                  "b.slug = pm.environment.get('throwaway_slug');",
+                  "b.name = 'To Delete ' + pm.environment.get('throwaway_slug');",
+                  "pm.request.body.raw = JSON.stringify(b);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Throwaway category created 201', function () { pm.response.to.have.status(201); });",
+                  "const id = pm.response.json() && pm.response.json().data && pm.response.json().data.id;",
+                  "pm.test('Create returned an id', function () { pm.expect(id, 'category id').to.exist; });",
+                  "pm.sendRequest({",
+                  "  url: pm.environment.get('base_url') + '/admin/categories/' + id,",
+                  "  method: 'DELETE',",
+                  "  header: { Authorization: 'Bearer ' + pm.environment.get('admin_token') }",
+                  "}, function (err, res) {",
+                  "  pm.test('Empty category deletes cleanly (200)', function () {",
+                  "    pm.expect(err).to.not.exist;",
+                  "    pm.expect(res.code, 'delete of an empty category').to.eql(200);",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Teardown",
+      "item": [
+        {
+          "name": "Logout (normal user)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/logout",
+            "description": "Revokes the normal user token. MUST stay last: every authenticated request before this one needs the token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Logout (user) returns 200', function () { pm.response.to.have.status(200); });",
+                  "pm.environment.unset('token');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout (admin)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/logout",
+            "description": "Revokes the admin token. MUST stay last - when this ran before 'Admin Orders & Settings', every request in that folder got 401."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Logout (admin) returns 200', function () { pm.response.to.have.status(200); });",
+                  "pm.environment.unset('admin_token');"
                 ]
               }
             }

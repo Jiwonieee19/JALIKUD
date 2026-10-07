@@ -380,49 +380,56 @@ After that, the user can log in and call `/api/admin/*`.
 
 ## Testing with Postman
 
-The repo ships a ready-to-use Postman collection and environment in the `postman/` folder:
+The repo ships a ready-to-use Postman collection and two environments in the `postman/` folder:
 
 - `postman/JALIKUD_API.postman_collection.json`
-- `postman/JALIKUD_Local.postman_environment.json`
+- `postman/JALIKUD_Local.postman_environment.json` (`base_url = http://localhost:5173/api`)
+- `postman/JALIKUD_Staging.postman_environment.json` (`base_url = https://api.cahuco.me/api`)
+
+Both environments run the **same** collection end-to-end (verified locally and against the live tunnel).
 
 ### 1. Import
 
-Open **Postman ? Import ? Files**, select both files (or drag them in), and import.
+Open **Postman → Import → Files**, select all three files (or drag them in), and import.
 
 ### 2. Select the environment
 
-In the top-right environment dropdown choose **`JALIKUD Local`**. This environment pre-fills `base_url`:
+In the top-right environment dropdown choose **`JALIKUD Local`** (Docker stack) or **`JALIKUD Staging (Cloudflare Tunnel)`** (deployed API).
 
-```text
-http://localhost:5173/api
-```
-
-| Variable        | Value                    | Purpose                              |
-| --------------- | ------------------------ | ------------------------------------ |
-| `base_url`      | `http://localhost:5173/api` | Base for every request             |
-| `token`         | *(auto-filled)*          | Bearer token, set by Login/Register  |
-| `user_id`       | `1`                      | Used in admin `{id}` routes          |
-| `page`          | `1`                      | Admin pagination param               |
-| `admin_search`  | *(blank)*                | Admin `search` query param           |
+| Variable        | Local value              | Staging value                       | Purpose                              |
+| --------------- | ------------------------ | ----------------------------------- | ------------------------------------ |
+| `base_url`      | `http://localhost:5173/api` | `https://api.cahuco.me/api`        | Base for every request               |
+| `token`         | *(auto-filled)*          | *(auto-filled)*                     | Bearer token, set by Login/Register  |
+| `admin_token`   | *(auto-filled)*          | *(auto-filled)*                     | Admin token, set by Admin login      |
+| `admin_username` | *(you set this)*        | `admin@jalikud.test` *(prefilled)*  | Email of an existing admin user      |
+| `admin_password` | *(you set this)*       | `Jalikud123` *(prefilled)*          | Password of that admin user          |
+| `user_id`       | `1`                      | `1`                                 | Used in admin `{id}` routes          |
+| `page`          | `1`                      | `1`                                 | Admin pagination param               |
+| `admin_search`  | *(blank)*                | `admin`                             | Admin `search` query param           |
 
 ### 3. Run the flow
 
-1. **Make sure the stack is running** (`docker compose up --build -d` → app on `http://localhost:5173`).
+1. **Local:** make sure the stack is running (`docker compose up --build -d` → app on `http://localhost:5173`). **Staging:** nothing to start — the tunnel dials the same backend.
 2. Run the folders **top-to-bottom** so the flow-state variables are ready before they are used.
 3. Two different tokens are used because **admin endpoints require an admin account** (see [Authentication & Roles](#authentication--roles)):
-   - `token` = the **normal user** token, set by **Auth → Register / Login (normal user)** and used by **My Account**.
+   - `token` = the **normal user** token, set by **Auth → Register / Login (normal user)** and used by **My Account** + **Addresses**.
    - `admin_token` = the **admin** token, set by **Admin → Login (as Admin)** and used by **every** `/api/admin/*` request.
 
-> **Before testing the Admin folder, set `admin_username` and `admin_password` in the `JALIKUD Local` environment to an existing user whose role is `admin`.** Registration always creates a `user`; if you have no admin yet, promote one via psql/`tinker` (see [Authentication & Roles](#authentication--roles)).
+> **Local only:** before testing the Admin folder, set `admin_username` and `admin_password` in the `JALIKUD Local` environment to an existing user whose role is `admin`. Registration always creates a customer; if you have no admin yet, promote one via psql/`tinker` (see [Authentication & Roles](#authentication--roles)). `JALIKUD Staging` ships with the seeded admin (`admin@jalikud.test`) prefilled.
 
 ### Recommended run order
 
-1. **Auth → Register** (or **Login (normal user)**) → sets `token`.
+1. **Auth → Register** (or **Login (normal user)**) → sets `token`. *The body deliberately sends `role: "admin"` — the registered user must STILL come back `customer` (regression guard).*
 2. **My Account** (Get Me, Update Profile, Change Password) → uses `token`.
-3. **Admin → Login (as Admin)** → sets `admin_token`.
-4. **Admin** CRUD (List, Search, Create, Show, Update, Delete) → uses `admin_token`.
-5. **Test Data → View Generated Test Inputs** → inspect current inputs/tokens.
-6. **Teardown** → **Logout (normal user)** and **Logout (admin)** revoke both tokens (run last).
+3. **Addresses** (401 check → list → create → create-2nd → promote → delete-default → invariants → double-delete) → uses `token`. Creates 2 rows, deletes 1; the end state always satisfies *exactly one default*.
+4. **Admin → Login (as Admin)** → sets `admin_token` (also records the admin's own id).
+5. **Admin** CRUD (403-check → Login → List → Search → Create → Show → Update → Delete) → uses `admin_token`.
+6. **Public Catalog** → List Categories now captures a real `category_id` (the env default `1` went stale after earlier deletes).
+7. **Menu & Cart & Orders** → `Remove Cart Item` runs *before* checkout now (checkout empties the cart, so a delete after it always 404s).
+8. **Admin Catalog & Coupons** → includes the previously missing `GET /admin/coupons` reads.
+9. **Test Data → View Generated Test Inputs** → inspect current inputs/tokens.
+10. **Admin Orders & Settings** → includes the FK-guard delete: deleting an occupied category must return `422`, never `500`.
+11. **Teardown** → **Logout (normal user)** and **Logout (admin)** — always last.
 
 > **Test Data → View Generated Test Inputs** prints the exact inputs and both tokens (`token`, `admin_token`) to the Postman console.
 
@@ -441,18 +448,26 @@ To avoid `unique`-column (email) errors on re-runs, every **write** request auto
 | Admin (update) | `admin_update_name`, `admin_update_email` | Update User |
 | Admin (auth) | `admin_username`, `admin_password` *(you set these)* | Login (as Admin) |
 
-- **Any variable prefixed `input_` or `admin_` is a Postman-provided TEST INPUT.** `input_*` and `admin_input_*`/`admin_update_*` change every run so unique fields (email) never collide; `admin_username`/`admin_password` are the one input you must supply (the admin account).
-- **Flow variables** set from responses: `token`, `admin_token`, and `user_id` (from Create User, reused by Show/Update/Delete — you never edit them by hand).
-- Want static values instead? Edit the value in the `JALIKUD Local` environment — but note the pre-request script will overwrite it on the next run. To pin a value, delete the generator lines in that request's **Pre-request Script**.
+- **Any variable prefixed `input_` or `admin_` is a Postman-provided TEST INPUT.** `input_*` and `admin_input_*`/`admin_update_*` change every run so unique fields (email) never collide; `admin_username`/`admin_password` are the one input you supply yourself (Local) or get prefilled (Staging).
+- **Flow variables** set from responses: `token`, `admin_token`, `admin_self_id` (admin's own id, so Delete User can detect the self-deletion 422), `address_id` / `address_id_2` / `address_count_before` (invariant checks), `category_id` (captured from List Categories — never hand-edit), `menu_item_id`, `cart_id`, `cart_item_id`, `coupon_id`, `coupon_code`, `order_id`.
+- Want static values instead? Edit the value in the environment — but note the pre-request script will overwrite it on the next run. To pin a value, delete the generator lines in that request's **Pre-request Script**.
 
 ### Troubleshooting in Postman
 
-- **`401`, empty `token`** — run **Auth → Register/Login** first so `token` is filled (and don't run **Logout (normal user)** before the other user calls).
+- **`401`, empty `token`** — run **Auth → Register/Login** first so `token` is filled (and don't run **Teardown** before the other calls — it revokes both tokens).
 - **`403` on Admin routes** → the `admin_token` belongs to a non-admin, or `admin_username`/`admin_password` are wrong/empty. Re-run **Admin → Login (as Admin)** after setting correct admin credentials.
 - **`403` right after admin login** → verify the account's `role` is `admin` (promote it — see [Authentication & Roles](#authentication--roles)).
-- **`404` on Admin `{id}`** → re-run **Admin → Create User** (it sets `user_id` to the id it just created).
-- **`429`** → hit the 5/minute auth rate limit; wait and retry.
-- **Connection errors** → confirm the Docker stack is up and `base_url` is `http://localhost:5173/api`.
+- **`404` on Admin `{id}`** → re-run **Admin → Create User** (it sets `user_id` to the id it just created). Same for categories: `category_id` is refreshed from List Categories each run.
+- **`429`** → you ran the collection twice within a minute. Register + the two logins share a 5/min auth bucket: **one full run per minute max**. Wait ~60 s and re-run. A `429` after an hour idle means two people share the tunnel IP bucket — coordinate runs.
+- **Connection errors (Local)** → confirm the Docker stack is up and `base_url` is `http://localhost:5173/api`. **(Staging)** → `base_url` is `https://api.cahuco.me/api` and the `cloudflared` container is connected.
+- **Checkout returns `422`, so no `order_id` downstream** → the store window is the likely cause: `POST /orders` refuses with `The store is currently closed.` outside 08:00–22:00 **server time (UTC)**, i.e. 16:00–06:00 PHT. Place Order tolerates `[201, 422]` so the run continues, but `Show My Order` / `Update Order Status` need a real `order_id` — re-run inside the window. (Note, not fixed: the seeds store Philippine hours while the server evaluates them as UTC — `StoreSetting::openNow()` has no timezone conversion. Same reason a UTC-based CI would flake at the edges.)
+
+### Known issues, left as notes (not exercised by the collection)
+
+Two things I found while validating against the tunnel and deliberately left out of scope:
+
+1. **Paginator URLs come back `http://`** — even over HTTPS, `first_page_url`/`next_page_url` say `http://api.cahuco.me/...` despite `APP_URL=https://api.cahuco.me`. Laravel sees the scheme as `http` because the tunnel dials the backend over plain HTTP and `X-Forwarded-Proto` isn't honored. Harmless as long as clients don't follow those links; dangerous the moment one does (tokens over plaintext). Fix idea: `URL::forceScheme('https')` when `APP_URL` starts with https, or honor the header.
+2. **No HTTPS redirect on the zone** — plain `http://api.cahuco.me/api/...` returns 200 without redirecting. Bearer tokens sent over HTTP are interceptable, which quietly weakens everything Sanctum provides. Fix: enable **Always Use HTTPS** in Cloudflare for the `api` hostname.
 
 ## CI/CD & Deployment
 
