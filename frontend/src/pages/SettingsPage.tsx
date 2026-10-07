@@ -32,6 +32,7 @@ interface ValidationErrors {
   email?: string
   current_password?: string
   password?: string
+  password_confirmation?: string
 }
 
 type Feedback = { type: 'success' | 'error'; message: string } | null
@@ -40,6 +41,24 @@ const feedbackClass = (type: 'success' | 'error') =>
   type === 'success'
     ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
     : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'
+
+/**
+ * Client-side mirror of the backend's App\Rules\StrongPassword, which requires
+ * 8+ characters with at least one lowercase, one uppercase and one digit.
+ *
+ * Every composition failure reports ONE message, matching what the API returns.
+ * Naming the class of character that is missing ("must contain at least one
+ * number") hands anyone probing this form a running tally of what is still
+ * missing, so the same wording is used for every way of being too weak. Length
+ * stays a separate message because it is already in the field's own hint text.
+ */
+function passwordProblem(password: string): string | null {
+  if (password.length === 0) return null
+  if (password.length < 8) return 'Must be at least 8 characters.'
+  const strong = /[a-z]/.test(password) && /[A-Z]/.test(password) && /[0-9]/.test(password)
+  if (!strong) return 'Must contain uppercase, lowercase and a number.'
+  return null
+}
 
 export default function SettingsPage() {
   const { user, updateUser, logout } = useAuth()
@@ -77,10 +96,25 @@ export default function SettingsPage() {
 
   const handlePasswordSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    // Confirmation before strength: a mismatch is a typo the user just made and
+    // is more useful to report than anything about the password itself.
     if (newPassword !== newPasswordConfirmation) {
-      setPasswordErrors({ password: 'Password confirmation does not match.' })
+      setPasswordErrors({ password_confirmation: 'Password confirmation does not match.' })
+      setPasswordFeedback(null)
       return
     }
+
+    // Same rules the API enforces, checked before the request so a weak password
+    // never leaves the browser. The message is the same one the backend returns
+    // and never names which character class is missing.
+    const weak = passwordProblem(newPassword)
+    if (weak) {
+      setPasswordErrors({ password: weak })
+      setPasswordFeedback(null)
+      return
+    }
+
     setPasswordErrors({})
     setPasswordFeedback(null)
     setSavingPassword(true)
@@ -146,7 +180,10 @@ export default function SettingsPage() {
           </form>
         </Card>
 
-        <Card title="Change Password" description="Choose a strong password of at least 8 characters.">
+        <Card
+          title="Change Password"
+          description="Choose a strong password of at least 8 characters."
+        >
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
             {passwordFeedback && (
               <div className={`rounded-lg px-4 py-3 text-sm ${feedbackClass(passwordFeedback.type)}`}>
@@ -179,12 +216,19 @@ export default function SettingsPage() {
                 required
                 minLength={8}
                 autoComplete="new-password"
+                aria-invalid={Boolean(passwordErrors.password)}
+                className={passwordErrors.password ? 'border-red-500 dark:border-red-500' : ''}
               />
-              {passwordErrors.password && (
-                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
-                  {passwordErrors.password}
-                </p>
-              )}
+              <p
+                className={`mt-1.5 text-xs ${
+                  passwordErrors.password
+                    ? 'font-semibold text-red-600 dark:text-red-400'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              >
+                {passwordErrors.password ??
+                  'At least 8 characters, with an uppercase letter, a lowercase letter and a number.'}
+              </p>
             </div>
             <div>
               <Label htmlFor="confirm-password" className="mb-1.5">Confirm new password</Label>
@@ -195,7 +239,18 @@ export default function SettingsPage() {
                 onChange={(e) => setNewPasswordConfirmation(e.target.value)}
                 required
                 autoComplete="new-password"
+                aria-invalid={Boolean(passwordErrors.password_confirmation)}
+                className={
+                  passwordErrors.password_confirmation
+                    ? 'border-red-500 dark:border-red-500'
+                    : ''
+                }
               />
+              {passwordErrors.password_confirmation && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
+                  {passwordErrors.password_confirmation}
+                </p>
+              )}
             </div>
             <div className="flex justify-end">
               <Button type="submit" disabled={savingPassword}>

@@ -60,7 +60,9 @@ function toDraft(reward: Reward): Draft {
   return {
     title: reward.title,
     description: reward.description ?? '',
-    type: reward.type,
+    // A reward is always a free item now — peso discounts live on Coupons — so a
+    // legacy voucher row opens as a free item and asks for its menu item.
+    type: 'free_item',
     points_required: String(reward.points_required),
     monetary_value: reward.monetary_value ?? '',
     menu_item_id: reward.menu_item_id === null ? '' : String(reward.menu_item_id),
@@ -537,27 +539,6 @@ export default function AdminRewardsPage() {
                 <p className="mt-1 text-sm text-red-600 dark:text-red-400">{draftErrors.title}</p>
               )}
             </div>
-
-          <div>
-            <Label htmlFor="rw-type" className="mb-1.5">
-              Type
-            </Label>
-            <Select
-              id="rw-type"
-              value={draft.type}
-              onChange={(event) =>
-                setDraft({
-                  ...draft,
-                  type: event.target.value as RewardType,
-                  // Switching type invalidates the menu item, so clear it.
-                  menu_item_id: event.target.value === 'voucher' ? '' : draft.menu_item_id,
-                })
-              }
-            >
-              <option value="free_item">Free item</option>
-              <option value="voucher">Voucher (₱ off)</option>
-            </Select>
-          </div>
 
           <div>
             <Label htmlFor="rw-emoji" className="mb-1.5">
