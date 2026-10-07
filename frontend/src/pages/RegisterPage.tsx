@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { fieldError } from '../services/api'
 import Button from '../components/ui/Button'
 import Input from '../components/ui/Input'
 import Label from '../components/ui/Label'
@@ -11,6 +12,43 @@ interface ValidationErrors {
   email?: string[]
   phone?: string[]
   password?: string[]
+  password_confirmation?: string[]
+}
+
+/**
+ * Client-side mirror of the backend's App\Rules\StrongPassword, which requires
+ * 8+ characters with at least one lowercase, one uppercase and one digit.
+ *
+ * Every composition failure reports ONE message. The API still names each
+ * missing class individually ("must contain at least one number"), but this
+ * guard runs first so a weak password never reaches it — and naming the class
+ * that is missing hands anyone probing this form a running tally of what is
+ * still missing. Length stays a separate message because it is already in the
+ * field's own hint text.
+ */
+function passwordProblem(password: string): string | null {
+  if (password.length === 0) return null
+  if (password.length < 8) return 'Must be at least 8 characters.'
+  const strong = /[a-z]/.test(password) && /[A-Z]/.test(password) && /[0-9]/.test(password)
+  if (!strong) return 'Must contain uppercase, lowercase and a number.'
+  return null
+}
+
+/**
+ * A PH mobile is fixed at +63 9 XXXXXXXX — the country code and the leading 9
+ * are both part of the format, so both are static on the field and only the
+ * trailing 9 digits are typed. Stored locally that is 09XXXXXXXXX.
+ */
+const PH_MOBILE_TAIL = 9
+
+/** Keeps only digits and caps the length — used while typing. */
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, '').slice(0, PH_MOBILE_TAIL)
+}
+
+/** What the field holds -> the local form the API and database store. */
+function toStoredPhone(value: string): string | null {
+  return value === '' ? null : `09${value}`
 }
 
 export default function RegisterPage() {
@@ -27,33 +65,43 @@ export default function RegisterPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+
+    // Confirmation before strength: a mismatch is a typo the user just made and
+    // is more useful to report than anything about the password itself.
     if (password !== passwordConfirmation) {
-      setErrors({ password: ['Password confirmation does not match.'] })
+      setErrors({ password_confirmation: ['Password confirmation does not match.'] })
+      setGeneralError('')
       return
     }
+
+    // Same rules the API enforces, checked before the request. Register is
+    // throttled to 5/min per IP, so a weak password should never spend a slot.
+    // The message is the same one the backend returns and never names which
+    // character class is missing.
+    const weak = passwordProblem(password)
+    if (weak) {
+      setErrors({ password: [weak] })
+      setGeneralError('')
+      return
+    }
+
     setErrors({})
     setGeneralError('')
     setSubmitting(true)
 
     try {
-      await register(name, email, password, passwordConfirmation, phone)
+      await register(name, email, password, passwordConfirmation, toStoredPhone(phone) ?? undefined)
       navigate('/dashboard', { replace: true })
     } catch (err: unknown) {
-      type AxiosLikeError = {
-        response?: {
-          status?: number
-          data?: { message?: string; errors?: Record<string, string[]> }
-        }
-      }
-      const axiosError = err as AxiosLikeError
-      if (axiosError?.response?.status === 422) {
-        setErrors(axiosError.response.data?.errors ?? {})
-      } else {
-        setGeneralError(
-          axiosError?.response?.data?.message ??
-            'Unable to connect to the server. Please try again.',
-        )
-      }
+      // Laravel's 422 carries one message per field; anything else (403, 429,
+      // network) collapses into `form`.
+      const mapped = fieldError(err)
+      setErrors(
+        Object.fromEntries(
+          Object.entries(mapped).map(([field, message]) => [field, [message]]),
+        ),
+      )
+      if (mapped.form) setGeneralError(mapped.form)
     } finally {
       setSubmitting(false)
     }
@@ -118,14 +166,28 @@ export default function RegisterPage() {
               <Label htmlFor="phone" className="mb-1.5">
                 Phone <span className="font-normal text-slate-400">(optional)</span>
               </Label>
-              <Input
-                id="phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                autoComplete="tel"
-                placeholder="+63 912 345 6789"
-              />
+              <div className="relative">
+                <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-sm text-slate-500 dark:text-slate-400">
+                  +63 9
+                </span>
+                <Input
+                  id="phone"
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel-national"
+                  maxLength={PH_MOBILE_TAIL}
+                  value={phone}
+                  onChange={(e) => setPhone(digitsOnly(e.target.value))}
+                  placeholder="123456789"
+                  aria-invalid={Boolean(errors.phone)}
+                  // Both branches are complete literals so Tailwind's scanner
+                  // finds pl-12; interpolated prefixes are never generated.
+                  className={errors.phone ? 'pl-12 border-red-500 dark:border-red-500' : 'pl-12'}
+                />
+              </div>
+              {errors.phone && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">{errors.phone[0]}</p>
+              )}
             </div>
 
             <div>
@@ -141,12 +203,19 @@ export default function RegisterPage() {
                 minLength={8}
                 autoComplete="new-password"
                 placeholder="At least 8 characters"
+                aria-invalid={Boolean(errors.password)}
+                className={errors.password ? 'border-red-500 dark:border-red-500' : ''}
               />
-              {errors.password && (
-                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
-                  {errors.password[0]}
-                </p>
-              )}
+              <p
+                className={`mt-1.5 text-xs ${
+                  errors.password
+                    ? 'font-semibold text-red-600 dark:text-red-400'
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              >
+                {errors.password?.[0] ??
+                  'At least 8 characters, with an uppercase letter, a lowercase letter and a number.'}
+              </p>
             </div>
 
             <div>
@@ -161,7 +230,16 @@ export default function RegisterPage() {
                 required
                 autoComplete="new-password"
                 placeholder="••••••••"
+                aria-invalid={Boolean(errors.password_confirmation)}
+                className={
+                  errors.password_confirmation ? 'border-red-500 dark:border-red-500' : ''
+                }
               />
+              {errors.password_confirmation && (
+                <p className="mt-1.5 text-sm text-red-600 dark:text-red-400">
+                  {errors.password_confirmation[0]}
+                </p>
+              )}
             </div>
 
             <Button type="submit" disabled={submitting} className="w-full py-2.5">

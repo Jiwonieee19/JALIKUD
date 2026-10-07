@@ -119,6 +119,36 @@ export default function AdminSettingsPage() {
    * the table is empty.
    */
   async function handleSave() {
+    // Same rules the API enforces, checked before the request so a rejected
+    // value never leaves the browser.
+    //
+    // NOTE tax_rate_percent is deliberately NOT capped at 100 here. The input
+    // carries max="100", but StoreSettingController validates it as min:0 only,
+    // so a higher rate is something the API permits — guarding it client-side
+    // would reject a value the server would have stored. Fix the two together
+    // or neither.
+    const localErrors: Record<string, string> = {}
+
+    if (draft.store_name.trim() === '') {
+      localErrors.store_name = 'Store name is required.'
+    } else if (draft.store_name.trim().length > 150) {
+      localErrors.store_name = 'Keep the store name to 150 characters or fewer.'
+    }
+
+    for (const key of ['min_order_amount', 'delivery_fee', 'tax_rate_percent'] as const) {
+      const raw = draft[key]
+      if (raw === '') continue
+      if (!Number.isFinite(Number(raw)) || Number(raw) < 0) {
+        localErrors[key] = 'Must not be negative.'
+      }
+    }
+
+    if (Object.keys(localErrors).length > 0) {
+      setFieldErrors(localErrors)
+      setError('')
+      return
+    }
+
     setSaving(true)
     setError('')
     setFieldErrors({})
@@ -265,7 +295,16 @@ export default function AdminSettingsPage() {
                 step="0.01"
                 value={draft.min_order_amount}
                 onChange={(event) => update('min_order_amount', event.target.value)}
+                aria-invalid={Boolean(fieldErrors.min_order_amount)}
+                className={
+                  fieldErrors.min_order_amount ? 'border-red-500 dark:border-red-500' : ''
+                }
               />
+              {fieldErrors.min_order_amount && (
+                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                  {fieldErrors.min_order_amount}
+                </p>
+              )}
             </div>
             <div>
               <Label htmlFor="st-fee" className="mb-1.5">
@@ -278,7 +317,14 @@ export default function AdminSettingsPage() {
                 step="0.01"
                 value={draft.delivery_fee}
                 onChange={(event) => update('delivery_fee', event.target.value)}
+                aria-invalid={Boolean(fieldErrors.delivery_fee)}
+                className={fieldErrors.delivery_fee ? 'border-red-500 dark:border-red-500' : ''}
               />
+              {fieldErrors.delivery_fee && (
+                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                  {fieldErrors.delivery_fee}
+                </p>
+              )}
             </div>
             <div>
               <Label htmlFor="st-tax" className="mb-1.5">
@@ -292,7 +338,16 @@ export default function AdminSettingsPage() {
                 step="0.01"
                 value={draft.tax_rate_percent}
                 onChange={(event) => update('tax_rate_percent', event.target.value)}
+                aria-invalid={Boolean(fieldErrors.tax_rate_percent)}
+                className={
+                  fieldErrors.tax_rate_percent ? 'border-red-500 dark:border-red-500' : ''
+                }
               />
+              {fieldErrors.tax_rate_percent && (
+                <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">
+                  {fieldErrors.tax_rate_percent}
+                </p>
+              )}
             </div>
           </div>
           <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
