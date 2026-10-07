@@ -484,7 +484,7 @@ export default function AdminCouponsPage() {
             {activeCount} active of {coupons.length} total
           </p>
         </div>
-        <Button onClick={openCreate}>New coupon</Button>
+        <Button onClick={openCreate}>+ New Coupon</Button>
       </header>
 
       {loadError && (
@@ -646,7 +646,7 @@ export default function AdminCouponsPage() {
               Cancel
             </Button>
             <Button onClick={() => void saveCoupon()} disabled={saving}>
-              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create coupon'}
+              {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Coupon'}
             </Button>
           </>
         }

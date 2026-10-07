@@ -142,7 +142,7 @@ export default function AdminOrdersPage() {
                 setPage(1)
               }}
             >
-              <option value="all">All types</option>
+              <option value="all">All Types</option>
               <option value="delivery">Delivery</option>
               <option value="pickup">Pickup</option>
             </Select>

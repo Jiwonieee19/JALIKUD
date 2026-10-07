@@ -430,10 +430,10 @@ export default function AdminMenuPage() {
         </div>
         {tab === 'items' ? (
           <Button onClick={openCreate} disabled={loading || categories.length === 0}>
-            Add menu item
+            + Add Menu Item
           </Button>
         ) : (
-          <Button onClick={openCreateCategory}>Add category</Button>
+          <Button onClick={openCreateCategory}>+ Add Category</Button>
         )}
       </header>
 
@@ -689,7 +689,7 @@ export default function AdminMenuPage() {
               Cancel
             </Button>
             <Button onClick={() => void saveItem()} disabled={saving}>
-              {saving ? 'Saving…' : editing ? 'Save changes' : 'Create item'}
+              {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Item'}
             </Button>
           </>
         }
