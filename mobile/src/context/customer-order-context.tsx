@@ -21,6 +21,7 @@ type CustomerOrderContextValue = {
   removeFromCart: (itemId: string) => Promise<void>; quantityInCart: (menuItemId: string | number) => number;
   applyCoupon: (code: string) => Promise<void>; clearCoupon: () => Promise<void>; placeOrder: (input: CheckoutInput) => Promise<CustomerOrder>;
   selectReward: (rewardKey: string) => Promise<void>; clearReward: () => Promise<void>;
+  updateCartOrderType: (orderType: 'delivery' | 'pickup') => Promise<void>;
   updateOrderStatus: (orderNumber: string, status: CustomerOrderStatus, cancelReason?: string) => void;
   redeemReward: (rewardId: string, points: number) => boolean; clearError: () => void;
 };
@@ -193,6 +194,10 @@ export function CustomerOrderProvider({ children }: { children: ReactNode }) {
     if (!token) return;
     await run(async () => { await acceptCartPayload((await customerApi.clearCartReward(token)).data); });
   }, [acceptCartPayload, run, token]);
+  const updateCartOrderType = useCallback(async (orderType: 'delivery' | 'pickup') => {
+    if (!token) return;
+    await run(async () => { await acceptCartPayload((await customerApi.updateCart(token, { order_type: orderType })).data); });
+  }, [acceptCartPayload, run, token]);
   const placeOrder = useCallback(async (input: CheckoutInput) => {
     if (!token) throw new Error('Please sign in to place an order.');
     return run(async () => {
@@ -209,10 +214,10 @@ export function CustomerOrderProvider({ children }: { children: ReactNode }) {
   const value = useMemo<CustomerOrderContextValue>(() => ({
     cart, cartItems, orders, addresses, loading, mutating, error, pointsBalance: 0, pointsHistory: [], redeemedRewardIds: new Set<string>(),
     refreshCart, refreshOrders, refreshAddresses, addToCart, changeQuantity, removeFromCart, quantityInCart, applyCoupon, clearCoupon, placeOrder,
-    selectReward, clearReward,
+    selectReward, clearReward, updateCartOrderType,
     updateOrderStatus: () => undefined, redeemReward: () => false, clearError: () => setError(''),
   }), [addresses, addToCart, applyCoupon, cart, cartItems, changeQuantity, clearCoupon, clearReward, error, loading, mutating, orders, placeOrder,
-    quantityInCart, refreshAddresses, refreshCart, refreshOrders, removeFromCart, selectReward]);
+    quantityInCart, refreshAddresses, refreshCart, refreshOrders, removeFromCart, selectReward, updateCartOrderType]);
   return <CustomerOrderContext.Provider value={value}>{children}</CustomerOrderContext.Provider>;
 }
 

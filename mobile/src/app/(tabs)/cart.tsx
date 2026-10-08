@@ -32,7 +32,7 @@ function minimumCouponFeedback(error: unknown): string | null {
 export default function CartScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { cart, cartItems, addresses, changeQuantity, removeFromCart, applyCoupon, clearCoupon, placeOrder, mutating, error, refreshCart, refreshAddresses, clearReward, clearError } = useCustomerOrder();
+  const { cart, cartItems, addresses, changeQuantity, removeFromCart, applyCoupon, clearCoupon, placeOrder, mutating, error, refreshCart, refreshAddresses, clearReward, clearError, updateCartOrderType } = useCustomerOrder();
   const [coupon, setCoupon] = useState('');
   const [couponFeedback, setCouponFeedback] = useState('');
   const [notes, setNotes] = useState('');
@@ -49,7 +49,7 @@ export default function CartScreen() {
   const rewardDiscount = Number(cart?.reward_discount_amount ?? 0);
   const delivery = orderType === 'delivery' ? Number(cart?.delivery_fee ?? 0) : 0;
   const tax = Number(cart?.tax_amount ?? 0);
-  const computedTotal = Math.max(0, subtotal - discount + delivery + tax);
+  const computedTotal = Math.max(0, subtotal - discount - rewardDiscount + delivery + tax);
   // Server total is the source of truth; fall back to the client sum only
   // when the payload predates the pricing fields.
   const serverTotal = cart?.total_amount === undefined || cart?.total_amount === null
@@ -71,6 +71,7 @@ export default function CartScreen() {
   const selectOrderType = (type: 'delivery' | 'pickup') => {
     setOrderType(type);
     if (type === 'pickup') setPaymentMethod('gcash');
+    void updateCartOrderType(type).catch(() => undefined);
   };
 
   async function clearUnavailable() {
