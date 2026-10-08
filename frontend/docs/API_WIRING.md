@@ -120,14 +120,17 @@ with `cancelled` reachable up to `ready`).
 ### Rewards — `/admin/rewards`
 | Real call | Auth |
 |---|---|
+| `GET /rewards` | customer catalogue — ✅ exists |
+| `GET /points` | customer ledger — ✅ exists |
+| `POST/DELETE /cart/reward` | reserve/clear at checkout — ✅ exists |
 | `GET /admin/rewards/redemptions` | admin — **does not exist yet** |
 | `GET/POST /admin/rewards` | admin — **does not exist yet** |
 | `PUT/DELETE /admin/rewards/{reward}` | admin — **does not exist yet** |
-| `GET /rewards` | customer catalogue — **does not exist yet** |
 
-Catalogue data in `src/mock/rewards.ts`, copied from
-`mobile/src/app/(tabs)/rewards.tsx:24-73`. See §4 for the reconstructed schema
-and the three data problems.
+The loyalty engine is live; the catalogue lives in `backend/config/rewards.php`
+rather than a table, so there is nothing for an admin screen to write to.
+Catalogue data in `src/mock/rewards.ts` was copied from
+`mobile/src/app/(tabs)/rewards.tsx:24-73`. See §4 for the full ticket.
 
 ### Dashboard — `src/pages/DashboardPage.tsx`, data in `src/mock/overview.ts`
 See §4 — **the endpoint does not exist yet.**
@@ -167,54 +170,179 @@ Needs `GET /rider/deliveries`, `GET /rider/deliveries/{order}`, and
 `User::isRider()` exists but is never called, and `bootstrap/app.php` registers no
 middleware aliases at all.
 
-### Rewards / redemption — `/admin/rewards`
-**Nothing exists on the backend.** No `Reward` model, no `rewards` /
-`reward_redemptions` / `reward_point_transactions` migration, no route matching
-`/reward`. `routes/api.php` was checked — zero.
+### Rewards / redemption — admin surface only
 
-The page is built and functional against mock data, sourced from the mobile
-catalogue at `mobile/src/app/(tabs)/rewards.tsx:24-73` so both clients agree.
+**The loyalty engine exists. The admin surface does not.** This section previously
+claimed "nothing exists on the backend", which was true when written and is now
+false. Current state, verified by reading the controllers:
 
-⚠️ **The schema design was deleted.** `DATABASE_SCHEMA.md` (514 lines, which
-specified all three tables) was removed in commit `14dd219`
-*"refactor: remove DATABASE_SCHEMA.md and update README with database design
-details"*. `README.md:291` still links to it and **that link is broken**, as are
-three others it now points at (`docs/DATA_DICTIONARY.md`,
-`docs/DATA_MODEL.md`, `docs/DATA_MODEL.drawio` — none of which were ever
-committed). So the rewards design is currently undocumented.
+| Piece | Status |
+|---|---|
+| `PointLedger` service (`backend/app/Services/PointLedger.php`) | ✅ earn / spend / refund, with locked balances |
+| `point_transactions` table | ✅ `2026_09_15_000021`, signed `points_delta` + `balance_after`, unique `(order_id, reason)` |
+| `GET /api/rewards`, `GET /api/points` | ✅ customer catalogue + own ledger |
+| `POST/DELETE /cart/reward` | ✅ reserve/clear at checkout |
+| Catalogue **storage** | ⚠️ `config/rewards.php` — three hardcoded entries, read via `PointLedger::definitions()` |
+| `Reward` model, `rewards` table | ❌ none |
+| `/admin/rewards` CRUD | ❌ none |
+| `RewardRedemption`, `reward_redemptions` | ❌ none, and see below — probably shouldn't exist |
+| `RewardsTest` | ✅ 12 cases; 147 tests pass in total |
 
-The types in `src/types.ts` are a reconstruction from the mobile data plus what
-the deleted draft specified:
+Mobile's Rewards tab is **live** against this, not prototype data: it calls
+`customerApi.rewards(token)` and `customerApi.points(token)` at
+`mobile/src/app/(tabs)/rewards.tsx:53`. `README.md:5` and `:776` used to describe
+it as a preview and have since been corrected.
 
-| Table | Columns | Notes |
+#### The two constraints that shape this
+
+**1. The customer identifier is a string, not an id.** `carts.reward_key` and
+`orders.reward_key` are `varchar(50)` holding values like `chickenjoy-1pc`, and
+`mobile/src/lib/customer-api.ts` types `Reward.key: string` with
+`busyKey: string | null`. So the table needs a unique `key` (slug) column and the
+existing `reward_key` columns stay as-is. Moving to integer ids would break the
+shipped mobile app and orphan every in-flight cart.
+
+**2. Rewards are spent instantly at checkout — nothing is ever issued.**
+There is no code for a customer to present and no `issued → used/expired/revoked`
+lifecycle, because `OrderController::store()` deducts points immediately via
+`spendForOrder`. So `RewardRedemption` in `src/types.ts` is fictional and a
+`reward_redemptions` table would duplicate the ledger.
+
+An admin's Redemptions tab is answerable today as
+`point_transactions WHERE reason='spent'`, joined to `orders.reward_key` for the
+reward label. Recommend serving that and dropping the redemptions table entirely —
+it shrinks this ticket substantially.
+
+The reassuring part: the ledger engine is already decoupled from the catalogue.
+`awardForOrder`, `spendForOrder` and `refundForOrder` never read a definition —
+only `pesosPerPoint()`. This is a storage swap plus one new controller, not a
+rewrite.
+
+#### Schema — `rewards`
+
+| Column | Type | Notes |
 |---|---|---|
-| `rewards` | `points_required`, `stock` (null = unlimited), `monetary_value` (decimal), `menu_item_id` (nullable), `type`, `is_active` | Mobile called these `points` and `worth` |
-| `reward_redemptions` | `code` (unique), `status` lifecycle `issued→used/expired/revoked`, `points_spent`, `redeemed_at`, `used_at`, `expires_at` | `code` is what the customer presents |
-| `reward_point_transactions` | `points` (signed), `reason` `earned/spent/reversed/adjusted`, `balance_after`, `order_id` | Append-only ledger — never UPDATE. Draft specified 1 point per ₱10 spent |
+| `id` | pk | internal only; never the customer identifier |
+| `key` | string(50) unique | `chickenjoy-1pc`. Customer-facing. **Immutable after create** |
+| `label` | string(120) | as-is from config |
+| `type` | string(15) | `free_item` \| `voucher`, with a CHECK constraint |
+| `points_cost` | unsigned int | as-is from config |
+| `menu_item_id` | FK nullable nullOnDelete | **required** when `type=free_item`; replaces `menu_item_slug` |
+| `discount_amount` | decimal(10,2) nullable | **required** when `type=voucher` |
+| `min_order_amount` | decimal(10,2) nullable | voucher only |
+| `is_active` | bool default true | **new** — config had no such concept |
+| | timestamps | |
 
-Integrity rules the draft specified, worth preserving:
-- checkout must be one transaction
-- **lock the points balance** to prevent concurrent overspending
-- never hard-delete a reward that has redemptions — pause it instead
+Deliberately excluded, and why:
 
-Needed endpoints:
+- `stock` — no oversell mechanism exists. "One unit of that item in the cart" is
+  the current limit (`CartPricingService.php:102`). A counter would need
+  lock-and-decrement on the checkout hot path; the frontend should drop the field.
+- `emoji` — design-only, never had a column behind it.
+- `monetary_value` — redundant with `discount_amount`.
+- `title` / `description` — config has neither. Add `description` only if the
+  admin form's description field (`src/pages/AdminRewardsPage.tsx:57`) should
+  persist; otherwise the frontend drops it.
+
+Add a shared `RewardResource` so the customer and admin endpoints project
+identically.
+
+#### Endpoints
+
 ```
-GET|POST            /api/admin/rewards
-PUT|DELETE           /api/admin/rewards/{reward}
-GET                 /api/admin/rewards/redemptions
-GET                 /api/rewards                (customer catalogue)
-POST                /api/rewards/{reward}/redeem
+GET    /api/admin/rewards           ?search=&type=&is_active=&page=
+POST   /api/admin/rewards
+GET    /api/admin/rewards/{reward}
+PUT    /api/admin/rewards/{reward}
+DELETE /api/admin/rewards/{reward}       soft; 409 if any order references the key
+GET    /api/admin/points            ?reason=&user_id=&reward=&page=   ← the "Redemptions" tab
 ```
 
-### Three known data problems
+Admin-only under `EnsureAdmin` — consistent with coupons and catalogue, not
+staff. Use `Controller::paginated()` so the envelope matches `unwrapList` on the
+frontend.
+
+#### Call sites to change
+
+| File | Line | What |
+|---|---|---|
+| `backend/config/rewards.php` | 16-36 | becomes the seeder source, then deleted |
+| `backend/app/Services/PointLedger.php` | 21-24 | `definitions()` → table query. **Cache it** — it runs on every cart render and every checkout |
+| `backend/app/Services/PointLedger.php` | 18 | `pesosPerPoint()` — decide config vs `store_setting` |
+| `backend/app/Services/CartPricingService.php` | 84-119 | resolve by `key`; `$definition['menu_item_slug']` → relation lookup on `menu_item_id` |
+| `backend/app/Http/Controllers/CartController.php` | 150 | `applyCoupon` clears `reward_key` |
+| `backend/app/Http/Controllers/CartController.php` | 219-240 | `applyReward` validation + balance check |
+| `backend/app/Http/Controllers/OrderController.php` | 166-190 | re-validates the definition inside `store()` |
+| `backend/app/Http/Controllers/OrderController.php` | 241-242 | persists `reward_key` + `reward_discount_amount` |
+| `backend/app/Http/Controllers/OrderController.php` | 293-294 | `spendForOrder` call |
+| `backend/app/Http/Controllers/RewardController.php` | 23-60 | catalogue projection; the `whereIn('slug')` + `keyBy('slug')` block at 30-33 simplifies to an eager load |
+
+**Unchanged, and worth stating explicitly:** `awardForOrder`, `spendForOrder`,
+`refundForOrder` and their call sites (`OrderController.php:334,369,373,393`,
+`PaymentController.php:95`, `RiderDeliveryController.php:98`) never read a
+definition. None of the earn/refund/idempotency logic moves.
+
+#### Integrity rules to preserve
+
+- Checkout stays one transaction — `OrderController::store()` already wraps in
+  `DB::transaction`.
+- Keep `lockedBalance()` check-and-deduct so concurrent checkouts cannot overspend.
+- **Keep the fail-closed behaviour.** The comment at `config/rewards.php:4-6` is a
+  deliberate design note: renaming a key orphans in-flight carts and the pricing
+  layer *reports the reward unavailable rather than mispricing*. A deactivated
+  reward on a cart must produce that same error, never a stale price.
+- Never hard-delete a reward referenced by an order — the admin ledger would show
+  an unresolvable key. Soft delete, or 409.
+- `key` is immutable after creation; a rename is a new reward.
+
+#### Tests
+
+`RewardsTest:81` already asserts the exact key list and order —
+`['chickenjoy-1pc','yumburger','voucher-100']`. That test keeps passing if the
+seeder matches, which is a free regression guard on the swap.
+
+Add:
+- admin CRUD: 403 for staff and customer; 422 when `menu_item_id` is missing for
+  `free_item` and `discount_amount` is missing for `voucher`; duplicate `key` rejected
+- deactivating a reward on an in-flight cart surfaces `pricing_errors` and does
+  not misprice
+- deleting a referenced reward → 409
+- `GET /api/admin/points`: filters, pagination envelope, customer 403
+- `is_active=false` rewards are excluded from `GET /api/rewards`, but a cart
+  already holding one still errors clearly
+
+#### Frontend changes this unblocks
+
+- `Reward` → `key: string`, `label`, `type`, `points_cost`, `menu_item_id`,
+  `discount_amount`, `min_order_amount`, `is_active`. Drop `id`-as-identifier,
+  `title`, `stock`, `emoji`, `monetary_value`.
+- Delete `RewardRedemption` and `RewardPointTransaction` from `src/types.ts`;
+  add an admin ledger-entry type for the `reason=spent` view.
+- `RewardThumb` and `rewardItemName` both key off `emoji` and `menu_item_id` and
+  need reworking to use the linked menu item's `image_url`, falling back to initials.
+- The header line "N units in stock · avg ₱X per point"
+  (`AdminRewardsPage.tsx:230-233`) must go. There is no stock, and ₱-per-point is
+  a business metric, not an API field.
+
+#### Open questions
+
+1. **`stock` — yes or no?** Recommend no; see above.
+2. **`pesos_per_point`** — stay in config, or become a `store_setting` column an
+   admin can edit? It is currently `config/rewards.php:14` and drives all earning.
+3. **Soft delete vs refuse delete** for referenced rewards.
+4. **Keep `description`?** Only if the admin form's field should persist.
+
+#### Two stale reward data problems that remain real
 
 1. **Price mismatch.** "Free Regular Fries" is worth ₱79.00 in mobile but the web
    menu fixture prices Crispy Fries at ₱59.00. One app is wrong.
 2. **Orphaned rewards.** "Peach Mango Pie" and "Sundae Cup" are free-item rewards
    with no matching `menu_items` row. Either add them to the menu or make them
-   standalone gifts. Surfaced in the page's "Needs attention" tab.
-3. **Nothing accrues points.** There is no ledger table, so balances never grow.
-   Mobile's `rewards.tsx:77` even hardcodes `useState(2450)` with no setter.
+   standalone gifts.
+
+(The third item previously listed here — "nothing accrues points, there is no
+ledger table" — is now **resolved**: `point_transactions` exists and
+`RewardsTest` covers award-on-completion and refund-on-cancel.)
 
 ### Variant groups — no write endpoints
 `MenuItemController@index` eager-loads `variantGroups.options`
@@ -379,9 +507,9 @@ That is why this file exists, and why it was kept updated: the mobile app now
 has a real network layer under `mobile/src/lib/` (`api.ts`, `auth-api.ts`,
 `customer-api.ts`) using built-in `fetch` + `EXPO_PUBLIC_API_URL`, with Sanctum
 tokens in `expo-secure-store`. Wired end-to-end: auth/session, store settings,
-categories, menu, server-priced cart/coupons, addresses, checkout, order
+categories, menu, server-priced cart/coupons/rewards, addresses, checkout, order
 history, profile/password, logout. **Still demo-only on mobile:** staff queue,
-rider flows, Deals, and Rewards (their backend domains do not exist yet).
+rider flows and Deals.
 
 Keep this file updated as you wire things up, or the same thing will happen
 here.
