@@ -89,6 +89,14 @@ export type CartItem = {
 };
 
 export type CartReward = { key: string; label: string };
+export type CouponDetails = {
+  code: string;
+  type: 'fixed' | 'percentage';
+  value: string;
+  min_order_amount: string;
+  max_discount_amount: string | null;
+};
+export type CartCoupon = CouponDetails & { id: number };
 
 export type Cart = {
   id: number;
@@ -99,7 +107,7 @@ export type Cart = {
   reward: CartReward | null;
   cart_items: CartItem[];
   address: Address | null;
-  coupon: { id: number; code: string } | null;
+  coupon: CartCoupon | null;
   subtotal: number;
   discount_amount: number;
   reward_discount_amount: number;
@@ -203,6 +211,8 @@ export const customerApi = {
     apiRequest<{ message: string }>(`/cart/items/${cartId}/${itemId}`, { token, method: 'DELETE' }),
   applyCoupon: (token: string, code: string) =>
     apiRequest<DataResponse<Cart>>('/cart/coupon', { token, method: 'POST', body: { code } }),
+  clearCartCoupon: (token: string) =>
+    apiRequest<DataResponse<Cart>>('/cart/coupon', { token, method: 'DELETE' }),
   rewards: (token: string) =>
     apiRequest<DataResponse<{ balance: number; rewards: Reward[] }>>('/rewards', { token }),
   points: (token: string) =>

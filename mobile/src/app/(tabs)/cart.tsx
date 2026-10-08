@@ -5,15 +5,36 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCustomerOrder, type CustomerPaymentMethod } from '@/context/customer-order-context';
+import { errorMessage, isApiError } from '@/lib/api';
+import type { CouponDetails } from '@/lib/customer-api';
 
 const RED = '#DC2626'; const BG = '#F4F4F6'; const CARD = '#FFFFFF'; const TEXT = '#1C1C1E'; const GRAY = '#74747C';
 const peso = (value: number) => `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+function couponDescription(coupon: CouponDetails): string {
+  const value = Number(coupon.value);
+  const discount = coupon.type === 'fixed'
+    ? `${peso(value)} off`
+    : `${value.toLocaleString('en-PH', { maximumFractionDigits: 2 })}% off`;
+  const cap = coupon.max_discount_amount === null ? '' : ` · Maximum discount ${peso(Number(coupon.max_discount_amount))}`;
+
+  return `${discount} · Minimum spend ${peso(Number(coupon.min_order_amount))}${cap}`;
+}
+
+function minimumCouponFeedback(error: unknown): string | null {
+  if (!isApiError(error) || typeof error.response !== 'object' || error.response === null) return null;
+  const response = error.response as { coupon?: CouponDetails; required_additional_amount?: string };
+  if (!response.coupon || response.required_additional_amount === undefined) return null;
+
+  return `${couponDescription(response.coupon)} · Add ${peso(Number(response.required_additional_amount))} more to apply.`;
+}
+
 export default function CartScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { cart, cartItems, addresses, changeQuantity, removeFromCart, applyCoupon, placeOrder, mutating, error, refreshCart, refreshAddresses, clearReward } = useCustomerOrder();
+  const { cart, cartItems, addresses, changeQuantity, removeFromCart, applyCoupon, clearCoupon, placeOrder, mutating, error, refreshCart, refreshAddresses, clearReward, clearError } = useCustomerOrder();
   const [coupon, setCoupon] = useState('');
+  const [couponFeedback, setCouponFeedback] = useState('');
   const [notes, setNotes] = useState('');
   const [orderType, setOrderType] = useState<'delivery' | 'pickup'>('delivery');
   const [addressId, setAddressId] = useState<number>();
@@ -74,6 +95,17 @@ export default function CartScreen() {
     }
   }
 
+  async function submitCoupon() {
+    try {
+      await applyCoupon(coupon);
+      setCoupon('');
+      setCouponFeedback('');
+    } catch (caught) {
+      setCouponFeedback(minimumCouponFeedback(caught) ?? errorMessage(caught));
+      clearError();
+    }
+  }
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     Promise.all([refreshCart(), refreshAddresses()])
@@ -85,6 +117,10 @@ export default function CartScreen() {
   // path, so a stale payload could otherwise sit here indefinitely.
   useFocusEffect(useCallback(() => {
     void Promise.all([refreshCart(), refreshAddresses()]).catch(() => undefined);
+    return () => {
+      setCoupon('');
+      setCouponFeedback('');
+    };
   }, [refreshAddresses, refreshCart]));
 
   useEffect(() => {
@@ -125,7 +161,19 @@ export default function CartScreen() {
           <View style={styles.priceCopy}><Text style={styles.price}>{peso(item.lineTotal)}</Text><Pressable disabled={mutating} onPress={() => void removeFromCart(item.id).catch(() => undefined)}><Text style={styles.remove}>Remove</Text></Pressable></View>
         </View>)}
 
-        <View style={styles.card}><Text style={styles.cardTitle}>Coupon</Text>{cart?.coupon ? <Text style={styles.success}>✓ {cart.coupon.code} applied</Text> : <View style={styles.inputRow}><TextInput style={styles.input} autoCapitalize="characters" placeholder="Coupon code" value={coupon} onChangeText={setCoupon} /><Pressable disabled={mutating || !coupon.trim()} onPress={() => void applyCoupon(coupon).catch(() => undefined)} style={styles.apply}><Text style={styles.applyText}>Apply</Text></Pressable></View>}</View>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Coupon</Text>
+          {cart?.coupon ? <>
+            <View style={styles.summary}>
+              <Text style={styles.success}>✓ {cart.coupon.code} applied</Text>
+              <Pressable disabled={mutating} onPress={() => void clearCoupon().catch(() => undefined)}><Text style={styles.remove}>Remove</Text></Pressable>
+            </View>
+            <Text style={styles.couponDescription}>{couponDescription(cart.coupon)}</Text>
+          </> : <>
+            <View style={styles.inputRow}><TextInput style={styles.input} autoCapitalize="none" autoCorrect={false} autoComplete="off" maxLength={50} placeholder="e.g. JALI10" value={coupon} onChangeText={(text) => { setCoupon(text); setCouponFeedback(''); }} /><Pressable disabled={mutating || !coupon.trim()} onPress={() => void submitCoupon()} style={styles.apply}><Text style={styles.applyText}>Apply</Text></Pressable></View>
+            {!!couponFeedback && <Text style={styles.couponFeedback}>{couponFeedback}</Text>}
+          </>}
+        </View>
 
         <View style={styles.card}><Text style={styles.cardTitle}>Fulfillment</Text><View style={styles.typeRow}>{(['delivery', 'pickup'] as const).map((type) => <Pressable key={type} onPress={() => setOrderType(type)} style={[styles.type, orderType === type && styles.typeActive]}><Text style={[styles.typeText, orderType === type && styles.typeTextActive]}>{type === 'delivery' ? 'Delivery' : 'Pickup'}</Text></Pressable>)}</View>
           {orderType === 'delivery' && <View style={styles.addresses}>{addresses.map((address) => <Pressable key={address.id} onPress={() => setAddressId(address.id)} style={[styles.address, selectedAddressId === address.id && styles.addressActive]}><Text style={styles.addressTitle}>{address.label || 'Address'}{address.is_default ? ' · Default' : ''}</Text><Text style={styles.muted}>{address.line1}, {address.city}</Text></Pressable>)}{addresses.length === 0 && <Text style={styles.error}>Add a delivery address in Settings before checkout.</Text>}</View>}
@@ -217,6 +265,6 @@ const styles = StyleSheet.create({
   body: { flex: 1 }, scroll: { flex: 1 },
   content: { padding: 16, paddingBottom: 24, gap: 12 }, empty: { alignItems: 'center', paddingVertical: 70, gap: 6 }, emptyIcon: { fontSize: 54 }, card: { backgroundColor: CARD, borderRadius: 15, padding: 14, gap: 11 }, cardTitle: { color: TEXT, fontSize: 16, fontWeight: '900' }, muted: { color: GRAY, fontSize: 12 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: CARD, borderRadius: 15, padding: 12 }, emoji: { fontSize: 38 }, itemCopy: { flex: 1, gap: 3 }, itemName: { color: TEXT, fontSize: 14, fontWeight: '800' }, priceCopy: { alignItems: 'flex-end', gap: 10 }, price: { color: RED, fontWeight: '900' }, remove: { color: RED, fontSize: 11, fontWeight: '700' }, quantity: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 5 }, circle: { width: 25, height: 25, borderRadius: 13, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' }, circleText: { color: '#FFF', fontWeight: '900' }, qty: { minWidth: 16, textAlign: 'center', fontWeight: '800' },
-  inputRow: { flexDirection: 'row', gap: 8 }, input: { flex: 1, borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, color: TEXT }, apply: { backgroundColor: RED, borderRadius: 11, justifyContent: 'center', paddingHorizontal: 18 }, applyText: { color: '#FFF', fontWeight: '800' }, success: { color: '#15803D', fontWeight: '800' }, typeRow: { flexDirection: 'row', gap: 8 }, type: { flex: 1, borderWidth: 1, borderColor: '#DDD', borderRadius: 10, alignItems: 'center', padding: 10 }, typeActive: { backgroundColor: RED, borderColor: RED }, typeText: { color: TEXT, fontWeight: '700' }, typeTextActive: { color: '#FFF' }, addresses: { gap: 7 }, address: { borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, padding: 10 }, addressActive: { borderColor: RED, backgroundColor: '#FEF2F2' }, addressTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, notes: { minHeight: 65 },
+  inputRow: { flexDirection: 'row', gap: 8 }, input: { flex: 1, borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, color: TEXT }, apply: { backgroundColor: RED, borderRadius: 11, justifyContent: 'center', paddingHorizontal: 18 }, applyText: { color: '#FFF', fontWeight: '800' }, couponDescription: { color: GRAY, fontSize: 12, lineHeight: 18 }, couponFeedback: { color: '#B45309', fontSize: 12, fontWeight: '700', lineHeight: 18 }, success: { color: '#15803D', fontWeight: '800' }, typeRow: { flexDirection: 'row', gap: 8 }, type: { flex: 1, borderWidth: 1, borderColor: '#DDD', borderRadius: 10, alignItems: 'center', padding: 10 }, typeActive: { backgroundColor: RED, borderColor: RED }, typeText: { color: TEXT, fontWeight: '700' }, typeTextActive: { color: '#FFF' }, addresses: { gap: 7 }, address: { borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, padding: 10 }, addressActive: { borderColor: RED, backgroundColor: '#FEF2F2' }, addressTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, notes: { minHeight: 65 },
   summary: { flexDirection: 'row', justifyContent: 'space-between' }, summaryValue: { color: TEXT, fontSize: 12, fontWeight: '700' }, free: { color: '#15803D', fontSize: 12, fontWeight: '800' }, paymentBlock: { gap: 8, borderTopWidth: 1, borderTopColor: '#EEE', paddingTop: 10 }, paymentTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, clearStale: { borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', borderRadius: 10, padding: 10, alignItems: 'center' }, clearStaleText: { color: '#B91C1C', fontSize: 12, fontWeight: '800' }, totalRow: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#EEE', paddingTop: 10 }, totalLabel: { color: TEXT, fontWeight: '900' }, total: { color: RED, fontSize: 17, fontWeight: '900' }, error: { color: '#B91C1C', fontSize: 12, fontWeight: '700' }, checkoutBar: { backgroundColor: CARD, padding: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#EEE' }, checkout: { backgroundColor: RED, borderRadius: 14, padding: 16, alignItems: 'center' }, checkoutText: { color: '#FFF', fontWeight: '900' }, disabled: { opacity: 0.45 },
 });

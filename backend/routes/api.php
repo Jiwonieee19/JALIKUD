@@ -50,6 +50,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/cart/items/{cart}/{cartItem}', [CartController::class, 'removeItem']);
     Route::delete('/cart', [CartController::class, 'destroy']);
     Route::post('/cart/coupon', [CartController::class, 'applyCoupon'])->middleware('throttle:coupons');
+    Route::delete('/cart/coupon', [CartController::class, 'removeCoupon']);
     Route::post('/cart/reward', [CartController::class, 'applyReward']);
     Route::delete('/cart/reward', [CartController::class, 'removeReward']);
 
