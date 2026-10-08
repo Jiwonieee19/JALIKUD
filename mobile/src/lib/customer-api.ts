@@ -195,6 +195,8 @@ export const customerApi = {
     };
   },
   cart: (token: string) => apiRequest<DataResponse<Cart>>('/cart', { token }),
+  updateCart: (token: string, input: { order_type: 'delivery' | 'pickup'; address_id?: number | null }) =>
+    apiRequest<DataResponse<Cart>>('/cart', { token, method: 'PATCH', body: input }),
   addCartItem: (token: string, menuItemId: number, quantity = 1) =>
     apiRequest<DataResponse<Cart>>('/cart/items', {
       token,
