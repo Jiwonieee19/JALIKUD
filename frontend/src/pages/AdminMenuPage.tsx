@@ -453,6 +453,7 @@ export default function AdminMenuPage() {
   async function uploadImage(file: File): Promise<string> {
     const formData = new FormData()
     formData.append('image', file)
+    formData.append('folder', 'menu-items')
 
     const response = await api.post('/admin/uploads/image', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },

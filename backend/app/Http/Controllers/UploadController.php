@@ -15,10 +15,15 @@ class UploadController extends Controller
 {
     /**
      * POST /api/admin/uploads/image
+     *
+     * Body: multipart `image` + optional `folder` (one of UploadImageRequest::FOLDERS,
+     * default `general`). The folder routes the image to its own subdirectory so
+     * different upload features stay separated.
      */
     public function storeImage(UploadImageRequest $request): JsonResponse
     {
-        $path = $request->file('image')->store('uploads/images', 'public');
+        $folder = $request->input('folder', 'general');
+        $path = $request->file('image')->store('uploads/images/'.$folder, 'public');
 
         return response()->json([
             'data' => [
