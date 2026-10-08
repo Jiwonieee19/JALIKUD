@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -7,35 +7,36 @@ import Modal from '../components/ui/Modal'
 import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Tabs from '../components/ui/Tabs'
-import Textarea from '../components/ui/Textarea'
-import Label from '../components/ui/Label'
-import { formatDateTime, mockOrders, mockRiders, paginate, peso } from '../mock'
+import api, { fieldError } from '../services/api'
+import { unwrapList } from '../services/lists'
+import { formatDateTime, paginate, peso } from '../mock'
 import Pagination from '../components/ui/Pagination'
-import type { Order, OrderStatus } from '../types'
+import type { AdminRider, Order, OrderStatus } from '../types'
 
 /**
- * MOCK-DATA PAGE — stands in for:
- *   GET /api/admin/orders            (?status=, ?search=, ?page=)
+ * Read-only view of the order queue. Endpoints used (all behind `EnsureStaff`,
+ * so admins pass too):
+ *
+ *   GET /api/admin/orders          ?per_page=100
  *   GET /api/admin/orders/{order}
- *   PUT /api/admin/orders/{order}/status   body: { status, note? }
+ *   GET /api/admin/riders          ?per_page=100   (names for the Rider column)
+ *   GET /api/admin/stats                        (tab badge counts)
  *
- * TODO(next-dev): swap the imports at the top of this file for calls to
- * src/services/api, e.g.
- *   const { data } = await api.get('/admin/orders', { params: { status, search, page } })
- *   await api.put(`/admin/orders/${order.id}/status`, { status, note })
+ * This page deliberately performs NO mutations. Confirming, advancing status,
+ * assigning riders and recording payment all live on the mobile client, which
+ * drives them through `PUT /admin/orders/{order}/status`,
+ * `PUT /admin/orders/{order}/rider` and `PUT /admin/orders/{order}/payment`.
+ * So every row has exactly one action: View.
  *
- * Auth: admin token required (EnsureAdmin middleware).
- *
- * ⚠️ Known backend issue: OrderController@updateStatus correctly checks
- * isStaff(), but the route sits inside the EnsureAdmin group in
- * backend/routes/api.php, so staff get 403 before that check runs.
- * See docs/API_WIRING.md.
+ * The whole order set is fetched once at the API's 100-row cap and filtered and
+ * paged here, so the status tabs, the type dropdown and the search box all work
+ * against the full set without a round trip per keystroke.
  */
 
 /** Rows per page in the order table. */
 const PER_PAGE = 7
 
-/** Legal transitions, mirroring the orders_status_check CHECK constraint. */
+/** The statuses in the orders_status_check CHECK constraint, in queue order. */
 const ALL_STATUSES: OrderStatus[] = [
   'pending',
   'confirmed',
@@ -45,16 +46,6 @@ const ALL_STATUSES: OrderStatus[] = [
   'completed',
   'cancelled',
 ]
-
-const FLOW: Record<OrderStatus, OrderStatus[]> = {
-  pending: ['confirmed', 'cancelled'],
-  confirmed: ['preparing', 'cancelled'],
-  preparing: ['ready', 'cancelled'],
-  ready: ['out_for_delivery', 'completed'],
-  out_for_delivery: ['completed'],
-  completed: [],
-  cancelled: [],
-}
 
 const statusLabel: Record<OrderStatus, string> = {
   pending: 'Pending',
@@ -79,27 +70,106 @@ const statusTone: Record<OrderStatus, 'neutral' | 'success' | 'warning' | 'dange
 type Filter = OrderStatus | 'all'
 
 export default function AdminOrdersPage() {
+  const [orders, setOrders] = useState<Order[]>([])
+  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({})
   const [filter, setFilter] = useState<Filter>('all')
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'all' | 'delivery' | 'pickup'>('all')
   const [selected, setSelected] = useState<Order | null>(null)
   const [page, setPage] = useState(1)
-  const [assigning, setAssigning] = useState<Order | null>(null)
-  const [riderChoice, setRiderChoice] = useState('')
-  const [note, setNote] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [riders, setRiders] = useState<AdminRider[]>([])
+  const [ridersError, setRidersError] = useState('')
   const [toast, setToast] = useState<string | null>(null)
 
+  /**
+   * Fetched once at the API's 100-row cap so the tabs, type dropdown and search
+   * box cover the whole set. Filtering and paging then happen in `rows` below.
+   */
+  const refresh = useCallback(async () => {
+    try {
+      const response = await api.get('/admin/orders', { params: { per_page: 100 } })
+      setOrders(unwrapList<Order>(response.data).data)
+      setLoadError('')
+    } catch (err) {
+      setLoadError(fieldError(err).form ?? 'Could not load orders.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
+   * Rider directory, used only to turn `order.rider_id` into a display name.
+   *
+   * `GET /admin/orders` does NOT eager-load the `rider` relation — see
+   * `OrderController@index` — but it does return `rider_id`, and
+   * `GET /admin/riders` returns every rider's name. So the table joins the two
+   * client-side instead of asking the backend for one more relation.
+   *
+   * This is a lookup, not the page's data: a failure here keeps the previous map
+   * and reports itself, but must never stop the order table from rendering.
+   */
+  const refreshRiders = useCallback(async () => {
+    try {
+      const response = await api.get('/admin/riders', { params: { per_page: 100 } })
+      setRiders(unwrapList<AdminRider>(response.data).data)
+      setRidersError('')
+    } catch (err) {
+      setRidersError(fieldError(err).form ?? 'Could not load rider names.')
+    }
+  }, [])
+
+  /**
+   * Tab badge counts come from GET /admin/stats, whose `orders_by_status` map
+   * covers every order. There is no filtered status-count endpoint, so these
+   * numbers describe the whole queue rather than the current search — they are a
+   * sense of scale, not a count of the rows on screen.
+   *
+   * Failure here is non-fatal: badges fall back to the tab's own row count.
+   */
+  const refreshCounts = useCallback(async () => {
+    try {
+      const response = await api.get('/admin/stats')
+      const stats = response.data?.data as { orders_by_status?: Record<string, number> } | undefined
+      setStatusCounts(stats?.orders_by_status ?? {})
+    } catch {
+      setStatusCounts({})
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    void refreshRiders()
+    void refreshCounts()
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void refresh()
+        void refreshRiders()
+        void refreshCounts()
+      }
+    }
+    const interval = window.setInterval(refreshWhenVisible, 30_000)
+    window.addEventListener('focus', refreshWhenVisible)
+
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshWhenVisible)
+    }
+  }, [refresh, refreshRiders, refreshCounts])
+
   const counts = useMemo(() => {
-    const map: Record<string, number> = { all: mockOrders.length }
+    const map: Record<string, number> = { all: orders.length }
     for (const status of ALL_STATUSES) {
-      map[status] = mockOrders.filter((order) => order.status === status).length
+      map[status] = statusCounts[status] ?? orders.filter((order) => order.status === status).length
     }
     return map
-  }, [])
+  }, [orders, statusCounts])
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
-    return mockOrders.filter((order) => {
+    return orders.filter((order) => {
       const matchesStatus = filter === 'all' || order.status === filter
       const matchesType = typeFilter === 'all' || order.order_type === typeFilter
       const matchesSearch =
@@ -108,9 +178,16 @@ export default function AdminOrdersPage() {
         (order.user?.name ?? '').toLowerCase().includes(term)
       return matchesStatus && matchesType && matchesSearch
     })
-  }, [filter, search, typeFilter])
+  }, [orders, filter, search, typeFilter])
 
-  const availableRiders = mockRiders.filter((rider) => rider.status !== 'offline')
+  /**
+   * `rider_id` -> display name, for the Rider column.
+   *
+   * The directory only lists users that still hold the rider role and are not
+   * soft-deleted, so a lookup can legitimately miss. `renderRider` below handles
+   * that rather than reporting the order as unassigned.
+   */
+  const riderNames = useMemo(() => new Map(riders.map((rider) => [rider.id, rider.name])), [riders])
 
   const { data: pagedRows, meta } = paginate(
     rows,
@@ -121,6 +198,23 @@ export default function AdminOrdersPage() {
   function flash(message: string) {
     setToast(message)
     window.setTimeout(() => setToast(null), 2600)
+  }
+
+  /**
+   * Show the row immediately, then upgrade it with the full payload — coupon,
+   * payments, reviews, address, rider and full status history all load here but
+   * not in the list response. `show()` does eager-load `rider`, so the detail's
+   * Rider field is always the server's own answer.
+   */
+  async function openDetail(order: Order) {
+    setSelected(order)
+    try {
+      const response = await api.get(`/admin/orders/${order.id}`)
+      const full = response.data?.data as Order | undefined
+      if (full) setSelected(full)
+    } catch (err) {
+      flash(fieldError(err).form ?? 'Could not load the order details.')
+    }
   }
 
   return (
@@ -181,7 +275,26 @@ export default function AdminOrdersPage() {
           />
         </div>
 
-        {rows.length === 0 ? (
+        {loadError && (
+          <p
+            role="alert"
+            className="mb-4 rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 ring-1 ring-red-200 ring-inset dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30"
+          >
+            {loadError}
+          </p>
+        )}
+
+        {/* The rider directory only supplies display names, so this degrades the
+            Rider column rather than blocking the page. */}
+        {ridersError && (
+          <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+            {ridersError} Rider names fall back to their id.
+          </p>
+        )}
+
+        {loading && orders.length === 0 ? (
+          <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">Loading.</p>
+        ) : rows.length === 0 ? (
           <EmptyState
             title="No orders match"
             description="Try a different status filter, or clear the search box."
@@ -202,7 +315,7 @@ export default function AdminOrdersPage() {
                 render: (order: Order) => (
                   <button
                     type="button"
-                    onClick={() => setSelected(order)}
+                    onClick={() => void openDetail(order)}
                     className="font-extrabold text-slate-900 hover:text-red-600 dark:text-white dark:hover:text-red-400"
                   >
                     {order.order_number}
@@ -232,14 +345,7 @@ export default function AdminOrdersPage() {
               {
                 key: 'rider',
                 header: 'Rider',
-                render: (order: Order) =>
-                  order.rider ? (
-                    <span className="font-semibold">{order.rider.name}</span>
-                  ) : order.order_type === 'delivery' ? (
-                    <Badge tone="warning">Unassigned</Badge>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  ),
+                render: (order: Order) => renderRider(order, riderNames),
               },
               {
                 key: 'status',
@@ -259,25 +365,13 @@ export default function AdminOrdersPage() {
                 header: '',
                 align: 'right',
                 render: (order: Order) => (
-                  <div className="flex justify-end gap-2">
-                    {FLOW[order.status].map((next) => (
-                      <Button
-                        key={next}
-                        variant={next === 'cancelled' ? 'ghost' : 'secondary'}
-                        className="px-2.5 py-1 text-xs"
-                        onClick={() => flash(`${order.order_number} → ${statusLabel[next]}`)}
-                      >
-                        {statusLabel[next]}
-                      </Button>
-                    ))}
-                    <Button
-                      variant="secondary"
-                      className="px-2.5 py-1 text-xs"
-                      onClick={() => setSelected(order)}
-                    >
-                      View
-                    </Button>
-                  </div>
+                  <Button
+                    variant="secondary"
+                    className="px-2.5 py-1 text-xs"
+                    onClick={() => void openDetail(order)}
+                  >
+                    View
+                  </Button>
                 ),
               },
             ]}
@@ -307,22 +401,9 @@ export default function AdminOrdersPage() {
         }
         size="lg"
         footer={
-          <>
-            {selected && selected.order_type === 'delivery' && !selected.rider && (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setRiderChoice('')
-                  setAssigning(selected)
-                }}
-              >
-                Assign rider
-              </Button>
-            )}
-            <Button variant="secondary" onClick={() => setSelected(null)}>
-              Close
-            </Button>
-          </>
+          <Button variant="secondary" onClick={() => setSelected(null)}>
+            Close
+          </Button>
         }
       >
         {selected && (
@@ -417,89 +498,6 @@ export default function AdminOrdersPage() {
         )}
       </Modal>
 
-      <Modal
-        open={assigning !== null}
-        onClose={() => setAssigning(null)}
-        title="Assign a rider"
-        description={assigning ? `Order ${assigning.order_number}` : undefined}
-        size="sm"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setAssigning(null)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!riderChoice}
-              onClick={() => {
-                const rider = mockRiders.find((candidate) => candidate.user_id === Number(riderChoice))
-                flash(`${assigning?.order_number} assigned to ${rider?.user?.name ?? 'rider'}`)
-                setAssigning(null)
-              }}
-            >
-              Assign
-            </Button>
-          </>
-        }
-      >
-        {availableRiders.length === 0 ? (
-          <EmptyState
-            title="No riders available"
-            description="Every rider is either on a delivery or offline."
-          />
-        ) : (
-          <fieldset>
-            <legend className="mb-2 text-xs font-extrabold tracking-wider text-slate-500 uppercase">
-              Available riders
-            </legend>
-            <div className="space-y-2">
-              {availableRiders.map((rider) => (
-                <label
-                  key={rider.id}
-                  className={`flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 ring-1 ring-inset transition-colors ${
-                    riderChoice === String(rider.user_id)
-                      ? 'bg-red-50 ring-red-300 dark:bg-red-500/10 dark:ring-red-500/40'
-                      : 'ring-slate-200 hover:bg-slate-50 dark:ring-slate-700 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="rider"
-                    value={rider.user_id}
-                    checked={riderChoice === String(rider.user_id)}
-                    onChange={(event) => setRiderChoice(event.target.value)}
-                    className="h-4 w-4 accent-red-600"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-bold text-slate-900 dark:text-white">
-                      {rider.user?.name}
-                    </span>
-                    <span className="block text-xs text-slate-500 dark:text-slate-400">
-                      {rider.vehicle} · {rider.license_plate}
-                    </span>
-                  </span>
-                  <Badge tone={rider.status === 'available' ? 'success' : 'info'}>
-                    {rider.status === 'available' ? 'Available' : 'On delivery'}
-                  </Badge>
-                </label>
-              ))}
-            </div>
-            <div className="mt-4">
-              <Label htmlFor="assign-note" className="mb-1.5">
-                Note (optional)
-              </Label>
-              <Textarea
-                id="assign-note"
-                rows={2}
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="Anything the rider should know…"
-                maxLength={500}
-              />
-            </div>
-          </fieldset>
-        )}
-      </Modal>
-
       {toast && (
         <div
           role="status"
@@ -509,6 +507,40 @@ export default function AdminOrdersPage() {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * The Rider cell.
+ *
+ * `GET /admin/orders` returns `rider_id` but does not eager-load the `rider`
+ * relation, so the name comes from a client-side join against
+ * `GET /admin/riders`. Three distinct states, deliberately not collapsed:
+ *
+ *   no rider_id on a delivery   -> Unassigned
+ *   no rider_id on a pickup     -> nothing to deliver, so a dash
+ *   rider_id with no match      -> Rider #<id>
+ *
+ * The third case is the one that must not read "Unassigned": the directory only
+ * lists users who still hold the rider role and are not soft-deleted, so an order
+ * can legitimately point at a rider who no longer appears there. Printing the id
+ * keeps that honest.
+ */
+function renderRider(order: Order, names: Map<number, string>) {
+  if (order.rider_id === null) {
+    return order.order_type === 'delivery' ? (
+      <Badge tone="warning">Unassigned</Badge>
+    ) : (
+      <span className="text-slate-400">—</span>
+    )
+  }
+
+  const name = names.get(order.rider_id)
+
+  return name ? (
+    <span className="font-semibold">{name}</span>
+  ) : (
+    <span className="text-slate-400">Rider #{order.rider_id}</span>
   )
 }
 

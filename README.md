@@ -2,7 +2,7 @@
 
 A full-stack, mobile-first financial platform built to **sustain economical and financial growth** by helping people and businesses structure, track, and grow their money. JALIKUD is a monorepo containing a Laravel REST API, a React web client, an Expo (React Native) mobile app, and a shared Postman collection for testing the API.
 
-> **Status:** Core authentication and the customer mobile flow are connected to the Laravel API: catalog, addresses, server-priced cart/coupons, checkout, orders, profile, password, and logout. Staff/rider operations and Deals/Rewards remain clearly marked prototype data. The API is published through a Cloudflare Tunnel when its home server is online. See [Exposing the Stack via Tunnels](#exposing-the-stack-via-tunnels).
+> **Status:** Core authentication and the customer mobile flow are connected to the Laravel API: catalog, addresses, server-priced cart/coupons/rewards, checkout, orders, profile, password, and logout. Staff/rider operations and Deals remain clearly marked prototype data. The API is published through a Cloudflare Tunnel when its home server is online. See [Exposing the Stack via Tunnels](#exposing-the-stack-via-tunnels).
 
 ---
 
@@ -773,7 +773,7 @@ Standard Laravel variables, notably:
 
 # JALIKUD Mobile
 
-Expo (React Native) app for JALIKUD — customers use the Laravel API, while the unfinished **Staff**, **Rider**, **Deals**, and **Rewards** experiences remain labeled previews.
+Expo (React Native) app for JALIKUD — customers use the Laravel API, including the live **Rewards** tab (balance, catalogue, redemption and ledger). The unfinished **Staff**, **Rider** and **Deals** experiences remain labeled previews.
 
 > Expo SDK 57 · React Native 0.86 · expo-router
 

@@ -246,6 +246,43 @@ export interface Order {
   reviews?: Review[]
 }
 
+/**
+ * A row of `GET /api/admin/riders` — the staff rider directory.
+ *
+ * The endpoint returns *User* records with the profile eager-loaded, NOT
+ * RiderProfile rows: `RiderController@index` queries
+ * `User::where('role', 'rider')->with('riderProfile')`. So `id` here is the user
+ * id, which is also what `PUT /api/admin/orders/{order}/rider` expects as
+ * `rider_id` (it validates against `users.id` with `role = rider`).
+ *
+ * The Orders table uses only `id` and `name`. `GET /api/admin/orders` does not
+ * eager-load an order's `rider` relation, but it does return `rider_id`, so that
+ * page joins the two here rather than asking the backend for another relation.
+ *
+ * Note the directory only lists users who still hold the rider role and are not
+ * soft-deleted, so a lookup can miss a `rider_id` that an order still points at.
+ *
+ * There is no `status` column. Duty is the `is_active` boolean on the profile,
+ * and it is enforced server-side: assigning an inactive rider 422s.
+ */
+export interface AdminRider {
+  id: number
+  name: string
+  email: string
+  phone: string | null
+  /**
+   * NOTE the snake_case. Laravel serialises relations with `Str::snake`, so the
+   * `riderProfile()` relation arrives as `rider_profile`, not `riderProfile`.
+   * Confirmed against a live `GET /api/admin/riders` response.
+   */
+  rider_profile: {
+    photo_url: string | null
+    vehicle_type: string | null
+    plate_number: string | null
+    is_active: boolean
+  } | null
+}
+
 /* -------------------------------------------------------------------------
  * Types below have NO backend contract yet. They are defined here so the
  * frontend can be designed against them; whoever wires the API should keep
@@ -294,13 +331,32 @@ export interface AdminOverview {
 /* -------------------------------------------------------------------------
  * REWARDS
  *
- * ⚠️ NO BACKEND SUPPORT EXISTS — no model, no migration, no endpoint. The
- * previous schema draft (DATABASE_SCHEMA.md) was deleted in commit 14dd219 and
- * README.md still links to it broken. These types are reconstructed from:
- *   - the mobile catalogue at mobile/src/app/(tabs)/rewards.tsx:24-73
- *   - what the deleted draft specified (rewards / reward_redemptions /
- *     reward_point_transactions)
- * Treat them as the proposal of record. See docs/API_WIRING.md.
+ * The LOYALTY ENGINE EXISTS: `PointLedger` service, `point_transactions` table,
+ * `GET /api/rewards`, `GET /api/points`, `POST|DELETE /api/cart/reward`, and 12
+ * cases in backend/tests/Feature/RewardsTest.php. Mobile's Rewards tab is live
+ * against it.
+ *
+ * What does NOT exist is the admin surface or a `rewards` table — the catalogue
+ * is hardcoded in backend/config/rewards.php and read through
+ * `PointLedger::definitions()`. So these types below are a DESIGN PROPOSAL for
+ * AdminRewardsPage, not a description of a contract, and several fields have no
+ * backend analogue at all:
+ *
+ *   stock           no oversell mechanism; "one unit in the cart" is the limit
+ *   emoji           design-only, never had a column
+ *   monetary_value  redundant with the backend's `discount_amount`
+ *   title           the backend calls it `label`
+ *   points_required the backend calls it `points_cost`
+ *   menu_item_id    the backend resolves a `menu_item_slug`
+ *
+ * `RewardRedemption` is more than unimplemented — it is fictional. Rewards are
+ * spent instantly at checkout via `spendForOrder`, so nothing is ever issued,
+ * there is no code to present, and no issued/used/expired/revoked lifecycle.
+ * An admin "Redemptions" tab should serve `point_transactions WHERE
+ * reason='spent'` joined to `orders.reward_key` instead.
+ *
+ * The proposal of record, with schema and call sites, is in
+ * docs/API_WIRING.md §4.
  * ---------------------------------------------------------------------- */
 
 /** `free_item` ships a menu item free, `voucher` is money off the order. */
