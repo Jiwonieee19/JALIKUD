@@ -19,7 +19,7 @@ type CustomerOrderContextValue = {
   refreshCart: () => Promise<void>; refreshOrders: () => Promise<void>; refreshAddresses: () => Promise<void>;
   addToCart: (item: AddCartItemInput) => Promise<void>; changeQuantity: (itemId: string, delta: number) => Promise<void>;
   removeFromCart: (itemId: string) => Promise<void>; quantityInCart: (menuItemId: string | number) => number;
-  applyCoupon: (code: string) => Promise<void>; placeOrder: (input: CheckoutInput) => Promise<CustomerOrder>;
+  applyCoupon: (code: string) => Promise<void>; clearCoupon: () => Promise<void>; placeOrder: (input: CheckoutInput) => Promise<CustomerOrder>;
   selectReward: (rewardKey: string) => Promise<void>; clearReward: () => Promise<void>;
   updateOrderStatus: (orderNumber: string, status: CustomerOrderStatus, cancelReason?: string) => void;
   redeemReward: (rewardId: string, points: number) => boolean; clearError: () => void;
@@ -181,6 +181,10 @@ export function CustomerOrderProvider({ children }: { children: ReactNode }) {
     if (!token) return;
     await run(async () => { await acceptCartPayload((await customerApi.applyCoupon(token, code.trim().toUpperCase())).data); });
   }, [acceptCartPayload, run, token]);
+  const clearCoupon = useCallback(async () => {
+    if (!token) return;
+    await run(async () => { await acceptCartPayload((await customerApi.clearCartCoupon(token)).data); });
+  }, [acceptCartPayload, run, token]);
   const selectReward = useCallback(async (rewardKey: string) => {
     if (!token) throw new Error('Please sign in to redeem a reward.');
     await run(async () => { await acceptCartPayload((await customerApi.selectCartReward(token, rewardKey)).data); });
@@ -204,10 +208,10 @@ export function CustomerOrderProvider({ children }: { children: ReactNode }) {
   const quantityInCart = useCallback((menuItemId: string | number) => cartItems.find((item) => item.menuItemId === Number(menuItemId))?.quantity ?? 0, [cartItems]);
   const value = useMemo<CustomerOrderContextValue>(() => ({
     cart, cartItems, orders, addresses, loading, mutating, error, pointsBalance: 0, pointsHistory: [], redeemedRewardIds: new Set<string>(),
-    refreshCart, refreshOrders, refreshAddresses, addToCart, changeQuantity, removeFromCart, quantityInCart, applyCoupon, placeOrder,
+    refreshCart, refreshOrders, refreshAddresses, addToCart, changeQuantity, removeFromCart, quantityInCart, applyCoupon, clearCoupon, placeOrder,
     selectReward, clearReward,
     updateOrderStatus: () => undefined, redeemReward: () => false, clearError: () => setError(''),
-  }), [addresses, addToCart, applyCoupon, cart, cartItems, changeQuantity, clearReward, error, loading, mutating, orders, placeOrder,
+  }), [addresses, addToCart, applyCoupon, cart, cartItems, changeQuantity, clearCoupon, clearReward, error, loading, mutating, orders, placeOrder,
     quantityInCart, refreshAddresses, refreshCart, refreshOrders, removeFromCart, selectReward]);
   return <CustomerOrderContext.Provider value={value}>{children}</CustomerOrderContext.Provider>;
 }

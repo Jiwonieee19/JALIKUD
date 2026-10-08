@@ -136,6 +136,82 @@ class CouponEnforcementTest extends TestCase
         $this->assertSame(1, $coupon->redemptions()->count());
     }
 
+    public function test_per_user_limit_allows_other_customers_and_exactly_the_configured_uses(): void
+    {
+        $first = $this->actor();
+        $coupon = $this->coupon(['usage_limit' => 10, 'usage_limit_per_user' => 2]);
+
+        foreach (range(1, 2) as $_) {
+            $this->addToCart();
+            $this->postJson('/api/orders', ['order_type' => 'pickup', 'coupon_code' => $coupon->code])
+                ->assertCreated();
+        }
+
+        $this->addToCart();
+        $this->postJson('/api/orders', ['order_type' => 'pickup', 'coupon_code' => $coupon->code])
+            ->assertUnprocessable();
+
+        $second = User::factory()->create();
+        Sanctum::actingAs($second);
+        $this->addToCart();
+        $this->postJson('/api/orders', ['order_type' => 'pickup', 'coupon_code' => $coupon->code])
+            ->assertCreated();
+
+        $this->assertSame(2, $coupon->redemptions()->where('user_id', $first->id)->count());
+        $this->assertSame(1, $coupon->redemptions()->where('user_id', $second->id)->count());
+    }
+
+    public function test_admin_coupon_supply_reflects_orders_and_cancellation_does_not_restore_it(): void
+    {
+        $this->actor();
+        $this->addToCart();
+        $coupon = $this->coupon(['code' => 'SUPPLY2', 'usage_limit' => 2, 'usage_limit_per_user' => 2]);
+
+        $orderId = $this->postJson('/api/orders', ['order_type' => 'pickup', 'coupon_code' => $coupon->code])
+            ->assertCreated()
+            ->json('data.id');
+        $this->postJson("/api/orders/{$orderId}/cancel")->assertOk();
+
+        Sanctum::actingAs(User::factory()->create(['role' => User::ROLE_ADMIN]));
+        $this->getJson('/api/admin/coupons?search=SUPPLY2')
+            ->assertOk()
+            ->assertJsonPath('data.0.usage_limit', 2)
+            ->assertJsonPath('data.0.usage_limit_per_user', 2)
+            ->assertJsonPath('data.0.redemptions_count', 1)
+            ->assertJsonPath('data.0.remaining_uses', 1);
+    }
+
+    public function test_admin_coupon_limits_reject_null_per_user_and_quota_below_consumed_uses(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/admin/coupons', [
+            'code' => 'INVALID-NULL',
+            'type' => 'fixed',
+            'value' => 10,
+            'usage_limit_per_user' => null,
+        ])->assertUnprocessable()->assertJsonValidationErrors('usage_limit_per_user');
+
+        $coupon = $this->coupon(['usage_limit' => 5]);
+        foreach (range(1, 2) as $index) {
+            $user = User::factory()->create();
+            $order = Order::create([
+                'order_number' => "ORD-USED-{$index}",
+                'user_id' => $user->id,
+                'order_type' => 'pickup',
+                'subtotal' => 100,
+                'total_amount' => 80,
+                'coupon_id' => $coupon->id,
+            ]);
+            CouponRedemption::create(['coupon_id' => $coupon->id, 'user_id' => $user->id, 'order_id' => $order->id]);
+        }
+
+        $this->putJson("/api/admin/coupons/{$coupon->id}", ['usage_limit' => 1])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('usage_limit');
+    }
+
     public function test_coupon_below_minimum_order_amount_fails_closed(): void
     {
         $this->actor();

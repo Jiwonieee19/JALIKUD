@@ -123,8 +123,10 @@ class OrderController extends Controller
 
         return DB::transaction(function () use ($data, $user, $pricing) {
             $cart = Cart::where('user_id', $user->id)
-                ->with(['cartItems.menuItem', 'cartItems.options.variantOption'])
+                ->lockForUpdate()
                 ->first();
+
+            $cart?->load(['cartItems.menuItem', 'cartItems.options.variantOption', 'coupon']);
 
             if (! $cart || $cart->cartItems->isEmpty()) {
                 return response()->json(['message' => 'Your cart is empty.'], 422);

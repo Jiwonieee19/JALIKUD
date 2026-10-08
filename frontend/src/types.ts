@@ -102,6 +102,8 @@ export interface Coupon {
   max_discount_amount: string | null
   usage_limit: number | null
   usage_limit_per_user: number
+  redemptions_count: number
+  remaining_uses: number | null
   starts_at: string | null
   expires_at: string | null
   is_active: boolean

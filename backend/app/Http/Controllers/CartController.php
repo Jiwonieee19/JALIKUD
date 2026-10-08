@@ -174,10 +174,37 @@ class CartController extends Controller
         $reason = $coupon->rejectionReason($priced['subtotal'], $request->user()->id);
 
         if ($reason !== null) {
-            return response()->json(['message' => $reason], 422);
+            $response = ['message' => $reason];
+
+            if ($reason === 'Order subtotal does not meet the coupon minimum.') {
+                $minimum = (float) $coupon->min_order_amount;
+                $response['coupon'] = [
+                    'code' => $coupon->code,
+                    'type' => $coupon->type,
+                    'value' => $coupon->value,
+                    'min_order_amount' => $coupon->min_order_amount,
+                    'max_discount_amount' => $coupon->max_discount_amount,
+                ];
+                $response['required_additional_amount'] = number_format(
+                    max(0, $minimum - (float) $priced['subtotal']),
+                    2,
+                    '.',
+                    ''
+                );
+            }
+
+            return response()->json($response, 422);
         }
 
         $cart->update(['coupon_id' => $coupon->id]);
+
+        return $this->cartResponse($cart, $request, $pricing);
+    }
+
+    public function removeCoupon(Request $request, CartPricingService $pricing): JsonResponse
+    {
+        $cart = $this->getCart($request);
+        $cart->update(['coupon_id' => null]);
 
         return $this->cartResponse($cart, $request, $pricing);
     }

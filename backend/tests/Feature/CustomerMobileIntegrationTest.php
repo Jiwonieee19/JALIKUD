@@ -79,6 +79,9 @@ class CustomerMobileIntegrationTest extends TestCase
         $this->postJson('/api/cart/coupon', ['code' => $coupon->code])
             ->assertOk()
             ->assertJsonPath('data.coupon.code', 'SAVE10')
+            ->assertJsonPath('data.coupon.type', 'percentage')
+            ->assertJsonPath('data.coupon.value', '10.00')
+            ->assertJsonPath('data.coupon.min_order_amount', '100.00')
             ->assertJsonPath('data.discount_amount', '15.00')
             ->assertJsonPath('data.total_amount', '203.00');
 
@@ -110,7 +113,54 @@ class CustomerMobileIntegrationTest extends TestCase
 
         $this->postJson('/api/cart/coupon', ['code' => $coupon->code])
             ->assertUnprocessable()
-            ->assertJsonPath('message', 'Order subtotal does not meet the coupon minimum.');
+            ->assertJsonPath('message', 'Order subtotal does not meet the coupon minimum.')
+            ->assertJsonPath('coupon.code', 'MINIMUM')
+            ->assertJsonPath('coupon.type', 'fixed')
+            ->assertJsonPath('coupon.value', '10.00')
+            ->assertJsonPath('coupon.min_order_amount', '500.00')
+            ->assertJsonPath('coupon.max_discount_amount', null)
+            ->assertJsonPath('required_additional_amount', '400.00');
+    }
+
+    public function test_removing_coupon_preserves_cart_items_and_existing_orders(): void
+    {
+        $user = User::factory()->create();
+        Sanctum::actingAs($user);
+        $item = $this->menuItem();
+        $cartItemId = $this->postJson('/api/cart/items', [
+            'menu_item_id' => $item->id,
+            'quantity' => 2,
+        ])->assertCreated()->json('data.cart_items.0.id');
+        $order = $this->order($user, null, 'ORD-EXISTING');
+        $coupon = Coupon::create([
+            'code' => 'FIXED20',
+            'type' => 'fixed',
+            'value' => 20,
+            'min_order_amount' => 100,
+            'is_active' => true,
+        ]);
+
+        $this->postJson('/api/cart/coupon', ['code' => $coupon->code])
+            ->assertOk()
+            ->assertJsonPath('data.discount_amount', '20.00');
+
+        $this->deleteJson('/api/cart/coupon')
+            ->assertOk()
+            ->assertJsonPath('data.coupon', null)
+            ->assertJsonPath('data.coupon_id', null)
+            ->assertJsonPath('data.cart_items.0.id', $cartItemId)
+            ->assertJsonPath('data.cart_items.0.quantity', 2)
+            ->assertJsonPath('data.subtotal', '200.00')
+            ->assertJsonPath('data.discount_amount', '0.00')
+            ->assertJsonPath('data.total_amount', '200.00');
+
+        $this->deleteJson('/api/cart/coupon')
+            ->assertOk()
+            ->assertJsonPath('data.coupon', null)
+            ->assertJsonPath('data.cart_items.0.id', $cartItemId);
+
+        $this->assertDatabaseHas('orders', ['id' => $order->id, 'order_number' => 'ORD-EXISTING']);
+        $this->assertDatabaseHas('cart_items', ['id' => $cartItemId, 'quantity' => 2]);
     }
 
     public function test_customer_order_index_includes_only_its_safe_mobile_card_relations(): void

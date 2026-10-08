@@ -26,15 +26,6 @@ import type { Coupon } from '../types'
  * gets a 403 with "Forbidden. Administrator access required." which surfaces in
  * the page-level error banner rather than as an empty table.
  *
- * The list endpoint returns a raw LengthAwarePaginator, so its rows arrive at
- * `data.data` until backend ticket Task 1 normalises the envelope; unwrapList()
- * reads either shape. See services/lists.ts.
- *
- * KNOWN GAP: the endpoint only understands `active`, not `search`, so the search
- * box filters the fetched page in memory rather than on the server. That is
- * deliberate rather than faked — once ticket Task 2 adds the param, move the
- * term into the query string and drop the local filter.
- *
  * Coupon money fields (value / min_order_amount) are
  * numeric(12,2) on the backend, so they arrive as strings.
  */
@@ -125,7 +116,9 @@ export default function AdminCouponsPage() {
   const refresh = useCallback(async () => {
     try {
       const response = await api.get('/admin/coupons', { params: { per_page: 100 } })
-      setCoupons(unwrapList<Coupon>(response.data).data)
+      const nextCoupons = unwrapList<Coupon>(response.data).data
+      setCoupons(nextCoupons)
+      setEditing((current) => current ? nextCoupons.find((coupon) => coupon.id === current.id) ?? current : null)
       setLoadError('')
     } catch (err) {
       const errors = fieldError(err)
@@ -137,6 +130,17 @@ export default function AdminCouponsPage() {
 
   useEffect(() => {
     void refresh()
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    const interval = window.setInterval(refreshWhenVisible, 30_000)
+    window.addEventListener('focus', refreshWhenVisible)
+
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshWhenVisible)
+    }
   }, [refresh])
 
   const rows = useMemo(() => {
@@ -245,6 +249,26 @@ export default function AdminCouponsPage() {
       }
     }
 
+    const usageLimit = draft.usage_limit === '' ? null : Number(draft.usage_limit)
+    if (usageLimit !== null && (!Number.isInteger(usageLimit) || usageLimit < 1)) {
+      setSaving(false)
+      setFormErrors({ usage_limit: 'Enter a whole number of at least 1, or leave blank for unlimited.' })
+      return
+    }
+
+    if (editing && usageLimit !== null && usageLimit < editing.redemptions_count) {
+      setSaving(false)
+      setFormErrors({ usage_limit: `Cannot be lower than ${editing.redemptions_count} already redeemed.` })
+      return
+    }
+
+    const perCustomerLimit = Number(draft.usage_limit_per_user)
+    if (draft.usage_limit_per_user === '' || !Number.isInteger(perCustomerLimit) || perCustomerLimit < 1) {
+      setSaving(false)
+      setFormErrors({ usage_limit_per_user: 'Enter a whole number of at least 1.' })
+      return
+    }
+
     /**
      * `expires_at` is validated as `after:starts_at`, and that comparison
      * against a missing `starts_at` 422s. So an end date on its own is treated
@@ -264,8 +288,8 @@ export default function AdminCouponsPage() {
       type: draft.type,
       value: draft.value,
       min_order_amount: draft.min_order_amount === '' ? null : draft.min_order_amount,
-      usage_limit: draft.usage_limit === '' ? null : Number(draft.usage_limit),
-      usage_limit_per_user: draft.usage_limit_per_user === '' ? null : Number(draft.usage_limit_per_user),
+      usage_limit: usageLimit,
+      usage_limit_per_user: perCustomerLimit,
       starts_at: startInstant,
       expires_at: draft.expires_at === '' ? null : `${draft.expires_at}T23:59:59`,
     }
@@ -404,6 +428,10 @@ export default function AdminCouponsPage() {
 
   /** A percentage coupon always needs a real minimum spend behind it. */
   const orderMin = isFixed ? '0' : PERCENT_MIN_ORDER
+
+  const projectedRemaining = editing && draft.usage_limit !== '' && Number.isInteger(Number(draft.usage_limit))
+    ? Math.max(Number(draft.usage_limit) - editing.redemptions_count, 0)
+    : null
 
   const valueField = (
     <div>
@@ -564,13 +592,16 @@ export default function AdminCouponsPage() {
               },
               {
                 key: 'usage',
-                header: 'Usage',
-                align: 'center',
+                header: 'Supply',
                 render: (coupon: Coupon) => (
-                  <span className="tabular-nums">
-                    {coupon.usage_limit === null ? '∞' : coupon.usage_limit}
-                    <span className="text-slate-400"> / {coupon.usage_limit_per_user} per user</span>
-                  </span>
+                  <div className="space-y-1 tabular-nums">
+                    <p className="font-bold text-slate-800 dark:text-slate-200">
+                      {coupon.redemptions_count} redeemed · {coupon.remaining_uses === null ? 'Unlimited remaining' : `${coupon.remaining_uses} remaining`}
+                    </p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Maximum {coupon.usage_limit_per_user} per customer
+                    </p>
+                  </div>
                 ),
               },
               {
@@ -695,28 +726,42 @@ export default function AdminCouponsPage() {
           {minimumField}
           <div>
             <Label htmlFor="cp-usage" className="mb-1.5">
-              Total usage limit
+              Total redemption quota
             </Label>
             <Input
               id="cp-usage"
               type="number"
-              min="0"
+              min="1"
+              step="1"
               value={draft.usage_limit}
               onChange={(event) => setDraft({ ...draft, usage_limit: event.target.value })}
               placeholder="Unlimited"
+              aria-invalid={Boolean(formErrors.usage_limit)}
+              className={formErrors.usage_limit ? 'border-red-500 dark:border-red-500' : ''}
             />
+            <p className={`mt-1 text-xs ${formErrors.usage_limit ? 'font-semibold text-red-600 dark:text-red-400' : 'text-slate-500 dark:text-slate-400'}`}>
+              {formErrors.usage_limit ?? (editing
+                ? `${editing.redemptions_count} already redeemed${draft.usage_limit === '' ? '; future uses are unlimited.' : projectedRemaining === null ? '; enter a whole-number quota.' : `; ${projectedRemaining} would remain.`}`
+                : 'Leave blank for unlimited uses.')}
+            </p>
           </div>
           <div>
             <Label htmlFor="cp-peruser" className="mb-1.5">
-              Limit per user
+              Maximum uses per customer
             </Label>
             <Input
               id="cp-peruser"
               type="number"
               min="1"
+              step="1"
               value={draft.usage_limit_per_user}
               onChange={(event) => setDraft({ ...draft, usage_limit_per_user: event.target.value })}
+              aria-invalid={Boolean(formErrors.usage_limit_per_user)}
+              className={formErrors.usage_limit_per_user ? 'border-red-500 dark:border-red-500' : ''}
             />
+            {formErrors.usage_limit_per_user && (
+              <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">{formErrors.usage_limit_per_user}</p>
+            )}
           </div>
           <div>
             <Label htmlFor="cp-start" className="mb-1.5">
