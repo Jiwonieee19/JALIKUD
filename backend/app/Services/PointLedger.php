@@ -36,10 +36,15 @@ class PointLedger
      */
     public static function lockedBalance(int $userId): int
     {
+        // Lock the user's ledger rows first, then aggregate in PHP. A
+        // `FOR UPDATE` clause is not allowed alongside an aggregate (SUM())
+        // on PostgreSQL, so `->sum()` after `->lockForUpdate()` would throw
+        // and silently prevent points from being awarded in production.
         return (int) PointTransaction::query()
             ->where('user_id', $userId)
             ->lockForUpdate()
-            ->sum('points_delta');
+            ->pluck('points_delta')
+            ->sum();
     }
 
     public static function balance(int $userId): int

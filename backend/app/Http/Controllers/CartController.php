@@ -11,6 +11,7 @@ use App\Services\PointLedger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 /**
  * Manage the authenticated user's cart.
@@ -248,6 +249,30 @@ class CartController extends Controller
     {
         $cart = $this->getCart($request);
         $cart->update(['reward_key' => null]);
+
+        return $this->cartResponse($cart, $request, $pricing);
+    }
+
+    /**
+     * Update the cart's fulfillment details (order type / delivery address) so
+     * the server-priced totals reflect the chosen method. The cart is created
+     * with `order_type` defaulting to `delivery`; without a way to flip it to
+     * `pickup`, the cart preview would always quote the store's delivery fee.
+     */
+    public function update(Request $request, CartPricingService $pricing): JsonResponse
+    {
+        $data = $request->validate([
+            'order_type' => ['sometimes', 'in:delivery,pickup'],
+            'address_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('addresses', 'id')->where('user_id', $request->user()->id),
+            ],
+        ]);
+
+        $cart = $this->getCart($request);
+        $cart->update($data);
 
         return $this->cartResponse($cart, $request, $pricing);
     }

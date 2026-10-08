@@ -9,7 +9,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U jalikud -d jalikud"]
       interval: 5s
@@ -34,6 +34,9 @@ services:
       - DB_DATABASE=${POSTGRES_DB:-jalikud}
       - DB_USERNAME=${POSTGRES_USER:-jalikud}
       - DB_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}
+      - PAYMONGO_SECRET_KEY=${PAYMONGO_SECRET_KEY:-}
+      - PAYMONGO_PUBLIC_KEY=${PAYMONGO_PUBLIC_KEY:-}
+      - PAYMONGO_WEBHOOK_SECRET=${PAYMONGO_WEBHOOK_SECRET:-}
       # Trust X-Forwarded-* from the known proxies ONLY (their pinned IPs
       # below). This makes rate-limit buckets key on the real client IP instead
       # of the proxy IP; without it every proxied request shares ONE bucket and
