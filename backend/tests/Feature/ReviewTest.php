@@ -104,7 +104,7 @@ class ReviewTest extends TestCase
         ]);
         Sanctum::actingAs(User::factory()->create(['role' => User::ROLE_ADMIN]));
 
-        $this->getJson('/api/admin/reviews')->assertOk()->assertJsonCount(1, 'data.data');
+        $this->getJson('/api/admin/reviews')->assertOk()->assertJsonCount(1, 'data');
 
         $this->deleteJson("/api/admin/reviews/{$review->id}")->assertOk();
         $this->assertDatabaseMissing('reviews', ['id' => $review->id]);

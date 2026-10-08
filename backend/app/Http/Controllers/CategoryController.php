@@ -6,6 +6,7 @@ use App\Http\Requests\General\PaginationRequest;
 use App\Models\Category;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Public listing + admin CRUD for menu categories.
@@ -20,7 +21,7 @@ class CategoryController extends Controller
             ->orderBy('sort_order')
             ->paginate($request->perPage(15));
 
-        return response()->json(['data' => $categories]);
+        return $this->paginated($categories);
     }
 
     public function show(Category $category): JsonResponse
@@ -70,12 +71,12 @@ class CategoryController extends Controller
 
     public function destroy(Category $category): JsonResponse
     {
-        if ($category->children()->exists()) {
-            return response()->json(['message' => 'Cannot delete a category that has child categories.'], 422);
-        }
+        $count = $category->menuItems()->count();
 
-        if ($category->menuItems()->exists()) {
-            return response()->json(['message' => 'Cannot delete a category that still has menu items.'], 422);
+        if ($count > 0) {
+            throw ValidationException::withMessages([
+                'category' => ["{$category->name} still has {$count} menu item(s). Move or remove them before deleting."],
+            ]);
         }
 
         $category->delete();

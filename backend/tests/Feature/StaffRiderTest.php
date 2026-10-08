@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Category;
 use App\Models\MenuItem;
 use App\Models\Order;
+use App\Models\RiderProfile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -42,7 +43,7 @@ class StaffRiderTest extends TestCase
     private function onDutyRider(): User
     {
         $rider = $this->user(User::ROLE_RIDER);
-        \App\Models\RiderProfile::create([
+        RiderProfile::create([
             'user_id' => $rider->id,
             'vehicle_type' => 'motorcycle',
             'plate_number' => 'XYZ-9999',
@@ -71,13 +72,13 @@ class StaffRiderTest extends TestCase
         $theirs = $this->order();
 
         Sanctum::actingAs($this->user(User::ROLE_STAFF));
-        $this->getJson('/api/admin/orders?per_page=100')->assertOk()->assertJsonCount(2, 'data.data');
+        $this->getJson('/api/admin/orders?per_page=100')->assertOk()->assertJsonCount(2, 'data');
 
         Sanctum::actingAs(User::find($mine->user_id));
         $response = $this->getJson('/api/orders?per_page=100')->assertOk();
-        $response->assertJsonCount(1, 'data.data');
-        $response->assertJsonPath('data.data.0.id', $mine->id);
-        $this->assertNotContains($theirs->id, collect($response->json('data.data'))->pluck('id')->all());
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $mine->id);
+        $this->assertNotContains($theirs->id, collect($response->json('data'))->pluck('id')->all());
     }
 
     public function test_staff_can_update_status_but_customers_and_riders_cannot(): void
@@ -166,7 +167,7 @@ class StaffRiderTest extends TestCase
 
         // Inactive profile.
         $offDuty = $this->user(User::ROLE_RIDER);
-        \App\Models\RiderProfile::create(['user_id' => $offDuty->id, 'is_active' => false]);
+        RiderProfile::create(['user_id' => $offDuty->id, 'is_active' => false]);
         $this->putJson("/api/admin/orders/{$order->id}/rider", ['rider_id' => $offDuty->id])
             ->assertStatus(422);
     }
@@ -194,7 +195,7 @@ class StaffRiderTest extends TestCase
 
         Sanctum::actingAs($this->user(User::ROLE_STAFF));
         $response = $this->getJson('/api/admin/riders?per_page=100')->assertOk();
-        $ids = collect($response->json('data.data'))->pluck('id')->all();
+        $ids = collect($response->json('data'))->pluck('id')->all();
         $this->assertContains($rider->id, $ids);
         $this->assertCount(1, $ids);
 
@@ -212,8 +213,8 @@ class StaffRiderTest extends TestCase
 
         Sanctum::actingAs($rider);
         $response = $this->getJson('/api/rider/deliveries?per_page=100')->assertOk();
-        $response->assertJsonCount(1, 'data.data');
-        $response->assertJsonPath('data.data.0.id', $mine->id);
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $mine->id);
 
         $this->getJson("/api/rider/deliveries/{$mine->id}")->assertOk();
 

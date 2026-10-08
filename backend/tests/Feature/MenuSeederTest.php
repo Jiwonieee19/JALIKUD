@@ -2,8 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Models\Cart;
+use App\Models\CartItem;
 use App\Models\Category;
 use App\Models\MenuItem;
+use App\Models\User;
 use Database\Seeders\MenuSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -86,9 +89,9 @@ class MenuSeederTest extends TestCase
             'base_price' => 149,
             'is_available' => true,
         ]);
-        $user = \App\Models\User::factory()->create();
-        $cart = \App\Models\Cart::create(['user_id' => $user->id, 'order_type' => 'pickup']);
-        \App\Models\CartItem::create([
+        $user = User::factory()->create();
+        $cart = Cart::create(['user_id' => $user->id, 'order_type' => 'pickup']);
+        CartItem::create([
             'cart_id' => $cart->id,
             'menu_item_id' => $junkItem->id,
             'quantity' => 1,
@@ -109,7 +112,7 @@ class MenuSeederTest extends TestCase
 
         $this->getJson('/api/menu?available=true&per_page=100')
             ->assertOk()
-            ->assertJsonCount(10, 'data.data')
+            ->assertJsonCount(10, 'data')
             ->assertJsonFragment(['slug' => 'chickenjoy-2pc'])
             ->assertJsonFragment(['slug' => 'jolly-spaghetti']);
     }

@@ -135,13 +135,13 @@ class CustomerMobileIntegrationTest extends TestCase
 
         $this->getJson('/api/orders')
             ->assertOk()
-            ->assertJsonCount(1, 'data.data')
-            ->assertJsonPath('data.data.0.order_number', 'ORD-MOBILE-1')
-            ->assertJsonPath('data.data.0.address.line1', '1 Main Street')
-            ->assertJsonPath('data.data.0.order_items.0.item_name', 'Chicken Adobo')
-            ->assertJsonPath('data.data.0.order_items.0.quantity', 2)
-            ->assertJsonMissingPath('data.data.0.address.latitude')
-            ->assertJsonMissingPath('data.data.0.user');
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.order_number', 'ORD-MOBILE-1')
+            ->assertJsonPath('data.0.address.line1', '1 Main Street')
+            ->assertJsonPath('data.0.order_items.0.item_name', 'Chicken Adobo')
+            ->assertJsonPath('data.0.order_items.0.quantity', 2)
+            ->assertJsonMissingPath('data.0.address.latitude')
+            ->assertJsonMissingPath('data.0.user');
     }
 
     private function menuItem(): MenuItem

@@ -99,7 +99,7 @@ class ReviewController extends Controller
             ->orderByDesc('created_at')
             ->paginate($request->perPage(15));
 
-        return response()->json(['data' => $reviews]);
+        return $this->paginated($reviews);
     }
 
     /**

@@ -61,9 +61,9 @@ class MenuItemVariantLoadingTest extends TestCase
         // Relations serialize snake_cased, so the eager-loaded
         // `variantGroups.options` is emitted as variant_groups[].options[].
         $response->assertOk()
-            ->assertJsonPath('data.data.0.variant_groups.0.name', 'Size')
-            ->assertJsonPath('data.data.0.variant_groups.0.options.0.name', 'Large')
-            ->assertJsonPath('data.data.0.variant_groups.0.options.0.price_delta', '25.00');
+            ->assertJsonPath('data.0.variant_groups.0.name', 'Size')
+            ->assertJsonPath('data.0.variant_groups.0.options.0.name', 'Large')
+            ->assertJsonPath('data.0.variant_groups.0.options.0.price_delta', '25.00');
     }
 
     public function test_menu_show_succeeds_and_nests_options_under_each_variant_group(): void
