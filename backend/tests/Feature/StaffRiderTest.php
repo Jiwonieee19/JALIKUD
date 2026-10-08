@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Category;
 use App\Models\MenuItem;
 use App\Models\Order;
+use App\Models\OrderStatusHistory;
 use App\Models\RiderProfile;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -99,6 +100,54 @@ class StaffRiderTest extends TestCase
         Sanctum::actingAs($this->user(User::ROLE_RIDER));
         $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_PREPARING])
             ->assertStatus(403);
+    }
+
+    public function test_staff_activity_lists_only_their_status_changes_newest_first(): void
+    {
+        $staff = $this->user(User::ROLE_STAFF);
+        $otherStaff = $this->user(User::ROLE_STAFF);
+        $olderOrder = $this->order();
+        $newerOrder = $this->order();
+        $otherOrder = $this->order();
+
+        OrderStatusHistory::create([
+            'order_id' => $olderOrder->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'changed_by' => $staff->id,
+            'note' => 'Confirmed first.',
+        ])->forceFill(['created_at' => now()->subMinute()])->save();
+        OrderStatusHistory::create([
+            'order_id' => $newerOrder->id,
+            'status' => Order::STATUS_CANCELLED,
+            'changed_by' => $staff->id,
+            'note' => 'Cancelled second.',
+        ])->forceFill(['created_at' => now()])->save();
+        OrderStatusHistory::create([
+            'order_id' => $otherOrder->id,
+            'status' => Order::STATUS_CONFIRMED,
+            'changed_by' => $otherStaff->id,
+        ]);
+
+        Sanctum::actingAs($staff);
+        $response = $this->getJson('/api/admin/activity?per_page=10')->assertOk();
+
+        $response->assertJsonCount(2, 'data');
+        $response->assertJsonPath('data.0.order.order_number', $newerOrder->order_number);
+        $response->assertJsonPath('data.0.actor.name', $staff->name);
+        $response->assertJsonPath('data.1.order.order_number', $olderOrder->order_number);
+        $response->assertJsonPath('meta.total', 2);
+    }
+
+    public function test_staff_activity_rejects_non_staff_roles(): void
+    {
+        Sanctum::actingAs($this->user(User::ROLE_CUSTOMER));
+        $this->getJson('/api/admin/activity')->assertStatus(403);
+
+        Sanctum::actingAs($this->user(User::ROLE_RIDER));
+        $this->getJson('/api/admin/activity')->assertStatus(403);
+
+        Sanctum::actingAs($this->user(User::ROLE_ADMIN));
+        $this->getJson('/api/admin/activity')->assertOk();
     }
 
     public function test_staff_gate_keeps_user_admin_but_opens_menu_availability(): void

@@ -81,11 +81,16 @@ function OrderCard({
           <Text style={styles.orderNumber}>{order.order_number}</Text>
           <Text style={styles.orderMeta}>{formatMeta(order)}</Text>
         </View>
-        <View style={[styles.typeBadge, !isDelivery && styles.pickupBadge]}>
-          <Text style={[styles.typeText, !isDelivery && styles.pickupText]}>
-            {isDelivery ? '🛵 ' : '🏪 '}{isDelivery ? 'Delivery' : 'Pickup'}
-          </Text>
-        </View>
+      </View>
+
+      <View
+        accessible
+        accessibilityLabel={isDelivery ? 'Delivery order' : 'Pickup order'}
+        style={[styles.typeBanner, !isDelivery && styles.pickupBanner]}>
+        <Text style={styles.typeIcon}>{isDelivery ? '🛵' : '🏪'}</Text>
+        <Text style={[styles.typeBannerText, !isDelivery && styles.pickupBannerText]}>
+          {isDelivery ? 'DELIVERY ORDER' : 'PICKUP ORDER'}
+        </Text>
       </View>
 
       <View style={styles.itemsBox}>
@@ -507,14 +512,15 @@ const styles = StyleSheet.create({
   retryButton: { alignSelf: 'flex-start', backgroundColor: RED, borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8 },
   retryText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   card: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
-  orderHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 },
+  orderHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   orderHeaderCopy: { flex: 1 },
   orderNumber: { color: TEXT, fontSize: 16, fontWeight: '900' },
   orderMeta: { color: GRAY, fontSize: 11, marginTop: 3 },
-  typeBadge: { paddingVertical: 5, paddingHorizontal: 9, borderRadius: 999, backgroundColor: '#E0E7FF' },
-  pickupBadge: { backgroundColor: '#FEF3C7' },
-  typeText: { color: '#4338CA', fontSize: 10, fontWeight: '800' },
-  pickupText: { color: '#B45309' },
+  typeBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, backgroundColor: '#E0E7FF', borderWidth: 1, borderColor: '#C7D2FE' },
+  pickupBanner: { backgroundColor: '#FEF3C7', borderColor: '#FDE68A' },
+  typeIcon: { fontSize: 16 },
+  typeBannerText: { color: '#3730A3', fontSize: 11, fontWeight: '900', letterSpacing: 0.5 },
+  pickupBannerText: { color: '#92400E' },
   itemsBox: { marginTop: 13, paddingVertical: 10, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#EEEEF1', gap: 9 },
   itemRow: { flexDirection: 'row', gap: 9 },
   itemQuantity: { width: 24, color: RED, fontSize: 13, fontWeight: '900' },

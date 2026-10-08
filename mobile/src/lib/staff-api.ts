@@ -74,14 +74,33 @@ export type StaffMenuItem = {
 
 export type StaffCategory = { id: number; name: string; slug: string };
 
+export type StaffActivity = {
+  id: number;
+  status: OrderStatus;
+  note: string | null;
+  created_at: string;
+  order: { id: number; order_number: string };
+  actor: { id: number; name: string } | null;
+};
+
+export type PaginationMeta = {
+  current_page: number;
+  per_page: number;
+  total: number;
+  last_page: number;
+};
+
 type DataResponse<T> = { data: T };
 type Paginated<T> = { data: T[]; total: number };
+type PaginatedResponse<T> = { data: T[]; meta: PaginationMeta };
 
 function list<T>(response: DataResponse<Paginated<T> | T[]>): T[] {
   return Array.isArray(response.data) ? response.data : response.data.data;
 }
 
 export const staffApi = {
+  activity: (token: string, page = 1) =>
+    apiRequest<PaginatedResponse<StaffActivity>>(`/admin/activity?page=${page}&per_page=20`, { token }),
   orders: (token: string) =>
     apiRequest<DataResponse<Paginated<StaffOrder>>>('/admin/orders?per_page=100', { token }).then(list),
   updateOrderStatus: (token: string, id: number, status: OrderStatus, note?: string) =>
