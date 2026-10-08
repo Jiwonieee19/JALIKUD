@@ -35,6 +35,8 @@ class StaffRiderTest extends TestCase
             'user_id' => $this->user(User::ROLE_CUSTOMER)->id,
             'order_type' => 'delivery',
             'status' => Order::STATUS_PENDING,
+            'payment_method' => 'cod',
+            'payment_status' => Order::PAYMENT_UNPAID,
             'subtotal' => 100,
             'total_amount' => 100,
         ], $overrides));
@@ -234,9 +236,47 @@ class StaffRiderTest extends TestCase
         $this->putJson("/api/rider/deliveries/{$order->id}/status", ['status' => Order::STATUS_OUT_FOR_DELIVERY])
             ->assertOk();
         $this->putJson("/api/rider/deliveries/{$order->id}/status", ['status' => Order::STATUS_COMPLETED])
-            ->assertOk();
+            ->assertOk()
+            ->assertJsonPath('data.payment_status', Order::PAYMENT_PAID);
         $this->assertSame(Order::STATUS_COMPLETED, $order->fresh()->status);
+        $this->assertSame(Order::PAYMENT_PAID, $order->fresh()->payment_status);
         $this->assertSame(2, $order->statusHistory()->count());
+        $this->assertDatabaseHas('payments', [
+            'order_id' => $order->id,
+            'provider' => 'cod',
+            'status' => 'succeeded',
+        ]);
+    }
+
+    public function test_staff_cannot_complete_the_delivery_leg(): void
+    {
+        $order = $this->order(['status' => Order::STATUS_READY]);
+        Sanctum::actingAs($this->user(User::ROLE_STAFF));
+
+        $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_OUT_FOR_DELIVERY])
+            ->assertStatus(422);
+        $this->assertSame(Order::STATUS_READY, $order->fresh()->status);
+    }
+
+    public function test_rider_completion_requires_confirmed_gcash_payment(): void
+    {
+        $rider = $this->user(User::ROLE_RIDER);
+        $order = $this->order([
+            'rider_id' => $rider->id,
+            'status' => Order::STATUS_OUT_FOR_DELIVERY,
+            'payment_method' => 'gcash',
+            'payment_status' => Order::PAYMENT_UNPAID,
+        ]);
+        Sanctum::actingAs($rider);
+
+        $this->putJson("/api/rider/deliveries/{$order->id}/status", ['status' => Order::STATUS_COMPLETED])
+            ->assertStatus(422);
+        $this->assertSame(Order::STATUS_OUT_FOR_DELIVERY, $order->fresh()->status);
+
+        $order->update(['payment_status' => Order::PAYMENT_PAID]);
+        $this->putJson("/api/rider/deliveries/{$order->id}/status", ['status' => Order::STATUS_COMPLETED])
+            ->assertOk();
+        $this->assertDatabaseMissing('payments', ['order_id' => $order->id, 'provider' => 'cod']);
     }
 
     public function test_rider_cannot_touch_kitchen_states_or_foreign_orders(): void

@@ -68,6 +68,11 @@ export default function CartScreen() {
   const staleItemIds = cartItems.filter((item) => item.lineTotal <= 0).map((item) => item.id);
   const [clearingStale, setClearingStale] = useState(false);
 
+  const selectOrderType = (type: 'delivery' | 'pickup') => {
+    setOrderType(type);
+    if (type === 'pickup') setPaymentMethod('gcash');
+  };
+
   async function clearUnavailable() {
     if (staleItemIds.length === 0 || mutating || clearingStale) return;
     setClearingStale(true);
@@ -175,7 +180,7 @@ export default function CartScreen() {
           </>}
         </View>
 
-        <View style={styles.card}><Text style={styles.cardTitle}>Fulfillment</Text><View style={styles.typeRow}>{(['delivery', 'pickup'] as const).map((type) => <Pressable key={type} onPress={() => setOrderType(type)} style={[styles.type, orderType === type && styles.typeActive]}><Text style={[styles.typeText, orderType === type && styles.typeTextActive]}>{type === 'delivery' ? 'Delivery' : 'Pickup'}</Text></Pressable>)}</View>
+        <View style={styles.card}><Text style={styles.cardTitle}>Fulfillment</Text><View style={styles.typeRow}>{(['delivery', 'pickup'] as const).map((type) => <Pressable key={type} onPress={() => selectOrderType(type)} style={[styles.type, orderType === type && styles.typeActive]}><Text style={[styles.typeText, orderType === type && styles.typeTextActive]}>{type === 'delivery' ? 'Delivery' : 'Pickup'}</Text></Pressable>)}</View>
           {orderType === 'delivery' && <View style={styles.addresses}>{addresses.map((address) => <Pressable key={address.id} onPress={() => setAddressId(address.id)} style={[styles.address, selectedAddressId === address.id && styles.addressActive]}><Text style={styles.addressTitle}>{address.label || 'Address'}{address.is_default ? ' · Default' : ''}</Text><Text style={styles.muted}>{address.line1}, {address.city}</Text></Pressable>)}{addresses.length === 0 && <Text style={styles.error}>Add a delivery address in Settings before checkout.</Text>}</View>}
           <TextInput style={[styles.input, styles.notes]} placeholder="Order notes (optional)" value={notes} onChangeText={setNotes} multiline />
         </View>
@@ -208,20 +213,22 @@ export default function CartScreen() {
                 <Pressable
                   key={method}
                   accessibilityRole="radio"
-                  accessibilityState={{ checked: paymentMethod === method }}
-                  accessibilityLabel={method === 'cod' ? 'Pay with Cash on Delivery' : 'Pay with GCash'}
+                  accessibilityState={{ checked: paymentMethod === method, disabled: orderType === 'pickup' && method === 'cod' }}
+                  accessibilityLabel={method === 'cod' ? (orderType === 'pickup' ? 'Cash on Delivery unavailable for pickup' : 'Pay with Cash on Delivery') : 'Pay with GCash'}
+                  disabled={orderType === 'pickup' && method === 'cod'}
                   onPress={() => setPaymentMethod(method)}
-                  style={[styles.type, paymentMethod === method && styles.typeActive]}>
-                  <Text style={[styles.typeText, paymentMethod === method && styles.typeTextActive]}>
-                    {method === 'cod' ? '💵 COD' : '📱 GCash'}
+                  style={[styles.type, orderType === 'pickup' && method === 'cod' && styles.typeDisabled, paymentMethod === method && styles.typeActive]}>
+                  <Text style={[styles.typeText, orderType === 'pickup' && method === 'cod' && styles.typeTextDisabled, paymentMethod === method && styles.typeTextActive]}>
+                    {method === 'cod' ? (orderType === 'pickup' ? '💵 COD unavailable' : '💵 COD') : '📱 GCash'}
                   </Text>
                 </Pressable>
               ))}
             </View>
+            {orderType === 'pickup' && <Text style={styles.paymentNotice}>Pickup orders require GCash; COD is unavailable.</Text>}
             <Text style={styles.muted}>
               {paymentMethod === 'cod'
                 ? 'Pay in cash on handover. Order stays unpaid until then.'
-                : 'Send via GCash manually. Order stays unpaid until confirmed.'}
+                : 'GCash payment is automatically confirmed in this demo.'}
             </Text>
           </View>
           {pricingErrors.map((message) => <Text key={message} style={styles.error}>⚠ {message}</Text>)}
@@ -265,6 +272,6 @@ const styles = StyleSheet.create({
   body: { flex: 1 }, scroll: { flex: 1 },
   content: { padding: 16, paddingBottom: 24, gap: 12 }, empty: { alignItems: 'center', paddingVertical: 70, gap: 6 }, emptyIcon: { fontSize: 54 }, card: { backgroundColor: CARD, borderRadius: 15, padding: 14, gap: 11 }, cardTitle: { color: TEXT, fontSize: 16, fontWeight: '900' }, muted: { color: GRAY, fontSize: 12 },
   cardRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: CARD, borderRadius: 15, padding: 12 }, emoji: { fontSize: 38 }, itemCopy: { flex: 1, gap: 3 }, itemName: { color: TEXT, fontSize: 14, fontWeight: '800' }, priceCopy: { alignItems: 'flex-end', gap: 10 }, price: { color: RED, fontWeight: '900' }, remove: { color: RED, fontSize: 11, fontWeight: '700' }, quantity: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 5 }, circle: { width: 25, height: 25, borderRadius: 13, backgroundColor: RED, alignItems: 'center', justifyContent: 'center' }, circleText: { color: '#FFF', fontWeight: '900' }, qty: { minWidth: 16, textAlign: 'center', fontWeight: '800' },
-  inputRow: { flexDirection: 'row', gap: 8 }, input: { flex: 1, borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, color: TEXT }, apply: { backgroundColor: RED, borderRadius: 11, justifyContent: 'center', paddingHorizontal: 18 }, applyText: { color: '#FFF', fontWeight: '800' }, couponDescription: { color: GRAY, fontSize: 12, lineHeight: 18 }, couponFeedback: { color: '#B45309', fontSize: 12, fontWeight: '700', lineHeight: 18 }, success: { color: '#15803D', fontWeight: '800' }, typeRow: { flexDirection: 'row', gap: 8 }, type: { flex: 1, borderWidth: 1, borderColor: '#DDD', borderRadius: 10, alignItems: 'center', padding: 10 }, typeActive: { backgroundColor: RED, borderColor: RED }, typeText: { color: TEXT, fontWeight: '700' }, typeTextActive: { color: '#FFF' }, addresses: { gap: 7 }, address: { borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, padding: 10 }, addressActive: { borderColor: RED, backgroundColor: '#FEF2F2' }, addressTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, notes: { minHeight: 65 },
-  summary: { flexDirection: 'row', justifyContent: 'space-between' }, summaryValue: { color: TEXT, fontSize: 12, fontWeight: '700' }, free: { color: '#15803D', fontSize: 12, fontWeight: '800' }, paymentBlock: { gap: 8, borderTopWidth: 1, borderTopColor: '#EEE', paddingTop: 10 }, paymentTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, clearStale: { borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', borderRadius: 10, padding: 10, alignItems: 'center' }, clearStaleText: { color: '#B91C1C', fontSize: 12, fontWeight: '800' }, totalRow: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#EEE', paddingTop: 10 }, totalLabel: { color: TEXT, fontWeight: '900' }, total: { color: RED, fontSize: 17, fontWeight: '900' }, error: { color: '#B91C1C', fontSize: 12, fontWeight: '700' }, checkoutBar: { backgroundColor: CARD, padding: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#EEE' }, checkout: { backgroundColor: RED, borderRadius: 14, padding: 16, alignItems: 'center' }, checkoutText: { color: '#FFF', fontWeight: '900' }, disabled: { opacity: 0.45 },
+  inputRow: { flexDirection: 'row', gap: 8 }, input: { flex: 1, borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, paddingHorizontal: 12, paddingVertical: 10, color: TEXT }, apply: { backgroundColor: RED, borderRadius: 11, justifyContent: 'center', paddingHorizontal: 18 }, applyText: { color: '#FFF', fontWeight: '800' }, couponDescription: { color: GRAY, fontSize: 12, lineHeight: 18 }, couponFeedback: { color: '#B45309', fontSize: 12, fontWeight: '700', lineHeight: 18 }, success: { color: '#15803D', fontWeight: '800' }, typeRow: { flexDirection: 'row', gap: 8 }, type: { flex: 1, borderWidth: 1, borderColor: '#DDD', borderRadius: 10, alignItems: 'center', padding: 10 }, typeActive: { backgroundColor: RED, borderColor: RED }, typeDisabled: { backgroundColor: '#F3F4F6', borderColor: '#E5E7EB' }, typeText: { color: TEXT, fontWeight: '700' }, typeTextActive: { color: '#FFF' }, typeTextDisabled: { color: GRAY }, addresses: { gap: 7 }, address: { borderWidth: 1, borderColor: '#E4E4E9', borderRadius: 11, padding: 10 }, addressActive: { borderColor: RED, backgroundColor: '#FEF2F2' }, addressTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, notes: { minHeight: 65 },
+  summary: { flexDirection: 'row', justifyContent: 'space-between' }, summaryValue: { color: TEXT, fontSize: 12, fontWeight: '700' }, free: { color: '#15803D', fontSize: 12, fontWeight: '800' }, paymentBlock: { gap: 8, borderTopWidth: 1, borderTopColor: '#EEE', paddingTop: 10 }, paymentTitle: { color: TEXT, fontSize: 13, fontWeight: '800' }, paymentNotice: { color: '#B45309', fontSize: 12, fontWeight: '700' }, clearStale: { borderWidth: 1, borderColor: '#FCA5A5', backgroundColor: '#FEF2F2', borderRadius: 10, padding: 10, alignItems: 'center' }, clearStaleText: { color: '#B91C1C', fontSize: 12, fontWeight: '800' }, totalRow: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#EEE', paddingTop: 10 }, totalLabel: { color: TEXT, fontWeight: '900' }, total: { color: RED, fontSize: 17, fontWeight: '900' }, error: { color: '#B91C1C', fontSize: 12, fontWeight: '700' }, checkoutBar: { backgroundColor: CARD, padding: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#EEE' }, checkout: { backgroundColor: RED, borderRadius: 14, padding: 16, alignItems: 'center' }, checkoutText: { color: '#FFF', fontWeight: '900' }, disabled: { opacity: 0.45 },
 });

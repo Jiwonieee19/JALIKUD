@@ -29,7 +29,7 @@ class OrderController extends Controller
         Order::STATUS_PENDING => [Order::STATUS_CONFIRMED, Order::STATUS_CANCELLED],
         Order::STATUS_CONFIRMED => [Order::STATUS_PREPARING, Order::STATUS_CANCELLED],
         Order::STATUS_PREPARING => [Order::STATUS_READY, Order::STATUS_CANCELLED],
-        Order::STATUS_READY => [Order::STATUS_OUT_FOR_DELIVERY, Order::STATUS_CANCELLED],
+        Order::STATUS_READY => [Order::STATUS_OUT_FOR_DELIVERY, Order::STATUS_COMPLETED, Order::STATUS_CANCELLED],
         Order::STATUS_OUT_FOR_DELIVERY => [Order::STATUS_COMPLETED, Order::STATUS_CANCELLED],
         Order::STATUS_COMPLETED => [],
         Order::STATUS_CANCELLED => [],
@@ -115,13 +115,21 @@ class OrderController extends Controller
         ]);
 
         $user = $request->user();
+        $paymentMethod = $data['payment_method'] ?? ($data['order_type'] === 'pickup' ? 'gcash' : 'cod');
+
+        if ($data['order_type'] === 'pickup' && $paymentMethod === 'cod') {
+            return response()->json([
+                'message' => 'Pickup orders must be paid with GCash.',
+                'errors' => ['payment_method' => ['Pickup orders must be paid with GCash.']],
+            ], 422);
+        }
 
         // The store must be able to accept the order right now.
         if (! StoreSetting::isOpenNow()) {
             return response()->json(['message' => 'The store is currently closed.'], 422);
         }
 
-        return DB::transaction(function () use ($data, $user, $pricing) {
+        return DB::transaction(function () use ($data, $user, $pricing, $paymentMethod) {
             $cart = Cart::where('user_id', $user->id)
                 ->lockForUpdate()
                 ->first();
@@ -234,8 +242,8 @@ class OrderController extends Controller
                 'address_id' => $data['address_id'] ?? null,
                 'order_type' => $data['order_type'],
                 'status' => Order::STATUS_PENDING,
-                'payment_status' => 'unpaid',
-                'payment_method' => $data['payment_method'] ?? 'cod',
+                'payment_status' => $paymentMethod === 'gcash' ? Order::PAYMENT_PAID : Order::PAYMENT_UNPAID,
+                'payment_method' => $paymentMethod,
                 'subtotal' => $subtotal,
                 'discount_amount' => $discountAmount,
                 'reward_key' => $rewardKey,
@@ -248,6 +256,18 @@ class OrderController extends Controller
                 'scheduled_for' => $data['scheduled_for'] ?? null,
                 'placed_at' => now(),
             ]);
+
+            if ($paymentMethod === 'gcash') {
+                $order->payments()->create([
+                    'provider' => 'gcash',
+                    'provider_transaction_id' => 'demo-checkout-'.$order->id,
+                    'amount' => $totalAmount,
+                    'currency' => 'PHP',
+                    'status' => 'succeeded',
+                    'paid_at' => now(),
+                    'raw_response' => ['source' => 'checkout_demo'],
+                ]);
+            }
 
             // Snapshot freshly priced lines into order items.
             foreach ($priced['lines'] as $line) {
@@ -324,6 +344,7 @@ class OrderController extends Controller
         }
 
         $order->update(['status' => Order::STATUS_CANCELLED]);
+        $this->refundDemoGcashPayment($order);
 
         $order->statusHistory()->create([
             'status' => Order::STATUS_CANCELLED,
@@ -357,6 +378,13 @@ class OrderController extends Controller
             ], 422);
         }
 
+        if ($order->order_type === 'delivery'
+            && in_array($data['status'], [Order::STATUS_OUT_FOR_DELIVERY, Order::STATUS_COMPLETED], true)) {
+            return response()->json([
+                'message' => 'Only the assigned rider can advance the delivery leg.',
+            ], 422);
+        }
+
         $order->update(['status' => $data['status']]);
 
         $order->statusHistory()->create([
@@ -370,30 +398,11 @@ class OrderController extends Controller
         }
 
         if ($data['status'] === Order::STATUS_CANCELLED) {
+            $this->refundDemoGcashPayment($order);
             PointLedger::refundForOrder($order->fresh());
         }
 
         return response()->json(['data' => $order]);
-    }
-
-    /**
-     * PUT /api/admin/orders/{order}/payment - confirm (or fail) payment.
-     * Staff and admins only. Marking a completed order paid awards loyalty
-     * points; marking a pending one paid banks the award until completion.
-     */
-    public function confirmPayment(Request $request, Order $order): JsonResponse
-    {
-        $data = $request->validate([
-            'payment_status' => ['required', 'in:paid,failed'],
-        ]);
-
-        $order->update(['payment_status' => $data['payment_status']]);
-
-        if ($data['payment_status'] === Order::PAYMENT_PAID) {
-            PointLedger::awardForOrder($order->fresh());
-        }
-
-        return response()->json(['data' => $order->fresh()]);
     }
 
     /**
@@ -440,6 +449,16 @@ class OrderController extends Controller
         $order->load(['rider:id,name,phone', 'address', 'orderItems']);
 
         return response()->json(['data' => $order]);
+    }
+
+    private function refundDemoGcashPayment(Order $order): void
+    {
+        if ($order->payment_method !== 'gcash' || $order->payment_status !== Order::PAYMENT_PAID) {
+            return;
+        }
+
+        $order->payments()->where('status', 'succeeded')->update(['status' => 'refunded']);
+        $order->update(['payment_status' => Order::PAYMENT_REFUNDED]);
     }
 
     /**

@@ -40,7 +40,9 @@ type LiveDelivery = {
   address: string;
   destinationName: string;
   items: { name: string; quantity: number }[];
-  codAmount: number;
+  amount: number;
+  paymentMethod: 'cod' | 'gcash';
+  paymentStatus: string;
   store: LatLng;
   destination: LatLng;
   phase: DeliveryPhase;
@@ -91,7 +93,9 @@ function toDelivery(order: StaffOrder): LiveDelivery | null {
     address: addressText,
     destinationName: address?.label || "Customer's House",
     items: (order.order_items ?? []).map((line) => ({ name: line.item_name, quantity: line.quantity })),
-    codAmount: Number(order.total_amount),
+    amount: Number(order.total_amount),
+    paymentMethod: order.payment_method === 'gcash' ? 'gcash' : 'cod',
+    paymentStatus: order.payment_status,
     store: STORE_LOCATION,
     destination: {
       latitude: Number.isFinite(lat) ? lat : FALLBACK_DESTINATION.latitude,
@@ -127,6 +131,11 @@ function Stepper({ phase }: { phase: DeliveryPhase }) {
       ))}
     </View>
   );
+}
+
+function paymentLabel(delivery: LiveDelivery): string {
+  if (delivery.paymentMethod === 'gcash') return `GCash ${delivery.paymentStatus === 'paid' ? 'Paid' : 'Unpaid'}`;
+  return `COD ${peso(delivery.amount)}`;
 }
 
 /** Full-screen map modal: JALIKUD store → customer's house, with simulated rider movement. */
@@ -180,7 +189,7 @@ function DeliveryMapModal({
             <View style={styles.mapHeaderCopy}>
               <Text style={styles.mapHeaderTitle}>{delivery.destinationName}</Text>
               <Text style={styles.mapHeaderSubtitle}>
-                {delivery.orderNumber} · COD {peso(delivery.codAmount)}
+                {delivery.orderNumber} · {paymentLabel(delivery)}
               </Text>
             </View>
           </View>
@@ -206,14 +215,16 @@ function DeliveryMapModal({
           {delivery.phase === 'picked_up' ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Complete delivery"
+              accessibilityLabel={delivery.paymentMethod === 'cod' ? 'Complete delivery and confirm cash received' : 'Complete delivery'}
               disabled={busy}
               onPress={onComplete}
               style={({ pressed }) => [styles.completeButton, pressed && styles.pressed]}>
               {busy ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.completeButtonText}>✓ Complete delivery</Text>
+                <Text style={styles.completeButtonText}>
+                  {delivery.paymentMethod === 'cod' ? 'Complete & confirm cash received' : '✓ Complete delivery'}
+                </Text>
               )}
             </Pressable>
           ) : delivery.phase === 'assigned' ? (
@@ -403,8 +414,8 @@ export default function RiderDeliveriesScreen() {
                 <Text style={styles.orderNumber}>{active.orderNumber}</Text>
                 <Text style={styles.orderMeta}>Assigned {active.assignedAt}</Text>
               </View>
-              <View style={styles.codBadge}>
-                <Text style={styles.codText}>COD {peso(active.codAmount)}</Text>
+              <View style={[styles.paymentBadge, active.paymentMethod === 'gcash' && styles.gcashBadge]}>
+                <Text style={[styles.paymentText, active.paymentMethod === 'gcash' && styles.gcashText]}>{paymentLabel(active)}</Text>
               </View>
             </View>
 
@@ -471,7 +482,9 @@ export default function RiderDeliveriesScreen() {
                 <Text style={styles.historyIcon}>✓</Text>
                 <View style={styles.historyCopy}>
                   <Text style={styles.historyOrder}>{delivery.orderNumber} · {delivery.customer}</Text>
-                  <Text style={styles.historyMeta}>COD collected {peso(delivery.codAmount)}</Text>
+                  <Text style={styles.historyMeta}>
+                    {delivery.paymentMethod === 'cod' ? `COD collected ${peso(delivery.amount)}` : 'GCash Paid'}
+                  </Text>
                 </View>
               </View>
             ))}
@@ -525,8 +538,10 @@ const styles = StyleSheet.create({
   orderHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
   orderNumber: { color: TEXT, fontSize: 17, fontWeight: '900' },
   orderMeta: { color: GRAY, fontSize: 10, marginTop: 3 },
-  codBadge: { backgroundColor: '#FEF3C7', borderRadius: 9, paddingHorizontal: 10, paddingVertical: 6 },
-  codText: { color: '#B45309', fontSize: 11, fontWeight: '900' },
+  paymentBadge: { backgroundColor: '#FEF3C7', borderRadius: 9, paddingHorizontal: 10, paddingVertical: 6 },
+  gcashBadge: { backgroundColor: '#DBEAFE' },
+  paymentText: { color: '#B45309', fontSize: 11, fontWeight: '900' },
+  gcashText: { color: '#1D4ED8' },
   stepper: { flexDirection: 'row', marginTop: 15, marginBottom: 4 },
   stepperStep: { flex: 1 },
   stepperDotRow: { flexDirection: 'row', alignItems: 'center' },

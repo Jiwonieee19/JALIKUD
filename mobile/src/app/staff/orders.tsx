@@ -63,7 +63,6 @@ function OrderCard({
   onReject,
   onAdvance,
   onAssign,
-  onMarkPaid,
 }: {
   order: StaffOrder;
   busy: boolean;
@@ -71,7 +70,6 @@ function OrderCard({
   onReject: () => void;
   onAdvance: (next: OrderStatus, label: string) => void;
   onAssign?: () => void;
-  onMarkPaid: () => void;
 }) {
   const isDelivery = order.order_type === 'delivery';
   const advance = NEXT_STATUS[order.status];
@@ -115,16 +113,6 @@ function OrderCard({
         <Text style={styles.paymentLabel}>
           {order.payment_method === 'gcash' ? '📱 GCash' : '💵 COD'} · {order.payment_status === 'paid' ? 'Paid ✓' : 'Unpaid'}
         </Text>
-        {order.payment_status !== 'paid' && order.status !== 'cancelled' && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Confirm payment for ${order.order_number}`}
-            disabled={busy}
-            onPress={onMarkPaid}
-            style={({ pressed }) => [styles.payButton, pressed && styles.pressed]}>
-            <Text style={styles.payButtonText}>Mark paid</Text>
-          </Pressable>
-        )}
       </View>
 
       <View style={styles.footer}>
@@ -303,15 +291,6 @@ export default function StaffOrdersScreen() {
     );
   };
 
-  const handleMarkPaid = (order: StaffOrder) => {
-    if (!token) return;
-    void runOn(
-      order.id,
-      () => staffApi.confirmPayment(token, order.id),
-      `${order.order_number} marked paid. Points credit when the order completes.`,
-    );
-  };
-
   const openAssignSheet = (order: StaffOrder) => {
     setSelectedRiderId(order.rider_id);
     setAssignError('');
@@ -416,7 +395,6 @@ export default function StaffOrdersScreen() {
             onReject={() => setRejectingOrder(order)}
             onAdvance={(next, label) => handleStatus(order, next, `${order.order_number}: ${label}.`)}
             onAssign={order.order_type === 'delivery' ? () => openAssignSheet(order) : undefined}
-            onMarkPaid={() => handleMarkPaid(order)}
           />
         )) : (
           !loading && <View style={styles.empty}><Text style={styles.emptyIcon}>🎉</Text><Text style={styles.emptyTitle}>Queue is clear</Text><Text style={styles.emptyText}>No {filter} orders right now.</Text></View>
@@ -545,10 +523,8 @@ const styles = StyleSheet.create({
   rejectedBox: { marginTop: 10, padding: 10, borderRadius: 10, backgroundColor: '#FEF2F2' },
   rejectedTitle: { color: '#B91C1C', fontSize: 11, fontWeight: '800' },
   riderChip: { marginTop: 10, color: '#C2410C', fontSize: 11, fontWeight: '800' },
-  paymentRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#EEEEF1' },
+  paymentRow: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#EEEEF1' },
   paymentLabel: { color: GRAY, fontSize: 11, fontWeight: '700' },
-  payButton: { backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#BFDBFE', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9 },
-  payButtonText: { color: '#1D4ED8', fontSize: 11, fontWeight: '800' },
   footer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12 },
   totalLabel: { color: GRAY, fontSize: 9, textTransform: 'uppercase', fontWeight: '700' },
   total: { color: TEXT, fontSize: 17, fontWeight: '900', marginTop: 1 },

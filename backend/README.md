@@ -410,12 +410,10 @@ the customer routes but unscoped: staff/admins see every order.
 **`PUT /api/admin/orders/{order}/status`** — advance an order. Fields: `status`
 (required, one of the 7 values), `note` (optional ≤ 500, stored in
 `order_status_history`). Transitions are enforced:
-`pending → confirmed|cancelled → preparing → ready → out_for_delivery →
-completed`, with `cancelled` reachable up to `ready`. Completing awards points;
-cancelling refunds points.
-
-**`PUT /api/admin/orders/{order}/payment`** — confirm (or fail) payment. Body
-`{ payment_status: paid|failed }`. Marking a completed order paid awards points.
+`pending → confirmed|cancelled → preparing → ready`. Staff complete pickup
+orders from `ready`; only the assigned rider can move delivery orders to
+`out_for_delivery` and `completed`. Completing awards points; cancelling refunds
+points and demo GCash payments.
 
 **`PUT /api/admin/orders/{order}/rider`** — assign (or unassign) a rider. Body
 `{ rider_id: int|null }`. The assignee must hold the `rider` role, be on duty,
@@ -425,17 +423,11 @@ and the order must be `delivery` and not yet out for delivery/completed.
 **`PUT|PATCH /api/admin/riders/{user}/profile`** — administer a rider's
 `photo_url`, `vehicle_type`, `plate_number`, `is_active` (admin only).
 
-**Payments** (staff/admin):
+**Payments** (staff/admin, read-only):
 
 - `GET /api/admin/orders/{order}/payments` — list payment records for an order.
-- `POST /api/admin/orders/{order}/payments` — record a payment: `provider`
-  required (`cod|gcash|stripe|paypal`), `amount` required ≥ 0, `currency`
-  optional (default `PHP`), `status` optional
-  (`pending|succeeded|failed|refunded`, default `pending`),
-  `provider_transaction_id` optional ≤ 150. A `succeeded` payment sets
-  `order.payment_status = paid` and (once completed) awards points.
-- `PUT|PATCH /api/admin/payments/{payment}` — update a payment's `status`
-  (settle/refund), keeping the order's `payment_status` in sync.
+- GCash creates a succeeded demo payment at checkout. COD creates a succeeded
+  payment when the assigned rider completes delivery and confirms collection.
 
 
 ### 5.11 Admin — store setting, stats & uploads (admin only)
@@ -536,10 +528,8 @@ the Expo app (`mobile/src/lib/*.ts`, `fetch` + `expo-secure-store` token) and th
 
 1. **Tax is on the pre-discount subtotal** (`subtotal × rate`), not
    `(subtotal − discount) × rate`.
-2. **Payments are recorded, not charged.** `Payment` rows and order
-   `payment_status` are managed through the API, but there is no live gateway
-   (GCash/Stripe) integration, webhook, or automatic refund; `payment_method`
-   is informational only.
+2. **GCash is demo-only.** Selecting GCash marks the order paid without a live
+   gateway, webhook, or proof of transfer. Cancelling it records a demo refund.
 3. **No push notifications / activity feed.** Status changes are persisted to
    `order_status_history` but do not notify customers, staff or riders in-app.
 4. **Single store.** `store_settings` is a single row; there is no multi-branch
@@ -547,4 +537,3 @@ the Expo app (`mobile/src/lib/*.ts`, `fetch` + `expo-secure-store` token) and th
 5. **Order lists have no status filter** — clients filter client-side.
 6. **Admin user JSON** omits `email_verified_at`/`updated_at`; delete returns a
    plain message with no `data`.
-
