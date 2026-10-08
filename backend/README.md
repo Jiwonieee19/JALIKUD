@@ -455,7 +455,9 @@ generated_at } }`. **`GET /api/admin/overview/revenue`** — a 7-day series
 `{ data: [ { date, revenue, orders } ] }` (cancelled orders excluded).
 
 **`POST /api/admin/uploads/image`** — multipart field `image` (image, jpg/png/
-webp/gif ≤ 5 MB). **`POST /api/admin/uploads/document`** — field `document`
+webp/gif ≤ 5 MB) plus optional `folder` to route the image to its own
+subdirectory under `uploads/images/` — one of `general` (default), `menu-items`,
+`categories`, `riders`. **`POST /api/admin/uploads/document`** — field `document`
 (pdf/doc/docx/xls/xlsx/csv/txt ≤ 10 MB). Both return `{ data: { url, path } }`.
 
 ### 5.12 Admin — rewards & points (admin only)
