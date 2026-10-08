@@ -7,6 +7,7 @@ use App\Models\Cart;
 use App\Models\Coupon;
 use App\Models\CouponRedemption;
 use App\Models\Order;
+use App\Models\OrderStatusHistory;
 use App\Models\RiderProfile;
 use App\Models\StoreSetting;
 use App\Models\User;
@@ -34,6 +35,31 @@ class OrderController extends Controller
         Order::STATUS_COMPLETED => [],
         Order::STATUS_CANCELLED => [],
     ];
+
+    /**
+     * GET /api/admin/activity - status changes made by the signed-in staff member.
+     */
+    public function activity(PaginationRequest $request): JsonResponse
+    {
+        $history = OrderStatusHistory::query()
+            ->with([
+                'order:id,order_number',
+                'changedBy:id,name',
+            ])
+            ->where('changed_by', $request->user()->id)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->paginate($request->perPage(20));
+
+        return $this->paginated($history, fn (OrderStatusHistory $entry) => [
+            'id' => $entry->id,
+            'status' => $entry->status,
+            'note' => $entry->note,
+            'created_at' => $entry->created_at,
+            'order' => $entry->order,
+            'actor' => $entry->changedBy,
+        ]);
+    }
 
     public function index(PaginationRequest $request): JsonResponse
     {

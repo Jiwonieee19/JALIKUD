@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -43,7 +43,13 @@ function peso(value: number): string {
 export default function OrdersScreen() {
   const { orders, refreshOrders, error } = useCustomerOrder();
   const [tab, setTab] = useState<OrderTab>('active');
+  const [refreshing, setRefreshing] = useState(false);
   useFocusEffect(useCallback(() => { void refreshOrders().catch(() => undefined); }, [refreshOrders]));
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    refreshOrders().catch(() => undefined).finally(() => setRefreshing(false));
+  }, [refreshOrders]);
 
   const active = orders.filter(
     (order) =>
@@ -90,7 +96,9 @@ export default function OrdersScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+        alwaysBounceVertical
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} />}>
         {shown.length === 0 ? (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyIcon}>📦</Text>
