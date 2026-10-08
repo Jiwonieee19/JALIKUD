@@ -125,7 +125,7 @@ export function CustomerOrderProvider({ children }: { children: ReactNode }) {
       await refreshCart();
     }
   }, [refreshCart]);
-  const refreshOrders = useCallback(async () => { if (token && user?.role === 'customer') setOrders((await customerApi.orders(token)).data.data.map(mapOrder)); }, [token, user?.role]);
+  const refreshOrders = useCallback(async () => { if (token && user?.role === 'customer') setOrders((await customerApi.orders(token)).map(mapOrder)); }, [token, user?.role]);
   const refreshAddresses = useCallback(async () => { if (token && user?.role === 'customer') setAddresses((await customerApi.addresses(token)).data); }, [token, user?.role]);
 
   useEffect(() => {

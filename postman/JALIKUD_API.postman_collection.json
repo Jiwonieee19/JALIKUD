@@ -672,7 +672,7 @@
                 "exec": [
                   "pm.test('List menu 200', function () { pm.response.to.have.status(200); });",
                   "var j = pm.response.json();",
-                  "var f = j && j.data && j.data.data && j.data.data[0];",
+                  "var f = j && Array.isArray(j.data) && j.data[0];",
                   "if (f) { pm.environment.set('menu_item_id', String(f.id)); }"
                 ]
               }

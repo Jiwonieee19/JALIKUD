@@ -222,7 +222,7 @@ export const customerApi = {
     apiRequest<DataResponse<Address>>(`/addresses/${id}`, { token, method: 'PATCH', body: input }),
   deleteAddress: (token: string, id: number) =>
     apiRequest<{ message: string }>(`/addresses/${id}`, { token, method: 'DELETE' }),
-  orders: (token: string) => apiRequest<DataResponse<Paginated<Order>>>('/orders?per_page=100', { token }),
+  orders: (token: string) => apiRequest<DataResponse<Paginated<Order> | Order[]>>('/orders?per_page=100', { token }).then(paginatedItems),
   placeOrder: (
     token: string,
     input: { order_type: 'delivery' | 'pickup'; address_id?: number; coupon_code?: string; notes?: string; payment_method?: PaymentMethod },
