@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Order;
 use App\Models\PointTransaction;
+use App\Models\Reward;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -20,7 +22,37 @@ class PointLedger
 
     public static function definitions(): array
     {
-        return config('rewards.definitions') ?? [];
+        return Cache::remember('rewards.definitions', 60, function () {
+            return Reward::query()
+                ->where('is_active', true)
+                ->orderBy('id')
+                ->get()
+                ->mapWithKeys(function (Reward $reward) {
+                    $definition = [
+                        'type' => $reward->type,
+                        'label' => $reward->label,
+                        'points_cost' => $reward->points_cost,
+                    ];
+
+                    if ($reward->type === 'free_item') {
+                        $definition['menu_item_id'] = $reward->menu_item_id;
+                    } else {
+                        $definition['discount_amount'] = (float) $reward->discount_amount;
+                        $definition['min_order_amount'] = (float) $reward->min_order_amount;
+                    }
+
+                    return [$reward->key => $definition];
+                })
+                ->all();
+        });
+    }
+
+    /**
+     * Invalidate the cached definitions after an admin writes the catalogue.
+     */
+    public static function flushDefinitions(): void
+    {
+        Cache::forget('rewards.definitions');
     }
 
     public static function definition(string $key): ?array

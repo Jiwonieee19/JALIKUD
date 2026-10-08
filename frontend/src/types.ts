@@ -336,27 +336,30 @@ export interface AdminOverview {
  * cases in backend/tests/Feature/RewardsTest.php. Mobile's Rewards tab is live
  * against it.
  *
- * What does NOT exist is the admin surface or a `rewards` table — the catalogue
- * is hardcoded in backend/config/rewards.php and read through
- * `PointLedger::definitions()`. So these types below are a DESIGN PROPOSAL for
- * AdminRewardsPage, not a description of a contract, and several fields have no
- * backend analogue at all:
+ * The admin surface and a `rewards` table NOW EXIST as of the rewards-admin
+ * work: `GET|POST /api/admin/rewards`, `PUT/PATCH|DELETE /api/admin/rewards/{reward}`,
+ * `GET /api/admin/rewards/redemptions` and `GET /api/admin/points`. The catalogue
+ * is stored in the `rewards` table (key, label, type, points_cost, menu_item_id,
+ * discount_amount, min_order_amount, is_active) and read at runtime through
+ * `PointLedger::definitions()`.
  *
- *   stock           no oversell mechanism; "one unit in the cart" is the limit
- *   emoji           design-only, never had a column
- *   monetary_value  redundant with the backend's `discount_amount`
- *   title           the backend calls it `label`
- *   points_required the backend calls it `points_cost`
- *   menu_item_id    the backend resolves a `menu_item_slug`
+ * The `Reward` type below is still the old DESIGN PROPOSAL — when wiring
+ * AdminRewardsPage, replace it with the real serialiser shape:
  *
- * `RewardRedemption` is more than unimplemented — it is fictional. Rewards are
- * spent instantly at checkout via `spendForOrder`, so nothing is ever issued,
- * there is no code to present, and no issued/used/expired/revoked lifecycle.
- * An admin "Redemptions" tab should serve `point_transactions WHERE
- * reason='spent'` joined to `orders.reward_key` instead.
+ *   { id, key, label, type, points_cost, menu_item_id, discount_amount,
+ *     min_order_amount, is_active, created_at, updated_at, menu_item? }
  *
- * The proposal of record, with schema and call sites, is in
- * docs/API_WIRING.md §4.
+ *   key            immutable customer identifier (used by carts/orders.reward_key)
+ *   label          the backend's `label` (was `title`)
+ *   points_cost    the backend's `points_cost` (was `points_required`)
+ *   discount_amount the backend's `discount_amount` (was `monetary_value`)
+ *   menu_item_id   FK to menu_items for free_item rewards
+ *
+ * `RewardRedemption` is fictional — rewards are spent instantly at checkout via
+ * `spendForOrder`, so nothing is ever issued. The admin "Redemptions" tab is
+ * served by `point_transactions WHERE reason='spent'` joined to
+ * `orders.reward_key` (see `GET /api/admin/rewards/redemptions`).
+ *
  * ---------------------------------------------------------------------- */
 
 /** `free_item` ships a menu item free, `voucher` is money off the order. */
@@ -400,15 +403,17 @@ export interface RewardRedemption {
 }
 
 /**
- * Append-only signed ledger. One row per earn or spend.
+ * Append-only signed ledger (matches `point_transactions` on the backend).
  * Positive = earned, negative = spent. Never UPDATE these rows.
  */
 export interface RewardPointTransaction {
   id: number
   user_id: number
   order_id: number | null
-  points: number
-  reason: 'earned' | 'spent' | 'reversed' | 'adjusted'
+  points_delta: number
   balance_after: number
+  reason: 'earned' | 'spent' | 'refunded'
+  description: string | null
   created_at: string
+  updated_at: string
 }

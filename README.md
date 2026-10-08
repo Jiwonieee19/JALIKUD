@@ -420,7 +420,11 @@ Only `line1` and `city` are required (and only on create). A few behaviours wort
 | `PUT/PATCH` | `/api/admin/users/{id}` | Update name/email/password/role     |
 | `DELETE` | `/api/admin/users/{id}` | Delete a user                        |
 
-**Create user body:** `{ "name": "...", "email": "...", "password": "password123", "role": "user" }` (role: `user` or `admin`)
+**Create user body:** `{ "name": "...", "email": "...", "password": "password123", "role": "customer" }` (role: `customer` / `staff` / `admin` / `rider`)
+
+The admin surface also covers the catalog, coupons, orders, riders, store
+settings, dashboard stats/overview, rewards and points — see
+**[`backend/README.md`](backend/README.md)** for the full endpoint reference.
 
 Non-admins calling `/api/admin/*` receive:
 
@@ -434,9 +438,12 @@ Non-admins calling `/api/admin/*` receive:
 
 ## Authentication & Roles
 
-- New users are created with `role = 'user'` by default (the `role` column is an enum `user`/`admin`).
-- Tokens are issued via **Laravel Sanctum** and expired after **7 days** by default.
-- `/api/admin/*` is protected by the `EnsureAdmin` middleware (`app/Http/Middleware/EnsureAdmin.php`).
+- New users are created with `role = 'customer'` by default. The `role` column is a
+  CHECK-constrained enum of `customer` / `staff` / `admin` / `rider`.
+- Tokens are issued via **Laravel Sanctum** and expire after **7 days** by default.
+- `/api/admin/*` user/catalog/coupon/settings/stats/rewards management is protected
+  by the `EnsureAdmin` middleware; the staff order queue is protected by `EnsureStaff`;
+  rider self-service by `EnsureRider`.
 
 ### Making yourself an admin (to test the admin API)
 
@@ -760,11 +767,13 @@ Standard Laravel variables, notably:
 - [x] Add feature tests for auth + admin, and trusted-proxy regression coverage
 - [x] Address CRUD so **delivery** checkout is reachable for public-API customers
 - [x] Remove `role` from `User::$fillable` (was only safe by accident)
-- [ ] Put a **Cloudflare Access** policy in front of the public API hostname
-- [ ] Rider assignment (`PUT /api/admin/orders/{order}/rider`) + `GET /api/admin/riders`
-- [ ] Staff / rider role capabilities (queues) - `isRider()` and `isStaff()` are still unused
-- [ ] Variant-group admin CRUD, reviews, and payments endpoints (tables exist, no routes)
+- [x] Rider assignment (`PUT /api/admin/orders/{order}/rider`) + `GET /api/admin/riders`
+- [x] Staff / rider role capabilities (queues) — `isRider()` / `isStaff()` wired up
+- [x] Variant-group admin CRUD, reviews, and payments endpoints
+- [x] Admin rewards catalogue CRUD + ledger (`/api/admin/rewards`, `/api/admin/points`)
+- [x] Admin dashboard overview (`/api/admin/overview`) + 7-day revenue series
 - [x] Wire the Expo customer app to the live API (absolute base URL + `expo-secure-store` tokens)
+- [ ] Put a **Cloudflare Access** policy in front of the public API hostname
 - [ ] Replace the web dashboard's `frontend/src/mock/` data with real API calls
 - [ ] Add automated tests to CI before pushing images
 - [ ] Real financial domain models (accounts, transactions, budgets, reporting)

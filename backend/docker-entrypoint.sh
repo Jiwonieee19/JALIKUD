@@ -40,6 +40,9 @@ if grep -q "^DB_CONNECTION=sqlite" .env || [ "${DB_CONNECTION:-}" = "sqlite" ]; 
     chown www-data:www-data database/database.sqlite
 fi
 
+# Serve uploaded files: public/storage -> storage/app/public
+php artisan storage:link || true
+
 php artisan migrate --force
 
 # In production, cache config/routes for performance. Cache files are written

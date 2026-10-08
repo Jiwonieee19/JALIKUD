@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AddressController;
+use App\Http\Controllers\AdminRewardController;
 use App\Http\Controllers\AdminStatsController;
 use App\Http\Controllers\AdminUserController;
 use App\Http\Controllers\AuthController;
@@ -126,6 +127,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
             // Dashboard stats
             Route::get('/stats', [AdminStatsController::class, 'index']);
+            Route::get('/overview', [AdminStatsController::class, 'overview']);
+            Route::get('/overview/revenue', [AdminStatsController::class, 'revenueSeries']);
 
             // File uploads
             Route::post('/uploads/image', [UploadController::class, 'storeImage']);
@@ -133,6 +136,14 @@ Route::middleware('auth:sanctum')->group(function () {
 
             // Coupon redemption history
             Route::get('/coupons/{coupon}/redemptions', [CouponController::class, 'redemptions']);
+
+            // Loyalty rewards (catalogue CRUD + ledger)
+            Route::get('/rewards', [AdminRewardController::class, 'index']);
+            Route::post('/rewards', [AdminRewardController::class, 'store']);
+            Route::get('/rewards/redemptions', [AdminRewardController::class, 'redemptions']);
+            Route::match(['put', 'patch'], '/rewards/{reward}', [AdminRewardController::class, 'update']);
+            Route::delete('/rewards/{reward}', [AdminRewardController::class, 'destroy']);
+            Route::get('/points', [AdminRewardController::class, 'points']);
         });
 
 });

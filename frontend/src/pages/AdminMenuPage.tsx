@@ -11,7 +11,7 @@ import Modal from '../components/ui/Modal'
 import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Textarea from '../components/ui/Textarea'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { paginate, peso } from '../mock'
 import api, { fieldError } from '../services/api'
 import { unwrapList } from '../services/lists'
@@ -35,6 +35,10 @@ const CATEGORY_PER_PAGE = 7
  * (backend ticket Task 2) plus a real paginator.
  */
 const MAX_PER_PAGE = 100
+
+// Image upload constraints (mirror UploadImageRequest on the backend).
+const IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024
 
 /**
  * Talks to the real API:
@@ -94,6 +98,11 @@ export default function AdminMenuPage() {
   const [loadError, setLoadError] = useState('')
   const [saving, setSaving] = useState(false)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [categoryModal, setCategoryModal] = useState<{ open: boolean; category: Category | null }>({
     open: false,
@@ -204,6 +213,7 @@ export default function AdminMenuPage() {
       preparation_time_minutes: '10',
     })
     setFormErrors({})
+    resetPendingImage()
     setCreating(true)
   }
 
@@ -305,6 +315,7 @@ export default function AdminMenuPage() {
   async function saveItem() {
     setSaving(true)
     setFormErrors({})
+    setUploadError(null)
 
     const name = draft.name.trim()
     const slug = slugify(name)
@@ -344,17 +355,32 @@ export default function AdminMenuPage() {
       return
     }
 
+    let imageUrl = draft.image_url
+
+    // Upload a newly-picked image as part of the save, so a cancelled or failed
+    // save never leaves an orphaned file in storage.
+    if (pendingFile) {
+      setUploading(true)
+      try {
+        imageUrl = await uploadImage(pendingFile)
+      } catch (err) {
+        const errors = fieldError(err)
+        setUploadError(errors.image ?? errors.form ?? 'Could not upload the image.')
+        setUploading(false)
+        setSaving(false)
+        return
+      }
+    }
+
     const payload = {
       name,
       slug,
       category_id: Number(draft.category_id),
       description: draft.description.trim() === '' ? null : draft.description.trim(),
       sku: draft.sku.trim() === '' ? null : draft.sku.trim(),
-      // base_price is `required` on MenuItemController (line 43) and prep time
-      // is `nullable, integer, min:0` — so 0 is a valid prep time, not an error.
       base_price: Number(draft.base_price),
       preparation_time_minutes: Number(draft.preparation_time_minutes),
-      ...(draft.image_url ? { image_url: draft.image_url } : {}),
+      image_url: imageUrl,
     }
 
     try {
@@ -365,6 +391,7 @@ export default function AdminMenuPage() {
       }
 
       await refresh()
+      resetPendingImage()
       setCreating(false)
       setEditing(null)
       flash(editing ? `${payload.name} updated` : `${payload.name} created`)
@@ -373,6 +400,7 @@ export default function AdminMenuPage() {
       setFormErrors(errors)
       flash(errors.form ?? Object.values(errors)[0] ?? 'Could not save the item.')
     } finally {
+      setUploading(false)
       setSaving(false)
     }
   }
@@ -413,7 +441,58 @@ export default function AdminMenuPage() {
       preparation_time_minutes: String(item.preparation_time_minutes),
     })
     setFormErrors({})
+    resetPendingImage()
     setEditing(item)
+  }
+
+  /**
+   * Upload a picked file and return its (relative) public URL. Called during
+   * save — not on selection — so a cancelled or failed save never leaves an
+   * orphaned file in storage.
+   */
+  async function uploadImage(file: File): Promise<string> {
+    const formData = new FormData()
+    formData.append('image', file)
+
+    const response = await api.post('/admin/uploads/image', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+
+    return response.data.data.url as string
+  }
+
+  function resetPendingImage() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    setPendingFile(null)
+    setPreviewUrl(null)
+    setUploadError(null)
+  }
+
+  function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    // Clear the input so re-selecting the same file fires `change` again.
+    event.target.value = ''
+    if (!file) return
+
+    if (!IMAGE_MIME.includes(file.type)) {
+      setUploadError('Choose a JPG, PNG, WebP or GIF image.')
+      return
+    }
+
+    if (file.size > IMAGE_MAX_BYTES) {
+      setUploadError('Image must be 5 MB or smaller.')
+      return
+    }
+
+    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    setPendingFile(file)
+    setPreviewUrl(URL.createObjectURL(file))
+    setUploadError(null)
+  }
+
+  function removeImage() {
+    resetPendingImage()
+    setDraft((current) => ({ ...current, image_url: null }))
   }
 
   return (
@@ -688,7 +767,7 @@ export default function AdminMenuPage() {
             >
               Cancel
             </Button>
-            <Button onClick={() => void saveItem()} disabled={saving}>
+            <Button onClick={() => void saveItem()} disabled={saving || uploading}>
               {saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Item'}
             </Button>
           </>
@@ -698,6 +777,7 @@ export default function AdminMenuPage() {
 <div className="sm:col-span-2 flex items-center gap-4 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200 ring-inset dark:bg-slate-800/50 dark:ring-slate-700">
               <MenuThumb
                 src={
+                  previewUrl ||
                   draft.image_url ||
                   (draft.name
                     ? `/images/menu/${draft.name
@@ -713,11 +793,41 @@ export default function AdminMenuPage() {
                 <p className="text-sm font-extrabold text-slate-900 dark:text-white">
                   {draft.name || 'New menu item'}
                 </p>
-                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                  Preview from the generated placeholders. The API has no image field yet —
-                  <span className="font-semibold"> menu_items.image_url </span>
-                  exists in the schema but no endpoint populates it.
-                </p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="sr-only"
+                    onChange={handleImageChange}
+                    disabled={uploading}
+                    aria-label="Upload menu item image"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                  >
+                    {uploading ? 'Uploading…' : draft.image_url || pendingFile ? 'Replace image' : 'Upload image'}
+                  </Button>
+                  {(draft.image_url || pendingFile) && (
+                    <Button type="button" variant="ghost" onClick={removeImage} disabled={uploading}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                {uploadError ? (
+                  <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">{uploadError}</p>
+                ) : pendingFile ? (
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    Image will be uploaded when you save.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    JPG, PNG, WebP or GIF · up to 5 MB. Replaces the generated placeholder.
+                  </p>
+                )}
               </div>
             </div>
             <div className="sm:col-span-2">

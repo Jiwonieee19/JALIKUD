@@ -30,6 +30,19 @@ function endpoint(path: string): string {
   return `${API_URL}/${path.replace(/^\/+/, '')}`;
 }
 
+/**
+ * Resolve a stored asset URL (e.g. `/storage/uploads/images/x.jpg`) to an
+ * absolute URL the device can fetch. Absolute URLs pass through untouched.
+ * `API_URL` may carry an `/api` suffix, which is stripped to reach the origin.
+ */
+export function assetUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path)) return path;
+  if (!API_URL) return path;
+  const origin = API_URL.replace(/\/api\/?$/, '');
+  return `${origin}/${path.replace(/^\/+/, '')}`;
+}
+
 async function parseResponse(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return undefined;

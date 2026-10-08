@@ -5,11 +5,11 @@ namespace App\Http\Controllers;
 use App\Http\Requests\General\UploadDocumentRequest;
 use App\Http\Requests\General\UploadImageRequest;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Storage;
 
 /**
- * Admin file uploads. Stores to the public disk and returns a URL for use in
- * menu item `image_url` / rider `photo_url` fields.
+ * Admin file uploads. Stores to the public disk and returns a relative URL for
+ * use in menu item `image_url` / rider `photo_url` fields (so the stored value
+ * works behind any proxy, tunnel or domain the client resolves it against).
  */
 class UploadController extends Controller
 {
@@ -22,7 +22,7 @@ class UploadController extends Controller
 
         return response()->json([
             'data' => [
-                'url' => Storage::disk('public')->url($path),
+                'url' => '/storage/'.$path,
                 'path' => $path,
             ],
         ], 201);
@@ -37,7 +37,7 @@ class UploadController extends Controller
 
         return response()->json([
             'data' => [
-                'url' => Storage::disk('public')->url($path),
+                'url' => '/storage/'.$path,
                 'path' => $path,
             ],
         ], 201);

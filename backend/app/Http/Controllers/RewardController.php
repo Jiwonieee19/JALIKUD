@@ -20,17 +20,18 @@ class RewardController extends Controller
     {
         $balance = PointLedger::balance($request->user()->id);
 
-        $slugs = collect(PointLedger::definitions())
+        $ids = collect(PointLedger::definitions())
             ->where('type', 'free_item')
-            ->pluck('menu_item_slug')
+            ->pluck('menu_item_id')
             ->filter()
+            ->map(fn ($id) => (int) $id)
             ->values()
             ->all();
 
         $items = MenuItem::query()
-            ->whereIn('slug', $slugs)
-            ->get(['id', 'slug', 'name', 'base_price', 'is_available'])
-            ->keyBy('slug');
+            ->whereIn('id', $ids)
+            ->get(['id', 'name', 'base_price', 'is_available'])
+            ->keyBy('id');
 
         $rewards = collect(PointLedger::definitions())->map(function (array $definition, string $key) use ($balance, $items) {
             $reward = [
@@ -42,7 +43,7 @@ class RewardController extends Controller
             ];
 
             if (($definition['type'] ?? null) === 'free_item') {
-                $item = $items->get((string) ($definition['menu_item_slug'] ?? ''));
+                $item = $items->get((int) ($definition['menu_item_id'] ?? 0));
                 $reward['menu_item'] = $item ? [
                     'id' => $item->id,
                     'name' => $item->name,

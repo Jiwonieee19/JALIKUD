@@ -91,9 +91,9 @@ class CartPricingService
             } elseif ($cart->coupon_id !== null) {
                 $errors[] = 'Rewards cannot be combined with a coupon.';
             } elseif (($definition['type'] ?? null) === 'free_item') {
-                $slug = (string) ($definition['menu_item_slug'] ?? '');
+                $menuItemId = (int) ($definition['menu_item_id'] ?? 0);
                 $match = $priced['lines']->first(
-                    fn (array $line) => $line['menu_item']->slug === $slug
+                    fn (array $line) => $line['menu_item']->id === $menuItemId
                 );
 
                 if ($match === null) {
