@@ -29,8 +29,12 @@ class CouponController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        if ($request->has('code')) {
+            $request->merge(['code' => strtoupper(trim((string) $request->input('code')))]);
+        }
+
         $data = $request->validate([
-            'code' => ['required', 'string', 'max:50', 'unique:coupons,code'],
+            'code' => ['required', 'string', 'max:50', 'regex:/^[A-Z0-9_-]+$/', 'unique:coupons,code'],
             'type' => ['required', 'in:fixed,percentage'],
             'value' => ['required', 'numeric', 'min:0'],
             'min_order_amount' => ['nullable', 'numeric', 'min:0'],
@@ -49,8 +53,12 @@ class CouponController extends Controller
 
     public function update(Request $request, Coupon $coupon): JsonResponse
     {
+        if ($request->has('code')) {
+            $request->merge(['code' => strtoupper(trim((string) $request->input('code')))]);
+        }
+
         $data = $request->validate([
-            'code' => ['sometimes', 'string', 'max:50', 'unique:coupons,code,'.$coupon->id],
+            'code' => ['sometimes', 'string', 'max:50', 'regex:/^[A-Z0-9_-]+$/', 'unique:coupons,code,'.$coupon->id],
             'type' => ['sometimes', 'in:fixed,percentage'],
             'value' => ['sometimes', 'numeric', 'min:0'],
             'min_order_amount' => ['nullable', 'numeric', 'min:0'],

@@ -547,4 +547,3 @@ the Expo app (`mobile/src/lib/*.ts`, `fetch` + `expo-secure-store` token) and th
 5. **Order lists have no status filter** — clients filter client-side.
 6. **Admin user JSON** omits `email_verified_at`/`updated_at`; delete returns a
    plain message with no `data`.
-

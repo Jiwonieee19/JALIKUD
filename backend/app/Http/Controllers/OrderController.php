@@ -120,6 +120,7 @@ class OrderController extends Controller
             $coupon = null;
             $discountAmount = 0.0;
             $code = $data['coupon_code'] ?? $cart->coupon?->code;
+            $code = $code !== null && trim((string) $code) !== '' ? strtoupper(trim((string) $code)) : null;
 
             if (! empty($code)) {
                 // Row lock serialises concurrent redemptions of the same coupon.
@@ -349,7 +350,7 @@ class OrderController extends Controller
             PointLedger::refundForOrder($order->fresh());
         }
 
-        return response()->json(['data' => $order]);
+        return response()->json(['data' => $order->fresh()]);
     }
 
     /**

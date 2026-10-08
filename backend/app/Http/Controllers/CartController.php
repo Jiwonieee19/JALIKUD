@@ -164,7 +164,7 @@ class CartController extends Controller
             return response()->json(['message' => 'Remove the selected reward before applying a coupon.'], 422);
         }
 
-        $coupon = Coupon::where('code', $data['code'])->first();
+        $coupon = Coupon::where('code', strtoupper(trim((string) $data['code'])))->first();
 
         if (! $coupon) {
             return response()->json(['message' => 'Coupon code not found or inactive.'], 422);

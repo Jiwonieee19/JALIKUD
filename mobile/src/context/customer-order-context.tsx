@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useAuth } from '@/context/auth-context';
 import { errorMessage } from '@/lib/api';
@@ -105,6 +105,7 @@ export function CustomerOrderProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
   const [error, setError] = useState('');
+  const ordersRequest = useRef(0);
 
   const run = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
     setMutating(true); setError('');
@@ -125,17 +126,42 @@ export function CustomerOrderProvider({ children }: { children: ReactNode }) {
       await refreshCart();
     }
   }, [refreshCart]);
-  const refreshOrders = useCallback(async () => { if (token && user?.role === 'customer') setOrders((await customerApi.orders(token)).data.data.map(mapOrder)); }, [token, user?.role]);
+  const refreshOrders = useCallback(async () => {
+    if (!token || user?.role !== 'customer') return;
+    const request = ++ordersRequest.current;
+    try {
+      const nextOrders = (await customerApi.orders(token)).data.data.map(mapOrder);
+      if (request === ordersRequest.current) {
+        setOrders(nextOrders);
+        setError('');
+      }
+    } catch (caught) {
+      if (request === ordersRequest.current) {
+        setError(errorMessage(caught, 'Unable to load your orders. Please try again.'));
+      }
+      throw caught;
+    }
+  }, [token, user?.role]);
   const refreshAddresses = useCallback(async () => { if (token && user?.role === 'customer') setAddresses((await customerApi.addresses(token)).data); }, [token, user?.role]);
 
   useEffect(() => {
-    if (!token || user?.role !== 'customer') return;
+    ordersRequest.current += 1;
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setCart(null);
+    setOrders([]);
+    setAddresses([]);
+    setError('');
+    /* eslint-enable react-hooks/set-state-in-effect */
+    if (!token || user?.role !== 'customer') {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     // Initial authenticated synchronization is the purpose of this provider effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     Promise.all([refreshCart(), refreshOrders(), refreshAddresses()])
       .catch((caught) => setError(errorMessage(caught, 'The server is unavailable. Please try again later.')))
       .finally(() => setLoading(false));
-  }, [refreshAddresses, refreshCart, refreshOrders, token, user?.role]);
+  }, [refreshAddresses, refreshCart, refreshOrders, token, user?.id, user?.role]);
 
   const addToCart = useCallback(async (item: AddCartItemInput) => {
     if (!token) throw new Error('Please sign in to add an item.');
@@ -196,7 +222,12 @@ export function CustomerOrderProvider({ children }: { children: ReactNode }) {
         ...(input.orderType === 'delivery' ? { address_id: input.addressId } : {}),
         ...(input.couponCode ? { coupon_code: input.couponCode } : {}), ...(input.notes ? { notes: input.notes } : {}),
         ...(input.paymentMethod ? { payment_method: input.paymentMethod } : {}) });
-      const order = mapOrder(response.data); await Promise.all([refreshCart(), refreshOrders()]); return order;
+      const order = mapOrder(response.data);
+      ordersRequest.current += 1;
+      setOrders((current) => [order, ...current.filter((candidate) => candidate.id !== order.id)]);
+      void Promise.all([refreshCart(), refreshOrders()])
+        .catch((caught) => setError(errorMessage(caught, 'Order placed, but the latest details could not be loaded.')));
+      return order;
     });
   }, [refreshCart, refreshOrders, run, token]);
 

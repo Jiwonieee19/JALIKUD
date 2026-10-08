@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -14,6 +14,12 @@ const TEXT_DARK = '#1C1C1E';
 const TEXT_GRAY = '#8E8E93';
 
 type OrderTab = 'active' | 'completed' | 'canceled';
+const ORDER_TABS: { value: OrderTab; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'canceled', label: 'Canceled' },
+];
+const ACTIVE_STATUSES = new Set<string>(['pending', 'confirmed', 'preparing', 'ready', 'out_for_delivery']);
 
 const STATUS_LABELS: Record<CustomerOrderStatus, string> = {
   pending: 'Pending',
@@ -39,23 +45,41 @@ function peso(value: number): string {
   return `₱${value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
 }
 
+function tabForStatus(status: string): OrderTab {
+  if (status === 'completed') return 'completed';
+  if (status === 'cancelled') return 'canceled';
+  return 'active';
+}
+
+function readableStatus(status: string): string {
+  return status
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 // UI only — order actions (details, cancel, reorder) are not implemented yet.
 export default function OrdersScreen() {
   const { orders, refreshOrders, error } = useCustomerOrder();
   const [tab, setTab] = useState<OrderTab>('active');
+  const [refreshing, setRefreshing] = useState(false);
   useFocusEffect(useCallback(() => { void refreshOrders().catch(() => undefined); }, [refreshOrders]));
 
-  const active = orders.filter(
-    (order) =>
-      order.status === 'pending' ||
-      order.status === 'confirmed' ||
-      order.status === 'preparing' ||
-      order.status === 'ready' ||
-      order.status === 'out_for_delivery',
-  );
-  const completed = orders.filter((order) => order.status === 'completed');
-  const canceled = orders.filter((order) => order.status === 'cancelled');
-  const shown = tab === 'active' ? active : tab === 'completed' ? completed : canceled;
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshOrders().catch(() => undefined);
+    });
+    return () => subscription.remove();
+  }, [refreshOrders]);
+
+  const counts: Record<OrderTab, number> = { active: 0, completed: 0, canceled: 0 };
+  for (const order of orders) counts[tabForStatus(order.status)] += 1;
+  const shown = orders.filter((order) => tabForStatus(order.status) === tab);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    refreshOrders().catch(() => undefined).finally(() => setRefreshing(false));
+  }, [refreshOrders]);
 
   return (
     <View style={styles.container}>
@@ -72,14 +96,13 @@ export default function OrdersScreen() {
           </View>
 
           <View style={styles.segmentedRow}>
-            {(['active', 'completed', 'canceled'] as const).map((segment) => (
+            {ORDER_TABS.map((segment) => (
               <Pressable
-                key={segment}
-                onPress={() => setTab(segment)}
-                style={[styles.segment, tab === segment && styles.segmentActive]}>
-                <Text style={[styles.segmentText, tab === segment && styles.segmentTextActive]}>
-                  {segment.charAt(0).toUpperCase() + segment.slice(1)}
-                  {segment === 'active' && active.length > 0 ? ` (${active.length})` : ''}
+                key={segment.value}
+                onPress={() => setTab(segment.value)}
+                style={[styles.segment, tab === segment.value && styles.segmentActive]}>
+                <Text style={[styles.segmentText, tab === segment.value && styles.segmentTextActive]}>
+                  {segment.label} ({counts[segment.value]})
                 </Text>
               </Pressable>
             ))}
@@ -90,6 +113,7 @@ export default function OrdersScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={RED} colors={[RED]} />}
         showsVerticalScrollIndicator={false}>
         {shown.length === 0 ? (
           <View style={styles.emptyBox}>
@@ -99,7 +123,9 @@ export default function OrdersScreen() {
           </View>
         ) : (
           shown.map((order) => {
-            const statusColors = STATUS_COLORS[order.status];
+            const runtimeStatus = order.status as string;
+            const statusColors = STATUS_COLORS[order.status] ?? { bg: '#E5E7EB', text: '#374151' };
+            const statusLabel = STATUS_LABELS[order.status] ?? readableStatus(runtimeStatus);
             return (
               <View key={order.id} style={styles.card}>
                 {/* Order header row */}
@@ -109,20 +135,14 @@ export default function OrdersScreen() {
                     <Text style={styles.orderDate}>{order.date}</Text>
                   </View>
                   <View style={[styles.statusBadge, { backgroundColor: statusColors.bg }]}>
-                    <Text style={[styles.statusText, { color: statusColors.text }]}>
-                      {STATUS_LABELS[order.status]}
-                    </Text>
+                    <Text style={[styles.statusText, { color: statusColors.text }]}>{statusLabel}</Text>
                   </View>
                 </View>
 
                 <Text style={styles.orderItems}>{order.items}</Text>
 
                 {/* Progress tracker for active orders */}
-                {(order.status === 'pending' ||
-                  order.status === 'confirmed' ||
-                  order.status === 'preparing' ||
-                  order.status === 'ready' ||
-                  order.status === 'out_for_delivery') && (
+                {ACTIVE_STATUSES.has(runtimeStatus) && (
                   <View style={styles.progressWrap}>
                     <View style={styles.progressTrack}>
                       <View

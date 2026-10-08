@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
@@ -20,6 +21,17 @@ class Coupon extends Model
         'expires_at',
         'is_active',
     ];
+
+    /**
+     * Friendly normalization: `save10` is stored as `SAVE10` so the
+     * database stays UPPERCASE-only regardless of which client created it.
+     */
+    protected function code(): Attribute
+    {
+        return Attribute::make(
+            set: fn ($value) => $value === null ? null : strtoupper(trim((string) $value)),
+        );
+    }
 
     protected function casts(): array
     {

@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Address;
 use App\Models\Category;
 use App\Models\MenuItem;
+use App\Models\Order;
 use App\Models\StoreSetting;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -113,6 +114,44 @@ class DeliveryCheckoutTest extends TestCase
             'order_type' => 'pickup',
             'address_id' => null,
         ]);
+    }
+
+    public function test_new_order_appears_in_the_same_customers_order_list(): void
+    {
+        $user = $this->customerWithCart();
+
+        $orderId = $this->postJson('/api/orders', ['order_type' => 'pickup'])
+            ->assertCreated()
+            ->assertJsonPath('data.user_id', $user->id)
+            ->json('data.id');
+
+        $this->getJson('/api/orders?per_page=100')
+            ->assertOk()
+            ->assertJsonPath('data.data.0.id', $orderId)
+            ->assertJsonPath('data.data.0.user_id', $user->id);
+    }
+
+    public function test_order_remains_visible_to_customer_through_staff_preparation_updates(): void
+    {
+        $customer = $this->customerWithCart();
+        $orderId = $this->postJson('/api/orders', ['order_type' => 'pickup'])
+            ->assertCreated()
+            ->json('data.id');
+        $staff = User::factory()->create(['role' => User::ROLE_STAFF]);
+
+        foreach ([Order::STATUS_CONFIRMED, Order::STATUS_PREPARING, Order::STATUS_READY] as $status) {
+            Sanctum::actingAs($staff);
+            $this->putJson("/api/admin/orders/{$orderId}/status", ['status' => $status])
+                ->assertOk()
+                ->assertJsonPath('data.id', $orderId)
+                ->assertJsonPath('data.status', $status);
+
+            Sanctum::actingAs($customer);
+            $this->getJson('/api/orders?per_page=100')
+                ->assertOk()
+                ->assertJsonPath('data.data.0.id', $orderId)
+                ->assertJsonPath('data.data.0.status', $status);
+        }
     }
 
     public function test_checkout_defaults_to_cod_and_accepts_gcash(): void

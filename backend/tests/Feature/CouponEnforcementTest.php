@@ -189,4 +189,35 @@ class CouponEnforcementTest extends TestCase
 
         $this->postJson('/api/cart/coupon', ['code' => $coupon->code])->assertStatus(422);
     }
+
+    public function test_coupon_code_is_normalized_to_uppercase(): void
+    {
+        $coupon = $this->coupon(['code' => 'save10']);
+
+        $this->assertSame('SAVE10', $coupon->fresh()->code);
+    }
+
+    public function test_apply_coupon_accepts_lowercase_input(): void
+    {
+        $this->actor();
+        $this->addToCart();
+        $coupon = $this->coupon(['code' => 'SAVE10']);
+
+        $this->postJson('/api/cart/coupon', ['code' => 'save10'])
+            ->assertOk()
+            ->assertJsonPath('data.coupon.id', $coupon->id)
+            ->assertJsonPath('data.coupon.code', 'SAVE10');
+    }
+
+    public function test_checkout_accepts_lowercase_coupon_code(): void
+    {
+        $this->actor();
+        $this->addToCart(100.0);
+        $coupon = $this->coupon(['code' => 'SAVE10', 'value' => 20]);
+
+        $this->postJson('/api/orders', ['order_type' => 'pickup', 'coupon_code' => 'save10'])
+            ->assertStatus(201);
+
+        $this->assertSame($coupon->id, Order::first()->coupon_id);
+    }
 }
