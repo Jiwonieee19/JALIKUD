@@ -34,7 +34,7 @@ class RiderDeliveryController extends Controller
             ->orderByDesc('placed_at')
             ->paginate($pagination->perPage(15));
 
-        return response()->json(['data' => $orders]);
+        return $this->paginated($orders);
     }
 
     public function show(Request $request, int $order): JsonResponse

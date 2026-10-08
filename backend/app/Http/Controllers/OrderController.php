@@ -49,8 +49,30 @@ class OrderController extends Controller
             $with[] = 'user:id,name,phone';
         }
 
+        $filters = $request->validate([
+            'order_type' => ['sometimes', 'nullable', 'string', Rule::in(['delivery', 'pickup'])],
+            'status' => ['sometimes', 'nullable', 'string', Rule::in([
+                Order::STATUS_PENDING,
+                Order::STATUS_CONFIRMED,
+                Order::STATUS_PREPARING,
+                Order::STATUS_READY,
+                Order::STATUS_OUT_FOR_DELIVERY,
+                Order::STATUS_COMPLETED,
+                Order::STATUS_CANCELLED,
+            ])],
+        ]);
+
         $query = Order::query()
             ->with($with)
+            ->when($request->query('search'), function ($q, $search) {
+                $q->where(function ($sub) use ($search) {
+                    $sub->where('order_number', 'like', "%{$search}%")
+                        ->orWhereHas('user', fn ($u) => $u->where('name', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%"));
+                });
+            })
+            ->when($filters['order_type'] ?? null, fn ($q, $type) => $q->where('order_type', $type))
+            ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('status', $status))
             ->orderByDesc('placed_at');
 
         // Admins and staff see all orders; customers see their own.
@@ -60,7 +82,7 @@ class OrderController extends Controller
 
         $orders = $query->paginate($request->perPage(10));
 
-        return response()->json(['data' => $orders]);
+        return $this->paginated($orders);
     }
 
     public function show(Request $request, Order $order): JsonResponse

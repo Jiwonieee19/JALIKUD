@@ -22,7 +22,7 @@ class RiderController extends Controller
             ->orderBy('name')
             ->paginate($request->perPage(15));
 
-        return response()->json(['data' => $riders]);
+        return $this->paginated($riders);
     }
 
     /**

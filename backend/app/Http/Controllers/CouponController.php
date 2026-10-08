@@ -16,10 +16,11 @@ class CouponController extends Controller
     {
         $coupons = Coupon::query()
             ->when($request->query('active') === 'true', fn ($q) => $q->where('is_active', true))
+            ->when($request->query('search'), fn ($q, $s) => $q->where('code', 'like', "%{$s}%"))
             ->orderByDesc('created_at')
             ->paginate($request->perPage(15));
 
-        return response()->json(['data' => $coupons]);
+        return $this->paginated($coupons);
     }
 
     public function show(Coupon $coupon): JsonResponse
@@ -84,6 +85,6 @@ class CouponController extends Controller
             ->orderByDesc('id')
             ->paginate($request->perPage(15));
 
-        return response()->json(['data' => $redemptions]);
+        return $this->paginated($redemptions);
     }
 }

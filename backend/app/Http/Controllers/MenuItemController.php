@@ -19,6 +19,7 @@ class MenuItemController extends Controller
             ->when($request->query('search'), function ($q, $search) {
                 $q->where(function ($sub) use ($search) {
                     $sub->where('name', 'like', "%{$search}%")
+                        ->orWhere('sku', 'like', "%{$search}%")
                         ->orWhere('description', 'like', "%{$search}%");
                 });
             })
@@ -28,7 +29,7 @@ class MenuItemController extends Controller
             ->orderBy('name')
             ->paginate($request->perPage(15));
 
-        return response()->json(['data' => $items]);
+        return $this->paginated($items);
     }
 
     public function show(MenuItem $menuItem): JsonResponse

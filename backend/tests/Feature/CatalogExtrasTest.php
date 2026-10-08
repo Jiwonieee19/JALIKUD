@@ -33,8 +33,8 @@ class CatalogExtrasTest extends TestCase
 
         $this->getJson('/api/menu?search=adobo')
             ->assertOk()
-            ->assertJsonCount(1, 'data.data')
-            ->assertJsonPath('data.data.0.name', 'Chicken Adobo');
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.name', 'Chicken Adobo');
     }
 
     public function test_category_cannot_be_its_own_parent(): void

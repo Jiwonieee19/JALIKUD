@@ -36,15 +36,7 @@ class AdminUserController extends Controller
             ->orderBy('created_at', 'desc')
             ->paginate($perPage);
 
-        return response()->json([
-            'data' => collect($users->items())->map(fn (User $u) => $this->present($u)),
-            'meta' => [
-                'current_page' => $users->currentPage(),
-                'last_page' => $users->lastPage(),
-                'per_page' => $users->perPage(),
-                'total' => $users->total(),
-            ],
-        ]);
+        return $this->paginated($users, fn (User $u) => $this->present($u));
     }
 
     /**
