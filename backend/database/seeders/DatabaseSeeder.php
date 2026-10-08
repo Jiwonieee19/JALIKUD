@@ -18,6 +18,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             UserSeeder::class,
             MenuSeeder::class,
+            RewardSeeder::class,
         ]);
 
         // Seed a default store setting if none exists (matches production pricing).

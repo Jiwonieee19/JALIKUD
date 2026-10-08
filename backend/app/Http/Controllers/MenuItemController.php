@@ -6,6 +6,7 @@ use App\Http\Requests\General\PaginationRequest;
 use App\Models\MenuItem;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 /**
  * Public listing + admin CRUD for menu items.
@@ -44,7 +45,7 @@ class MenuItemController extends Controller
         $data = $request->validate([
             'category_id' => ['required', 'exists:categories,id'],
             'name' => ['required', 'string', 'max:150'],
-            'slug' => ['required', 'string', 'max:180', 'unique:menu_items,slug'],
+            'slug' => ['sometimes', 'string', 'max:180', 'unique:menu_items,slug'],
             'description' => ['nullable', 'string'],
             'sku' => ['nullable', 'string', 'max:50', 'unique:menu_items,sku'],
             'base_price' => ['required', 'numeric', 'min:0'],
@@ -54,6 +55,10 @@ class MenuItemController extends Controller
             'preparation_time_minutes' => ['nullable', 'integer', 'min:0'],
             'calories' => ['nullable', 'integer', 'min:0'],
         ]);
+
+        if (empty($data['slug'] ?? null)) {
+            $data['slug'] = $this->uniqueSlug($data['name']);
+        }
 
         $item = MenuItem::create($data);
 
@@ -86,5 +91,21 @@ class MenuItemController extends Controller
         $menuItem->delete();
 
         return response()->json(['message' => 'Menu item deleted.']);
+    }
+
+    /**
+     * Derive a collision-free slug from the name when the client omits one.
+     */
+    private function uniqueSlug(string $name): string
+    {
+        $slug = Str::slug($name) ?: 'item';
+        $base = $slug;
+        $i = 1;
+
+        while (MenuItem::query()->where('slug', $slug)->exists()) {
+            $slug = $base.'-'.(++$i);
+        }
+
+        return $slug;
     }
 }

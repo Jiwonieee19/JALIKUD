@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
 import { useCustomerOrder } from '@/context/customer-order-context';
-import { errorMessage } from '@/lib/api';
+import { assetUrl, errorMessage } from '@/lib/api';
 import { customerApi, type MenuItem as ApiMenuItem, type StoreSetting } from '@/lib/customer-api';
 
 const RED = '#DC2626';
@@ -81,7 +81,7 @@ export default function HomeScreen() {
           categoryId: Number(item.category?.id ?? item.category_id),
           isNew: Boolean(item.is_featured),
           emoji: emojiFor(item),
-          imageUrl: item.image_url || undefined,
+          imageUrl: assetUrl(item.image_url) ?? undefined,
           description: item.description || undefined,
         })));
     } catch (caught) {

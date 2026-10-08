@@ -7,6 +7,7 @@ use App\Models\Coupon;
 use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\PointTransaction;
+use App\Models\Reward;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -67,12 +68,37 @@ class RewardsTest extends TestCase
         $this->postJson('/api/orders', ['order_type' => 'pickup', 'payment_method' => 'gcash'])->assertStatus(201);
     }
 
+    /**
+     * Seed the standard catalogue from config/rewards.php. Free-item rewards are
+     * wired to whichever menu item with the matching slug exists at call time.
+     */
+    private function seedRewards(): void
+    {
+        foreach (config('rewards.definitions') as $key => $definition) {
+            $type = $definition['type'] ?? 'voucher';
+
+            Reward::create([
+                'key' => $key,
+                'label' => $definition['label'] ?? $key,
+                'type' => $type,
+                'points_cost' => (int) ($definition['points_cost'] ?? 0),
+                'menu_item_id' => $type === 'free_item'
+                    ? MenuItem::where('slug', $definition['menu_item_slug'] ?? '')->value('id')
+                    : null,
+                'discount_amount' => $type === 'voucher' ? ($definition['discount_amount'] ?? null) : null,
+                'min_order_amount' => $type === 'voucher' ? ($definition['min_order_amount'] ?? null) : null,
+                'is_active' => true,
+            ]);
+        }
+    }
+
     public function test_rewards_catalog_lists_definitions_with_balance(): void
     {
         $this->getJson('/api/rewards')->assertStatus(401);
 
         $user = $this->customer();
         $this->menuItem();
+        $this->seedRewards();
 
         $response = $this->getJson('/api/rewards')->assertOk();
         $payload = $response->json('data');
@@ -165,6 +191,7 @@ class RewardsTest extends TestCase
         $user = $this->customer();
         $this->givePoints($user, 500);
         $item = $this->menuItem('chickenjoy-1pc', 109.0);
+        $this->seedRewards();
 
         $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 2])->assertStatus(201);
 
@@ -198,6 +225,7 @@ class RewardsTest extends TestCase
         $user = $this->customer();
         $this->givePoints($user, 500);
         $other = $this->menuItem('yumburger', 89.0);
+        $this->seedRewards();
 
         $this->postJson('/api/cart/items', ['menu_item_id' => $other->id, 'quantity' => 1])->assertStatus(201);
         $this->postJson('/api/cart/reward', ['reward_key' => 'chickenjoy-1pc'])->assertOk();
@@ -213,6 +241,7 @@ class RewardsTest extends TestCase
     {
         $user = $this->customer();
         $item = $this->menuItem('chickenjoy-1pc', 109.0);
+        $this->seedRewards();
         $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 1])->assertStatus(201);
 
         // Reserved earlier, balance since drained elsewhere.
@@ -236,6 +265,7 @@ class RewardsTest extends TestCase
         $user = $this->customer();
         $this->givePoints($user, 1000);
         $item = $this->menuItem('yumburger', 89.0);
+        $this->seedRewards();
         $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 2])->assertStatus(201);
 
         // Subtotal 178 < 300 minimum: selectable, but checkout refuses.
@@ -256,6 +286,7 @@ class RewardsTest extends TestCase
         $user = $this->customer();
         $this->givePoints($user, 1000);
         $item = $this->menuItem('yumburger', 89.0);
+        $this->seedRewards();
         $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 4])->assertStatus(201);
 
         Coupon::create([
@@ -283,6 +314,7 @@ class RewardsTest extends TestCase
         $user = $this->customer();
         $this->givePoints($user, 500);
         $item = $this->menuItem('chickenjoy-1pc', 109.0);
+        $this->seedRewards();
         $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 1])->assertStatus(201);
         $this->postJson('/api/cart/reward', ['reward_key' => 'chickenjoy-1pc'])->assertOk();
         $this->placePickupOrder();

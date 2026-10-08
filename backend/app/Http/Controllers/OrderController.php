@@ -189,8 +189,8 @@ class OrderController extends Controller
                 $rewardCost = (int) ($definition['points_cost'] ?? 0);
 
                 if (($definition['type'] ?? null) === 'free_item') {
-                    $slug = (string) ($definition['menu_item_slug'] ?? '');
-                    $match = $priced['lines']->first(fn ($line) => $line['menu_item']->slug === $slug);
+                    $menuItemId = (int) ($definition['menu_item_id'] ?? 0);
+                    $match = $priced['lines']->first(fn ($line) => $line['menu_item']->id === $menuItemId);
 
                     if ($match === null) {
                         return response()->json([

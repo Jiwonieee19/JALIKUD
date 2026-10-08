@@ -64,6 +64,8 @@ services:
       - APP_URL=${APP_URL:-http://localhost:8000}
     ports:
       - "8000:8000"
+    volumes:
+      - uploads:/var/www/html/storage/app/public
     networks:
       jalikud:
         ipv4_address: ${BACKEND_IP:-172.30.0.10}
@@ -110,3 +112,4 @@ networks:
 
 volumes:
   pgdata:
+  uploads:

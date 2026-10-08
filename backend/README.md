@@ -68,6 +68,9 @@ auto-migrates on boot. `php artisan migrate:fresh --seed` runs:
   ```bash
   php artisan db:seed --class=MenuSeeder
   ```
+- `RewardSeeder` — seeds the loyalty catalogue (`chickenjoy-1pc`, `yumburger`,
+  `voucher-100`) from `config/rewards.php` into the `rewards` table, matching
+  free-item rewards to their menu items by slug. Idempotent.
 
 On databases seeded before `UserSeeder` existed, promote an account by hand:
 
@@ -444,9 +447,33 @@ total_staff, total_riders, active_riders, menu_items_available,
 menu_items_total } }`. `revenue` is the sum of `total_amount` for
 completed+paid orders (money string).
 
+**`GET /api/admin/overview`** — the "today" snapshot the web dashboard renders:
+`{ data: { revenue_today, orders_today, active_orders, completed_today,
+cancelled_today, pending_orders, sold_out_items, menu_items_total,
+riders_available, riders_on_delivery, riders_offline, store_open,
+generated_at } }`. **`GET /api/admin/overview/revenue`** — a 7-day series
+`{ data: [ { date, revenue, orders } ] }` (cancelled orders excluded).
+
 **`POST /api/admin/uploads/image`** — multipart field `image` (image, jpg/png/
 webp/gif ≤ 5 MB). **`POST /api/admin/uploads/document`** — field `document`
 (pdf/doc/docx/xls/xlsx/csv/txt ≤ 10 MB). Both return `{ data: { url, path } }`.
+
+### 5.12 Admin — rewards & points (admin only)
+
+The loyalty catalogue lives in the `rewards` table (seeded by `RewardSeeder` from
+`config/rewards.php`); `PointLedger::definitions()` reads it at runtime and the
+customer `GET /api/rewards` excludes `is_active=false` rows.
+
+- `GET /api/admin/rewards` — list all rewards (with `menuItem`).
+- `POST /api/admin/rewards` — create. `key` (≤ 50, unique, immutable), `label`
+  (≤ 120), `type` (`free_item|voucher`), `points_cost` (int ≥ 0), `is_active`.
+  `free_item` requires `menu_item_id`; `voucher` requires `discount_amount` and
+  optionally `min_order_amount`.
+- `PUT|PATCH /api/admin/rewards/{reward}` — partial update; `key` is immutable.
+- `DELETE /api/admin/rewards/{reward}` — delete; returns `409` when a cart or
+  order still references the reward's `key`.
+- `GET /api/admin/rewards/redemptions` — spent ledger rows joined to the order.
+- `GET /api/admin/points` — the full ledger across all users.
 
 ## 6. Usage examples (cURL)
 
@@ -534,6 +561,5 @@ the Expo app (`mobile/src/lib/*.ts`, `fetch` + `expo-secure-store` token) and th
    `order_status_history` but do not notify customers, staff or riders in-app.
 4. **Single store.** `store_settings` is a single row; there is no multi-branch
    model.
-5. **Order lists have no status filter** — clients filter client-side.
-6. **Admin user JSON** omits `email_verified_at`/`updated_at`; delete returns a
+5. **Admin user JSON** omits `email_verified_at`/`updated_at`; delete returns a
    plain message with no `data`.
