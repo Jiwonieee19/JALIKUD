@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Category;
+use App\Models\Coupon;
 use App\Models\MenuItem;
 use App\Models\Order;
 use App\Models\PointTransaction;
@@ -63,7 +64,7 @@ class RewardsTest extends TestCase
 
     private function placePickupOrder(): void
     {
-        $this->postJson('/api/orders', ['order_type' => 'pickup'])->assertStatus(201);
+        $this->postJson('/api/orders', ['order_type' => 'pickup', 'payment_method' => 'gcash'])->assertStatus(201);
     }
 
     public function test_rewards_catalog_lists_definitions_with_balance(): void
@@ -85,26 +86,24 @@ class RewardsTest extends TestCase
         $this->getJson('/api/points')->assertOk()->assertJsonPath('data.balance', 0);
     }
 
-    public function test_points_awarded_once_completed_and_paid_in_either_order(): void
+    public function test_rider_cod_completion_marks_paid_and_awards_points_once(): void
     {
         $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
+        $rider = User::factory()->create(['role' => User::ROLE_RIDER]);
         $order = Order::create([
             'order_number' => 'ORD-RWD-1',
             'user_id' => $customer->id,
-            'order_type' => 'pickup',
-            'status' => Order::STATUS_READY,
+            'rider_id' => $rider->id,
+            'order_type' => 'delivery',
+            'status' => Order::STATUS_OUT_FOR_DELIVERY,
+            'payment_method' => 'cod',
+            'payment_status' => Order::PAYMENT_UNPAID,
             'subtotal' => 250,
             'total_amount' => 250,
         ]);
 
-        // Complete first while unpaid: no award yet.
-        Sanctum::actingAs($this->user(User::ROLE_STAFF));
-        $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_OUT_FOR_DELIVERY])->assertOk();
-        $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_COMPLETED])->assertOk();
-        $this->assertSame(0, PointTransaction::count());
-
-        // Then confirm payment: 25 points for ₱250.
-        $this->putJson("/api/admin/orders/{$order->id}/payment", ['payment_status' => 'paid'])->assertOk();
+        Sanctum::actingAs($rider);
+        $this->putJson("/api/rider/deliveries/{$order->id}/status", ['status' => Order::STATUS_COMPLETED])->assertOk();
         $this->assertDatabaseHas('point_transactions', [
             'user_id' => $customer->id,
             'order_id' => $order->id,
@@ -112,8 +111,7 @@ class RewardsTest extends TestCase
             'reason' => 'earned',
         ]);
 
-        // Repeating the confirmation is a no-op.
-        $this->putJson("/api/admin/orders/{$order->id}/payment", ['payment_status' => 'paid'])->assertOk();
+        $this->putJson("/api/rider/deliveries/{$order->id}/status", ['status' => Order::STATUS_COMPLETED])->assertStatus(422);
         $this->assertSame(1, PointTransaction::where('order_id', $order->id)->where('reason', 'earned')->count());
     }
 
@@ -125,15 +123,15 @@ class RewardsTest extends TestCase
             'user_id' => $customer->id,
             'order_type' => 'pickup',
             'status' => Order::STATUS_READY,
+            'payment_method' => 'gcash',
+            'payment_status' => Order::PAYMENT_PAID,
             'subtotal' => 199,
             'total_amount' => 199,
         ]);
 
         Sanctum::actingAs($this->user(User::ROLE_STAFF));
-        $this->putJson("/api/admin/orders/{$order->id}/payment", ['payment_status' => 'paid'])->assertOk();
         $this->assertSame(0, PointTransaction::count());
 
-        $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_OUT_FOR_DELIVERY])->assertOk();
         $this->putJson("/api/admin/orders/{$order->id}/status", ['status' => Order::STATUS_COMPLETED])->assertOk();
 
         $this->assertDatabaseHas('point_transactions', [
@@ -143,7 +141,7 @@ class RewardsTest extends TestCase
         ]);
     }
 
-    public function test_payment_confirmation_is_staff_only(): void
+    public function test_direct_payment_confirmation_endpoint_is_removed(): void
     {
         $customer = $this->user(User::ROLE_CUSTOMER);
         $order = Order::create([
@@ -156,10 +154,10 @@ class RewardsTest extends TestCase
         ]);
 
         Sanctum::actingAs($customer);
-        $this->putJson("/api/admin/orders/{$order->id}/payment", ['payment_status' => 'paid'])->assertStatus(403);
+        $this->putJson("/api/admin/orders/{$order->id}/payment", ['payment_status' => 'paid'])->assertNotFound();
 
         Sanctum::actingAs($this->user(User::ROLE_STAFF));
-        $this->putJson("/api/admin/orders/{$order->id}/payment", ['payment_status' => 'bogus'])->assertStatus(422);
+        $this->putJson("/api/admin/orders/{$order->id}/payment", ['payment_status' => 'paid'])->assertNotFound();
     }
 
     public function test_free_food_reward_discounts_one_live_unit_at_checkout(): void
@@ -260,7 +258,7 @@ class RewardsTest extends TestCase
         $item = $this->menuItem('yumburger', 89.0);
         $this->postJson('/api/cart/items', ['menu_item_id' => $item->id, 'quantity' => 4])->assertStatus(201);
 
-        \App\Models\Coupon::create([
+        Coupon::create([
             'code' => 'STACK10',
             'type' => 'fixed',
             'value' => 10,

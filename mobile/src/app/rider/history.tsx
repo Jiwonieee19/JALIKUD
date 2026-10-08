@@ -21,7 +21,7 @@ function peso(value: number): string {
 export default function RiderHistoryScreen() {
   const { token, user } = useAuth();
   const [completed, setCompleted] = useState<
-    { id: number; orderNumber: string; date: string; customer: string; address: string; cod: number }[]
+    { id: number; orderNumber: string; date: string; customer: string; address: string; amount: number; paymentMethod: 'cod' | 'gcash'; paymentStatus: string }[]
   >([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -45,7 +45,9 @@ export default function RiderHistoryScreen() {
             address: order.address
               ? [order.address.line1, order.address.line2, order.address.city].filter(Boolean).join(', ')
               : 'Customer address on file',
-            cod: Number(order.total_amount),
+            amount: Number(order.total_amount),
+            paymentMethod: order.payment_method === 'gcash' ? 'gcash' : 'cod',
+            paymentStatus: order.payment_status,
           })),
       );
     } catch (caught) {
@@ -62,7 +64,10 @@ export default function RiderHistoryScreen() {
     load().catch(() => undefined).finally(() => setRefreshing(false));
   }, [load]);
 
-  const codCollected = completed.reduce((sum, delivery) => sum + delivery.cod, 0);
+  const codCollected = completed.reduce(
+    (sum, delivery) => sum + (delivery.paymentMethod === 'cod' && delivery.paymentStatus === 'paid' ? delivery.amount : 0),
+    0,
+  );
 
   return (
     <View style={styles.container}>
@@ -110,7 +115,11 @@ export default function RiderHistoryScreen() {
               <Text style={styles.customer}>{delivery.customer}</Text>
               <Text style={styles.address}>{delivery.address}</Text>
               <View style={styles.cardFooter}>
-                <Text style={styles.codAmount}>COD {peso(delivery.cod)}</Text>
+                <Text style={[styles.paymentAmount, delivery.paymentMethod === 'gcash' && styles.gcashPayment]}>
+                  {delivery.paymentMethod === 'cod'
+                    ? `COD ${delivery.paymentStatus === 'paid' ? 'collected' : 'unpaid'} ${peso(delivery.amount)}`
+                    : `GCash ${delivery.paymentStatus === 'paid' ? 'Paid' : 'Unpaid'}`}
+                </Text>
               </View>
             </View>
           ))
@@ -148,7 +157,8 @@ const styles = StyleSheet.create({
   customer: { color: TEXT, fontSize: 12, fontWeight: '700', marginTop: 5 },
   address: { color: GRAY, fontSize: 10, lineHeight: 14, marginTop: 2 },
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 9 },
-  codAmount: { color: '#B45309', fontSize: 11, fontWeight: '900' },
+  paymentAmount: { color: '#B45309', fontSize: 11, fontWeight: '900' },
+  gcashPayment: { color: '#1D4ED8' },
   errorBox: { gap: 8, padding: 12, borderRadius: 12, backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FECACA', marginBottom: 10 },
   errorText: { color: '#B91C1C', fontSize: 12, fontWeight: '700' },
   retryButton: { alignSelf: 'flex-start', backgroundColor: RED, borderRadius: 9, paddingHorizontal: 14, paddingVertical: 8 },

@@ -5,7 +5,6 @@ const TAB_BAR_BACKGROUND = '#F7F1F1';
 
 const TABS = [
   { name: 'menu', label: 'Menu', icon: require('@/assets/images/tabIcons/menu.png') },
-  { name: 'deals', label: 'Deals', icon: require('@/assets/images/tabIcons/deals.png') },
   { name: 'rewards', label: 'Rewards', icon: require('@/assets/images/tabIcons/rewards.png') },
   { name: 'cart', label: 'Cart', icon: require('@/assets/images/tabIcons/cart.png') },
   { name: 'orders', label: 'Orders', icon: require('@/assets/images/tabIcons/orders.png') },

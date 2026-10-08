@@ -12,7 +12,7 @@ class PaymentTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_staff_can_record_payment_and_order_becomes_paid(): void
+    public function test_staff_cannot_mutate_payment_records(): void
     {
         $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
         $order = Order::create([
@@ -29,15 +29,15 @@ class PaymentTest extends TestCase
             'provider' => 'gcash',
             'amount' => 500,
             'status' => 'succeeded',
-        ])->assertStatus(201);
+        ])->assertStatus(405);
 
-        $this->assertSame(Order::PAYMENT_PAID, $order->fresh()->payment_status);
-        $this->assertDatabaseHas('payments', ['order_id' => $order->id, 'status' => 'succeeded']);
-        // completed + paid => loyalty points awarded
-        $this->assertDatabaseHas('point_transactions', ['order_id' => $order->id, 'reason' => 'earned']);
+        $this->putJson("/api/admin/orders/{$order->id}/payment", ['payment_status' => 'paid'])
+            ->assertNotFound();
+        $this->assertSame(Order::PAYMENT_UNPAID, $order->fresh()->payment_status);
+        $this->assertDatabaseMissing('payments', ['order_id' => $order->id]);
     }
 
-    public function test_customer_cannot_record_payment(): void
+    public function test_customer_has_no_payment_mutation_endpoint(): void
     {
         $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
         $order = Order::create([
@@ -53,7 +53,7 @@ class PaymentTest extends TestCase
         $this->postJson("/api/admin/orders/{$order->id}/payments", [
             'provider' => 'gcash',
             'amount' => 100,
-        ])->assertStatus(403);
+        ])->assertStatus(405);
     }
 
     public function test_staff_can_list_payments_for_an_order(): void

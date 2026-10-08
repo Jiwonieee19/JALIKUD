@@ -8,6 +8,7 @@ use App\Models\RiderProfile;
 use App\Services\PointLedger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 /**
@@ -68,37 +69,64 @@ class RiderDeliveryController extends Controller
 
     public function updateStatus(Request $request, int $order): JsonResponse
     {
-        $record = Order::query()
-            ->where('id', $order)
-            ->where('rider_id', $request->user()->id)
-            ->firstOrFail();
-
         $data = $request->validate([
             'status' => ['required', 'in:out_for_delivery,completed'],
             'note' => ['nullable', 'string', 'max:500'],
         ]);
 
-        $allowed = self::RIDER_TRANSITIONS[$record->status] ?? [];
+        return DB::transaction(function () use ($data, $order, $request) {
+            $record = Order::query()
+                ->where('id', $order)
+                ->where('rider_id', $request->user()->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        if ($data['status'] === $record->status || ! in_array($data['status'], $allowed, true)) {
-            return response()->json([
-                'message' => "Cannot move an order from {$record->status} to {$data['status']}.",
-            ], 422);
-        }
+            $allowed = self::RIDER_TRANSITIONS[$record->status] ?? [];
 
-        $record->update(['status' => $data['status']]);
+            if ($data['status'] === $record->status || ! in_array($data['status'], $allowed, true)) {
+                return response()->json([
+                    'message' => "Cannot move an order from {$record->status} to {$data['status']}.",
+                ], 422);
+            }
 
-        $record->statusHistory()->create([
-            'status' => $data['status'],
-            'changed_by' => $request->user()->id,
-            'note' => $data['note'] ?? null,
-        ]);
+            $updates = ['status' => $data['status']];
 
-        if ($data['status'] === Order::STATUS_COMPLETED) {
-            PointLedger::awardForOrder($record->fresh());
-        }
+            if ($data['status'] === Order::STATUS_COMPLETED) {
+                if ($record->payment_method === 'gcash' && $record->payment_status !== Order::PAYMENT_PAID) {
+                    return response()->json(['message' => 'GCash payment has not been confirmed.'], 422);
+                }
 
-        return response()->json(['data' => $record->fresh()]);
+                if ($record->payment_method === 'cod' && $record->payment_status !== Order::PAYMENT_PAID) {
+                    $updates['payment_status'] = Order::PAYMENT_PAID;
+                    $record->payments()->create([
+                        'provider' => 'cod',
+                        'provider_transaction_id' => 'rider-collection-'.$record->id,
+                        'amount' => $record->total_amount,
+                        'currency' => 'PHP',
+                        'status' => 'succeeded',
+                        'paid_at' => now(),
+                        'raw_response' => [
+                            'source' => 'rider_delivery_completion',
+                            'collected_by' => $request->user()->id,
+                        ],
+                    ]);
+                }
+            }
+
+            $record->update($updates);
+
+            $record->statusHistory()->create([
+                'status' => $data['status'],
+                'changed_by' => $request->user()->id,
+                'note' => $data['note'] ?? null,
+            ]);
+
+            if ($data['status'] === Order::STATUS_COMPLETED) {
+                PointLedger::awardForOrder($record->fresh());
+            }
+
+            return response()->json(['data' => $record->fresh()]);
+        });
     }
 
     /**

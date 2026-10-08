@@ -22,11 +22,10 @@ import type { AdminRider, Order, OrderStatus } from '../types'
  *   GET /api/admin/riders          ?per_page=100   (names for the Rider column)
  *   GET /api/admin/stats                        (tab badge counts)
  *
- * This page deliberately performs NO mutations. Confirming, advancing status,
- * assigning riders and recording payment all live on the mobile client, which
- * drives them through `PUT /admin/orders/{order}/status`,
- * `PUT /admin/orders/{order}/rider` and `PUT /admin/orders/{order}/payment`.
- * So every row has exactly one action: View.
+ * This page deliberately performs NO mutations. Kitchen status changes and
+ * rider assignment live on the staff mobile client. GCash is recorded at
+ * checkout and COD is recorded by the assigned rider on delivery completion,
+ * so every row here has exactly one action: View.
  *
  * The whole order set is fetched once at the API's 100-row cap and filtered and
  * paged here, so the status tabs, the type dropdown and the search box all work

@@ -115,26 +115,49 @@ class DeliveryCheckoutTest extends TestCase
         ]);
     }
 
-    public function test_checkout_defaults_to_cod_and_accepts_gcash(): void
+    public function test_delivery_defaults_to_unpaid_cod_and_gcash_is_automatically_paid(): void
     {
         $user = $this->customerWithCart();
+        $address = Address::create([
+            'user_id' => $user->id,
+            'line1' => '123 Test Street',
+            'city' => 'Davao City',
+        ]);
 
-        $this->postJson('/api/orders', ['order_type' => 'pickup'])->assertStatus(201);
+        $this->postJson('/api/orders', [
+            'order_type' => 'delivery',
+            'address_id' => $address->id,
+        ])->assertStatus(201);
         $this->assertDatabaseHas('orders', [
             'user_id' => $user->id,
             'payment_method' => 'cod',
             'payment_status' => 'unpaid',
         ]);
 
-        $this->postJson('/api/cart/items', ['menu_item_id' => \App\Models\MenuItem::first()->id, 'quantity' => 1])
+        $this->postJson('/api/cart/items', ['menu_item_id' => MenuItem::first()->id, 'quantity' => 1])
             ->assertStatus(201);
-        $this->postJson('/api/orders', ['order_type' => 'pickup', 'payment_method' => 'gcash'])
+        $gcashOrderId = $this->postJson('/api/orders', ['order_type' => 'pickup', 'payment_method' => 'gcash'])
+            ->assertJsonPath('data.payment_status', 'paid')
             ->assertStatus(201);
         $this->assertDatabaseHas('orders', [
             'user_id' => $user->id,
             'payment_method' => 'gcash',
-            'payment_status' => 'unpaid',
+            'payment_status' => 'paid',
         ]);
+        $this->assertDatabaseHas('payments', [
+            'order_id' => $gcashOrderId->json('data.id'),
+            'provider' => 'gcash',
+            'status' => 'succeeded',
+        ]);
+    }
+
+    public function test_pickup_checkout_rejects_cod(): void
+    {
+        $this->customerWithCart();
+
+        $this->postJson('/api/orders', ['order_type' => 'pickup', 'payment_method' => 'cod'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['payment_method']);
     }
 
     public function test_checkout_rejects_unknown_payment_method(): void

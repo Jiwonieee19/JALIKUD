@@ -55,4 +55,28 @@ class OrderCancellationTest extends TestCase
         $this->postJson("/api/orders/{$order->id}/cancel")->assertStatus(422);
         $this->assertSame(Order::STATUS_PREPARING, $order->fresh()->status);
     }
+
+    public function test_cancelling_paid_gcash_order_refunds_its_payment(): void
+    {
+        $customer = User::factory()->create(['role' => User::ROLE_CUSTOMER]);
+        $order = $this->order($customer, Order::STATUS_PENDING);
+        $order->update([
+            'payment_method' => 'gcash',
+            'payment_status' => Order::PAYMENT_PAID,
+        ]);
+        $payment = $order->payments()->create([
+            'provider' => 'gcash',
+            'amount' => 100,
+            'status' => 'succeeded',
+            'paid_at' => now(),
+        ]);
+        Sanctum::actingAs($customer);
+
+        $this->postJson("/api/orders/{$order->id}/cancel")
+            ->assertOk()
+            ->assertJsonPath('data.payment_status', Order::PAYMENT_REFUNDED);
+
+        $this->assertSame(Order::PAYMENT_REFUNDED, $order->fresh()->payment_status);
+        $this->assertSame('refunded', $payment->fresh()->status);
+    }
 }

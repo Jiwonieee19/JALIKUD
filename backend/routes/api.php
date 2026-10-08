@@ -85,13 +85,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/orders', [OrderController::class, 'index']);
             Route::get('/orders/{order}', [OrderController::class, 'show']);
             Route::put('/orders/{order}/status', [OrderController::class, 'updateStatus']);
-            Route::put('/orders/{order}/payment', [OrderController::class, 'confirmPayment']);
             Route::put('/orders/{order}/rider', [OrderController::class, 'assignRider']);
             Route::get('/riders', [RiderController::class, 'index']);
             Route::match(['put', 'patch'], '/menu-items/{menuItem}', [MenuItemController::class, 'update']);
             Route::get('/orders/{order}/payments', [PaymentController::class, 'index']);
-            Route::post('/orders/{order}/payments', [PaymentController::class, 'store']);
-            Route::match(['put', 'patch'], '/payments/{payment}', [PaymentController::class, 'update']);
         });
 
     // Admin-only: all routes under /admin/*

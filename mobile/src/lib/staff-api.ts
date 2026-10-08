@@ -38,7 +38,7 @@ export type StaffOrder = {
   delivery_fee: string;
   tax_amount: string;
   total_amount: string;
-  payment_method: string | null;
+  payment_method: 'cod' | 'gcash' | null;
   payment_status: string;
   notes: string | null;
   placed_at: string;
@@ -89,12 +89,6 @@ export const staffApi = {
       token,
       method: 'PUT',
       body: { status, ...(note ? { note } : {}) },
-    }).then((response) => response.data),
-  confirmPayment: (token: string, id: number) =>
-    apiRequest<DataResponse<StaffOrder>>(`/admin/orders/${id}/payment`, {
-      token,
-      method: 'PUT',
-      body: { payment_status: 'paid' },
     }).then((response) => response.data),
   assignRider: (token: string, id: number, riderId: number | null) =>
     apiRequest<DataResponse<StaffOrder>>(`/admin/orders/${id}/rider`, {
