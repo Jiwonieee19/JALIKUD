@@ -331,82 +331,79 @@ export interface AdminOverview {
 /* -------------------------------------------------------------------------
  * REWARDS
  *
- * The LOYALTY ENGINE EXISTS: `PointLedger` service, `point_transactions` table,
- * `GET /api/rewards`, `GET /api/points`, `POST|DELETE /api/cart/reward`, and 12
- * cases in backend/tests/Feature/RewardsTest.php. Mobile's Rewards tab is live
- * against it.
+ * Live contract. Both surfaces exist:
  *
- * The admin surface and a `rewards` table NOW EXIST as of the rewards-admin
- * work: `GET|POST /api/admin/rewards`, `PUT/PATCH|DELETE /api/admin/rewards/{reward}`,
- * `GET /api/admin/rewards/redemptions` and `GET /api/admin/points`. The catalogue
- * is stored in the `rewards` table (key, label, type, points_cost, menu_item_id,
- * discount_amount, min_order_amount, is_active) and read at runtime through
- * `PointLedger::definitions()`.
+ *   customer  GET /api/rewards, GET /api/points, POST|DELETE /api/cart/reward
+ *   admin     GET|POST /api/admin/rewards
+ *             PUT|PATCH|DELETE /api/admin/rewards/{reward}
+ *             GET /api/admin/rewards/redemptions
+ *             GET /api/admin/points
  *
- * The `Reward` type below is still the old DESIGN PROPOSAL — when wiring
- * AdminRewardsPage, replace it with the real serialiser shape:
+ * The catalogue lives in the `rewards` table (migration
+ * 2026_10_08_000002) and is read at runtime through
+ * `PointLedger::definitions()`. Shapes below were captured from live responses,
+ * not inferred.
  *
- *   { id, key, label, type, points_cost, menu_item_id, discount_amount,
- *     min_order_amount, is_active, created_at, updated_at, menu_item? }
+ * Notes that matter when wiring:
  *
- *   key            immutable customer identifier (used by carts/orders.reward_key)
- *   label          the backend's `label` (was `title`)
- *   points_cost    the backend's `points_cost` (was `points_required`)
- *   discount_amount the backend's `discount_amount` (was `monetary_value`)
- *   menu_item_id   FK to menu_items for free_item rewards
- *
- * `RewardRedemption` is fictional — rewards are spent instantly at checkout via
- * `spendForOrder`, so nothing is ever issued. The admin "Redemptions" tab is
- * served by `point_transactions WHERE reason='spent'` joined to
- * `orders.reward_key` (see `GET /api/admin/rewards/redemptions`).
- *
+ *  - `GET /api/admin/rewards` returns `{ data: [...] }` with NO `meta` and no
+ *    search/filter params. `unwrapList()` tolerates the missing envelope.
+ *  - `GET /api/admin/rewards/redemptions` and `/api/admin/points` return
+ *    `{ data: [...], meta: {...} }` and both serve `point_transactions` rows.
+ *  - There is no `code`, `status`, `expires_at` or `used_at` anywhere. Rewards
+ *    are spent instantly at checkout, so nothing is ever issued to present. The
+ *    admin "Redemptions" tab is therefore a ledger view, not a code list.
+ *  - `AdminRewardController::update` deliberately omits `key` from its
+ *    validation, so the customer identifier is immutable after creation.
+ *  - `DELETE` answers 409 when a cart or order still references the key.
  * ---------------------------------------------------------------------- */
 
 /** `free_item` ships a menu item free, `voucher` is money off the order. */
 export type RewardType = 'free_item' | 'voucher'
 
-export type RewardRedemptionStatus = 'issued' | 'used' | 'expired' | 'revoked'
-
+/** A row of `GET /api/admin/rewards` — the catalogue. */
 export interface Reward {
   id: number
-  title: string
-  description: string | null
+  /**
+   * Immutable customer identifier, stored on `carts.reward_key` and
+   * `orders.reward_key`. Slug-like, e.g. `chickenjoy-1pc`.
+   */
+  key: string
+  label: string
   type: RewardType
-  /** Mobile called this `points`. Points are an integer count, never money. */
-  points_required: number
-  /** Mobile called this `worth`. decimal(12,2) → STRING. Null for non-cash. */
-  monetary_value: string | null
-  /** Required when type === 'free_item'. FK menu_items, nullOnDelete. */
+  points_cost: number
+  /** Required when `type === 'free_item'`. FK menu_items, nullOnDelete. */
   menu_item_id: number | null
-  /** null = unlimited. Decremented on redemption, must lock to avoid oversell. */
-  stock: number | null
-  /** Mobile renders emoji; optional since the web UI uses text + badges. */
-  emoji: string | null
+  /** decimal:2 → STRING. Required when `type === 'voucher'`. */
+  discount_amount: string | null
+  /** decimal:2 → STRING. Vouchers only: minimum subtotal to redeem. */
+  min_order_amount: string | null
+  /**
+   * Paused rewards stay in the table but are filtered out of the customer
+   * catalogue, because `PointLedger::definitions()` selects `where is_active`.
+   */
   is_active: boolean
   created_at: string | null
   updated_at: string | null
-}
-
-/** One customer's redeemed reward. `code` is unique and what they present. */
-export interface RewardRedemption {
-  id: number
-  reward_id: number
-  user_id: number
-  code: string
-  status: RewardRedemptionStatus
-  points_spent: number
-  redeemed_at: string | null
-  used_at: string | null
-  expires_at: string | null
-  reward?: Reward
-  user?: User
+  /**
+   * Eager-loaded as `menuItem:id,name,slug`. Laravel snake-cases relations, so
+   * the key arrives as `menu_item`. Deliberately no `image_url` — see
+   * `GET /api/menu`, which is where artwork comes from.
+   */
+  menu_item?: {
+    id: number
+    name: string
+    slug: string
+  } | null
 }
 
 /**
- * Append-only signed ledger (matches `point_transactions` on the backend).
- * Positive = earned, negative = spent. Never UPDATE these rows.
+ * A row of `GET /api/admin/rewards/redemptions` and `GET /api/admin/points` —
+ * the `point_transactions` ledger.
+ *
+ * Append-only and signed: positive earns, negative spends. Never UPDATE these.
  */
-export interface RewardPointTransaction {
+export interface RewardLedgerEntry {
   id: number
   user_id: number
   order_id: number | null
@@ -416,4 +413,16 @@ export interface RewardPointTransaction {
   description: string | null
   created_at: string
   updated_at: string
+  user?: {
+    id: number
+    name: string
+    email: string
+  } | null
+  /** Present on `/redemptions`, which loads the order columns. */
+  order?: {
+    id: number
+    order_number: string
+    reward_key: string | null
+    total_amount: string
+  } | null
 }

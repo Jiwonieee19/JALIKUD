@@ -22,7 +22,6 @@ export { mockAdminUsers, mockCurrentUser, paginate, type Paginated } from './use
 export { mockCategories, mockMenuItems, categoryName, findMenuItem } from './menu'
 export { mockOrders, mockRiders } from './orders'
 export { mockStoreSetting } from './store'
-export { mockRewards, mockRedemptions, rewardItemName } from './rewards'
 export {
   mockOverview,
   mockRecentOrders,
