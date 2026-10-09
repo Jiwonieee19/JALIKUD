@@ -151,6 +151,7 @@ export default function ChatWidget() {
     setMessages((current) => [...current, { id: userId, sender: 'user', text: question }]);
 
     let reply = '';
+    let streamError: string | null = null;
 
     const upsertBot = (text: string) => {
       setMessages((current) =>
@@ -161,20 +162,32 @@ export default function ChatWidget() {
     };
 
     try {
-      if (!token) throw new Error('not authenticated');
+      if (!token) throw new Error('Please sign in to use the assistant.');
 
       await streamChat(token, { message: question, history }, (event) => {
         if (typeof event.token === 'string') {
           setStreamingStarted(true);
           reply += event.token;
           upsertBot(reply);
+        } else if (typeof event.error === 'string' && streamError === null) {
+          streamError = event.error;
         }
       });
 
-      if (!reply.trim()) throw new Error('empty reply');
-    } catch {
-      // Fall back to the local rule-based answers when the assistant is down.
-      reply = botReply(question, cartCount, latestActiveOrder);
+      if (!reply.trim()) {
+        throw new Error(streamError ?? 'The assistant returned an empty reply.');
+      }
+    } catch (error) {
+      if (streamError) {
+        // The backend explicitly reported an outage; show that instead of a canned reply.
+        reply = streamError;
+      } else if (!token) {
+        reply = 'Please sign in to ask Jali.';
+      } else {
+        // Network/offline: fall back to the local rule-based answers.
+        console.warn('Jali chat fallback:', error instanceof Error ? error.message : error);
+        reply = botReply(question, cartCount, latestActiveOrder);
+      }
       upsertBot(reply);
     } finally {
       setThinking(false);
