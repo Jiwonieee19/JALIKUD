@@ -17,7 +17,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomTabInset } from '@/constants/theme';
+import { useAuth } from '@/context/auth-context';
 import { useCustomerOrder, type CustomerOrder } from '@/context/customer-order-context';
+import { streamChat } from '@/lib/customer-api';
 
 const RED = '#DC2626';
 const DARK_RED = '#991B1B';
@@ -66,8 +68,11 @@ export default function ChatWidget() {
   const window = useWindowDimensions();
   const segments = useSegments();
   const { cartItems, orders } = useCustomerOrder();
+  const { token } = useAuth();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
+  const [thinking, setThinking] = useState(false);
+  const [streamingStarted, setStreamingStarted] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: 1, sender: 'bot', text: 'Hi! I am Jali, your ordering assistant. How can I help today?' },
   ]);
@@ -125,18 +130,56 @@ export default function ChatWidget() {
 
   useEffect(() => {
     if (open) requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
-  }, [messages.length, open]);
+  }, [messages, thinking, open]);
 
-  function sendMessage(value: string) {
+  async function sendMessage(value: string) {
     const question = value.trim();
-    if (!question) return;
+    if (!question || thinking) return;
 
-    setMessages((current) => [
-      ...current,
-      { id: nextId.current++, sender: 'user', text: question },
-      { id: nextId.current++, sender: 'bot', text: botReply(question, cartCount, latestActiveOrder) },
-    ]);
     setDraft('');
+    setThinking(true);
+    setStreamingStarted(false);
+
+    // Keep only the last few turns so the assistant has short-term context.
+    const history: { role: 'user' | 'assistant'; content: string }[] = messages
+      .slice(-6)
+      .map((message) => ({ role: message.sender === 'user' ? 'user' : 'assistant', content: message.text }));
+
+    const userId = nextId.current++;
+    const botId = nextId.current++;
+
+    setMessages((current) => [...current, { id: userId, sender: 'user', text: question }]);
+
+    let reply = '';
+
+    const upsertBot = (text: string) => {
+      setMessages((current) =>
+        current.some((message) => message.id === botId)
+          ? current.map((message) => (message.id === botId ? { ...message, text } : message))
+          : [...current, { id: botId, sender: 'bot', text }],
+      );
+    };
+
+    try {
+      if (!token) throw new Error('not authenticated');
+
+      await streamChat(token, { message: question, history }, (event) => {
+        if (typeof event.token === 'string') {
+          setStreamingStarted(true);
+          reply += event.token;
+          upsertBot(reply);
+        }
+      });
+
+      if (!reply.trim()) throw new Error('empty reply');
+    } catch {
+      // Fall back to the local rule-based answers when the assistant is down.
+      reply = botReply(question, cartCount, latestActiveOrder);
+      upsertBot(reply);
+    } finally {
+      setThinking(false);
+      setStreamingStarted(false);
+    }
   }
 
   return (
@@ -206,6 +249,14 @@ export default function ChatWidget() {
                   </View>
                 </View>
               ))}
+              {thinking && !streamingStarted && (
+                <View style={styles.messageRow}>
+                  <View style={styles.miniAvatar}><Text style={styles.miniAvatarText}>J</Text></View>
+                  <View style={[styles.bubble, styles.botBubble]}>
+                    <Text style={[styles.messageText, styles.typingText]}>Typing…</Text>
+                  </View>
+                </View>
+              )}
             </ScrollView>
 
             <View style={styles.composer}>
@@ -225,7 +276,7 @@ export default function ChatWidget() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Send message"
-                disabled={!draft.trim()}
+                disabled={!draft.trim() || thinking}
                 onPress={() => sendMessage(draft)}
                 style={({ pressed }) => [styles.send, !draft.trim() && styles.sendDisabled, pressed && styles.pressed]}>
                 <Text style={styles.sendText}>➤</Text>
@@ -301,6 +352,7 @@ const styles = StyleSheet.create({
   userBubble: { backgroundColor: RED, borderBottomRightRadius: 5 },
   messageText: { color: TEXT, fontSize: 14, lineHeight: 20 },
   userMessageText: { color: '#FFFFFF', fontWeight: '600' },
+  typingText: { color: MUTED },
   composer: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#E5E7EB', backgroundColor: '#FFFFFF' },
   input: { flex: 1, minHeight: 46, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 23, paddingHorizontal: 16, color: TEXT, backgroundColor: '#F9FAFB' },
   send: { width: 46, height: 46, borderRadius: 23, alignItems: 'center', justifyContent: 'center', backgroundColor: RED },

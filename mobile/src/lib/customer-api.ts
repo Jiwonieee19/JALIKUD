@@ -1,4 +1,4 @@
-import { apiRequest } from '@/lib/api';
+import { apiRequest, streamRequest } from '@/lib/api';
 import type { User } from '@/lib/types';
 
 export type Paginated<T> = {
@@ -219,6 +219,10 @@ export const customerApi = {
     apiRequest<DataResponse<{ balance: number; rewards: Reward[] }>>('/rewards', { token }),
   points: (token: string) =>
     apiRequest<DataResponse<{ balance: number; history: PointEntry[] }>>('/points', { token }),
+  chat: (
+    token: string,
+    body: { message: string; history?: { role: 'user' | 'assistant'; content: string }[] },
+  ) => apiRequest<DataResponse<{ reply: string }>>('/chat', { token, method: 'POST', body }),
   selectCartReward: (token: string, rewardKey: string) =>
     apiRequest<DataResponse<Cart>>('/cart/reward', {
       token,
@@ -244,3 +248,17 @@ export const customerApi = {
   updatePassword: (token: string, input: { current_password: string; password: string; password_confirmation: string }) =>
     apiRequest<{ message: string }>('/password', { token, method: 'PUT', body: input }),
 };
+
+export type ChatStreamEvent = {
+  token?: string;
+  done?: boolean;
+  error?: string;
+};
+
+export function streamChat(
+  token: string,
+  body: { message: string; history?: { role: 'user' | 'assistant'; content: string }[] },
+  onEvent: (event: ChatStreamEvent) => void,
+): Promise<void> {
+  return streamRequest('/chat/stream', (event) => onEvent(event as ChatStreamEvent), { token, body });
+}

@@ -37,6 +37,12 @@ services:
       - PAYMONGO_SECRET_KEY=${PAYMONGO_SECRET_KEY:-}
       - PAYMONGO_PUBLIC_KEY=${PAYMONGO_PUBLIC_KEY:-}
       - PAYMONGO_WEBHOOK_SECRET=${PAYMONGO_WEBHOOK_SECRET:-}
+      # Hosted AI chat (OpenAI-compatible). The backend calls this provider
+      # directly over HTTPS — no local model or Docker networking involved.
+      - AI_API_KEY=${AI_API_KEY:-}
+      - AI_BASE_URL=${AI_BASE_URL:-https://api.openai.com/v1}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_TIMEOUT=${AI_TIMEOUT:-60}
       # Trust X-Forwarded-* from the known proxies ONLY (their pinned IPs
       # below). This makes rate-limit buckets key on the real client IP instead
       # of the proxy IP; without it every proxied request shares ONE bucket and

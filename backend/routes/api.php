@@ -7,6 +7,7 @@ use App\Http\Controllers\AdminUserController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CartController;
 use App\Http\Controllers\CategoryController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\CouponController;
 use App\Http\Controllers\MenuItemController;
 use App\Http\Controllers\OrderController;
@@ -59,6 +60,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // Loyalty (customer)
     Route::get('/rewards', [RewardController::class, 'index']);
     Route::get('/points', [RewardController::class, 'points']);
+
+    // Chat assistant (customer)
+    Route::post('/chat', [ChatController::class, 'store'])->middleware('throttle:chat');
+    Route::post('/chat/stream', [ChatController::class, 'stream'])->middleware('throttle:chat');
 
     // Orders (customer)
     Route::get('/orders', [OrderController::class, 'index']);
