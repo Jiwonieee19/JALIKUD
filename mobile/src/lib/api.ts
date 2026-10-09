@@ -1,4 +1,5 @@
 import type { LaravelErrorResponse, LaravelValidationErrors } from '@/lib/types';
+import { fetch as streamFetch } from 'expo/fetch';
 
 const configuredApiUrl = process.env.EXPO_PUBLIC_API_URL?.trim().replace(/\/+$/, '');
 
@@ -76,6 +77,84 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   if (!response.ok) throw new ApiError(response.status, payload);
   return payload as T;
+}
+
+/**
+ * POST to a Server-Sent Events endpoint and invoke `onEvent` for each parsed
+ * `data:` event. Uses expo/fetch (WinterCG-compliant), which exposes a streaming
+ * `response.body` on Android and iOS so tokens can be read as they arrive.
+ */
+export async function streamRequest(
+  path: string,
+  onEvent: (event: unknown) => void,
+  options: ApiRequestOptions = {},
+): Promise<void> {
+  const { token, body, headers, ...init } = options;
+
+  const response = await streamFetch(endpoint(path), {
+    ...init,
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+
+  if (!response.ok) {
+    const payload = await parseResponse(response as unknown as Response);
+    throw new ApiError(response.status, payload);
+  }
+
+  if (!response.body) {
+    throw new Error('Streaming responses are not supported by this runtime.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  const consume = () => {
+    while (true) {
+      const boundary = buffer.indexOf('\n\n');
+      if (boundary === -1) return;
+
+      const raw = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+
+      for (const line of raw.split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data) continue;
+
+        try {
+          onEvent(JSON.parse(data));
+        } catch {
+          // Ignore malformed events.
+        }
+      }
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      if (value) {
+        buffer += decoder.decode(value, { stream: true });
+      }
+
+      consume();
+    }
+
+    buffer += decoder.decode();
+    consume();
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export function isApiError(error: unknown): error is ApiError {

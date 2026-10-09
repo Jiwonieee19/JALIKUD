@@ -54,5 +54,6 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('orders', fn (Request $request) => Limit::perMinute(10)->by('orders:'.($request->user()?->id ?? $request->ip())));
         RateLimiter::for('coupons', fn (Request $request) => Limit::perMinute(6)->by('coupons:'.($request->user()?->id ?? $request->ip())));
         RateLimiter::for('password', fn (Request $request) => Limit::perMinute(5)->by('password:'.$request->user()->id));
+        RateLimiter::for('chat', fn (Request $request) => Limit::perMinute(20)->by('chat:'.($request->user()?->id ?? $request->ip())));
     }
 }
