@@ -34,7 +34,6 @@ export function RoleSettingsScreen({ roleLabel, roleIcon, details = [] }: RoleSe
   const router = useRouter();
   const { current, signOut } = useAuthDemo();
   const [pushNotifications, setPushNotifications] = useState(true);
-  const [biometricLogin, setBiometricLogin] = useState(false);
 
   const handleSignOut = async () => {
     await signOut();
@@ -88,18 +87,6 @@ export function RoleSettingsScreen({ roleLabel, roleIcon, details = [] }: RoleSe
               accessibilityLabel="Toggle push notifications"
               value={pushNotifications}
               onValueChange={setPushNotifications}
-              trackColor={{ false: '#E4E4E9', true: RED }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-          <View style={styles.divider} />
-          <View style={styles.row}>
-            <View style={styles.rowIconBox}><Text style={styles.rowIcon}>🔐</Text></View>
-            <Text style={styles.rowLabel}>Biometric Login</Text>
-            <Switch
-              accessibilityLabel="Toggle biometric login"
-              value={biometricLogin}
-              onValueChange={setBiometricLogin}
               trackColor={{ false: '#E4E4E9', true: RED }}
               thumbColor="#FFFFFF"
             />

@@ -43,7 +43,6 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { current, signOut } = useAuthDemo();
   const [pushNotifications, setPushNotifications] = useState(true);
-  const [biometricLogin, setBiometricLogin] = useState(false);
 
   const handleSignOut = async () => {
     await signOut();
@@ -116,18 +115,6 @@ export default function SettingsScreen() {
             <Switch
               value={pushNotifications}
               onValueChange={setPushNotifications}
-              trackColor={{ false: '#E4E4E9', true: RED }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-          <View style={styles.row}>
-            <View style={styles.rowIconBox}>
-              <Text style={styles.rowIcon}>👆</Text>
-            </View>
-            <Text style={styles.rowLabel}>Biometric Login</Text>
-            <Switch
-              value={biometricLogin}
-              onValueChange={setBiometricLogin}
               trackColor={{ false: '#E4E4E9', true: RED }}
               thumbColor="#FFFFFF"
             />
