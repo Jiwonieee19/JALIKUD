@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             MenuSeeder::class,
             RewardSeeder::class,
+            DemoOrderSeeder::class,
         ]);
 
         // Seed a default store setting if none exists (matches production pricing).
@@ -31,8 +32,12 @@ class DatabaseSeeder extends Seeder
                 'min_order_amount' => 0,
                 'delivery_fee' => 49,
                 'tax_rate_percent' => 12,
-                'opening_time' => '08:00:00',
-                'closing_time' => '22:00:00',
+                // 24/7: leaving both hours null makes StoreSetting::openNow()
+                // return true regardless of the clock, so only the is_open toggle
+                // governs availability. A window like 00:00-23:59 would still close
+                // the store for one minute a day.
+                'opening_time' => null,
+                'closing_time' => null,
             ]);
         }
     }
