@@ -9,6 +9,7 @@ use App\Models\StoreSetting;
 use App\Services\ChatbotService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
@@ -27,7 +28,9 @@ class ChatController extends Controller
 
         try {
             $reply = $this->chatbot->chat($messages);
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::error('Chat assistant request failed', ['error' => $e->getMessage()]);
+
             return response()->json([
                 'message' => 'The assistant is temporarily unavailable. Please try again in a moment.',
             ], 503);
@@ -50,7 +53,9 @@ class ChatController extends Controller
                 });
 
                 $this->emit(['done' => true]);
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                Log::error('Chat stream request failed', ['error' => $e->getMessage()]);
+
                 $this->emit(['error' => 'The assistant is temporarily unavailable. Please try again in a moment.']);
             }
         }, 200, [

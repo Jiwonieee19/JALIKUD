@@ -159,7 +159,7 @@ is unreachable, it automatically falls back to the built-in rule-based answers.
 
 | Symptom | Likely cause / fix |
 |---|---|
-| Widget shows the fallback answers only | Backend returned 503 (provider error) or network error. Check `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL` and the backend logs. |
+| Widget keeps repeating the canned greeting / fallback answers | The `/api/chat/stream` call failed. The widget now surfaces the error text, and the backend logs the cause. Check `backend/storage/logs/laravel.log` for `Chat stream request failed`, then verify `AI_API_KEY` / `AI_BASE_URL` / `AI_MODEL`. |
 | `AI provider error: ...` in logs | The provider rejected the request — usually a bad key, model id, or exceeded quota. Read the `error.message`. |
 | `The AI API key is not configured.` | `AI_API_KEY` is empty in `.env` (or not passed through Docker). |
 | 401 responses | Missing/invalid `Authorization: Bearer` token — sign in on the app first. |
