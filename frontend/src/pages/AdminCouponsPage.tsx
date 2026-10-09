@@ -69,6 +69,34 @@ function toDateInput(iso: string | null): string {
   return iso ? iso.slice(0, 10) : ''
 }
 
+/**
+ * Lifecycle state, derived rather than stored.
+ *
+ * The API exposes only `is_active` and `expires_at`; `expired` is computed so a
+ * coupon that has passed its date reads as Expired whether or not it was paused,
+ * and whether or not redemptions remain. Expiry wins over `is_active` because
+ * that is how the backend treats it: `Coupon::isWithinValidityWindow()` returns
+ * false once `expires_at` has passed no matter what `is_active` says, so
+ * re-activating an expired coupon does not make it redeemable.
+ */
+type CouponStatus = 'active' | 'paused' | 'expired'
+
+function isExpired(coupon: Coupon): boolean {
+  if (!coupon.expires_at) return false
+  return new Date(coupon.expires_at).getTime() < Date.now()
+}
+
+function statusOf(coupon: Coupon): CouponStatus {
+  if (isExpired(coupon)) return 'expired'
+  return coupon.is_active ? 'active' : 'paused'
+}
+
+const statusMeta: Record<CouponStatus, { label: string; tone: 'success' | 'neutral' | 'danger' }> = {
+  active: { label: 'Active', tone: 'success' },
+  paused: { label: 'Paused', tone: 'neutral' },
+  expired: { label: 'Expired', tone: 'danger' },
+}
+
 function expiryTone(coupon: Coupon): 'success' | 'warning' | 'danger' {
   if (!coupon.expires_at) return 'success'
   const days = (new Date(coupon.expires_at).getTime() - Date.now()) / 86_400_000
@@ -86,7 +114,7 @@ function expiryLabel(coupon: Coupon): string {
 }
 
 export default function AdminCouponsPage() {
-  const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  const [filter, setFilter] = useState<'all' | CouponStatus>('all')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [editing, setEditing] = useState<Coupon | null>(null)
@@ -146,14 +174,22 @@ export default function AdminCouponsPage() {
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
     return coupons.filter((coupon) => {
-      const matchesFilter =
-        filter === 'all' || (filter === 'active' ? coupon.is_active : !coupon.is_active)
+      const matchesFilter = filter === 'all' || statusOf(coupon) === filter
       const matchesSearch = term.length === 0 || coupon.code.toLowerCase().includes(term)
       return matchesFilter && matchesSearch
     })
   }, [coupons, filter, search])
 
-  const activeCount = coupons.filter((coupon) => coupon.is_active).length
+  /**
+   * Counts per lifecycle state. Mutually exclusive, so they sum to the total —
+   * an expired-but-still-active coupon counts once, under Expired, and not again
+   * under Active.
+   */
+  const counts = useMemo(() => {
+    const tally: Record<CouponStatus, number> = { active: 0, paused: 0, expired: 0 }
+    for (const coupon of coupons) tally[statusOf(coupon)] += 1
+    return tally
+  }, [coupons])
 
   // Paged client-side: the endpoint has no search/status params yet, so the whole
   // set is fetched at the API's 100-row cap and filtered here first.
@@ -509,7 +545,8 @@ export default function AdminCouponsPage() {
             Coupons &amp; deals
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {activeCount} active of {coupons.length} total
+            {counts.active} active of {coupons.length} total
+            {counts.expired > 0 && ` · ${counts.expired} expired`}
           </p>
         </div>
         <Button onClick={openCreate}>+ New Coupon</Button>
@@ -529,8 +566,9 @@ export default function AdminCouponsPage() {
         }}
         options={[
           { value: 'all', label: 'All', count: coupons.length },
-          { value: 'active', label: 'Active', count: activeCount },
-          { value: 'inactive', label: 'Inactive', count: coupons.length - activeCount },
+          { value: 'active', label: 'Active', count: counts.active },
+          { value: 'paused', label: 'Paused', count: counts.paused },
+          { value: 'expired', label: 'Expired', count: counts.expired },
         ]}
       />
 
@@ -621,8 +659,10 @@ export default function AdminCouponsPage() {
               {
                 key: 'status',
                 header: 'Status',
-                render: (coupon: Coupon) =>
-                  coupon.is_active ? <Badge tone="success">Active</Badge> : <Badge tone="neutral">Paused</Badge>,
+                render: (coupon: Coupon) => {
+                  const status = statusOf(coupon)
+                  return <Badge tone={statusMeta[status].tone}>{statusMeta[status].label}</Badge>
+                },
               },
               {
                 key: 'actions',
@@ -633,6 +673,15 @@ export default function AdminCouponsPage() {
                     <Button
                       variant="ghost"
                       className="px-2.5 py-1 text-xs"
+                      // Pointless on an expired coupon: isWithinValidityWindow()
+                      // already rejects it regardless of is_active, so flipping
+                      // the flag would change nothing for customers.
+                      disabled={isExpired(coupon)}
+                      title={
+                        isExpired(coupon)
+                          ? 'An expired coupon cannot be re-activated. Edit it and set a new expiry date.'
+                          : undefined
+                      }
                       onClick={() => void toggleActive(coupon)}
                     >
                       {coupon.is_active ? 'Pause' : 'Activate'}

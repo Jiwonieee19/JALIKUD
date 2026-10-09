@@ -39,6 +39,55 @@ const MAX_PER_PAGE = 100
 // Image upload constraints (mirror UploadImageRequest on the backend).
 const IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024
+// Backend rule: dimensions:min_width=128,min_height=128,max_width=6000,max_height=6000
+const IMAGE_MIN_EDGE = 128
+const IMAGE_MAX_EDGE = 6000
+
+/**
+ * Images offered by the "reuse" picker, and the short alias each is listed
+ * under. These mirror how the store groups its menu — pasta, rice-meal,
+ * chickenjoy, drink, burger — rather than item names, so the dropdown reads as
+ * a category list instead of a list of dishes.
+ *
+ * Each entry is keyed by the item slug the image is read from, because the API
+ * serves `image_url` per item and the catalogue's categories cannot be relied
+ * on: `Burger Steak` and `1pc Burger Steak Solo` are filed under `rice-meals`
+ * while `Champ Burger` is under `burgers`, so a category-derived list would
+ * contradict the names. If an item's photo is re-uploaded the list follows
+ * automatically, and an item that loses its image drops out on its own.
+ */
+const REUSABLE_IMAGES: ReadonlyArray<{ slug: string; label: string }> = [
+  { slug: 'jolly-spaghetti', label: 'pasta' },
+  { slug: 'burger-steak-solo', label: 'rice-meal' },
+  { slug: 'chickenjoy-1pc', label: 'chickenjoy' },
+  { slug: 'coke-15l', label: 'drink' },
+  { slug: 'champ-burger', label: 'burger' },
+]
+
+/**
+ * Read an image's natural pixel size in the browser.
+ *
+ * Cheap way to enforce the backend's `dimensions` rule before the upload is
+ * sent, so an oversized or tiny image fails immediately instead of after a
+ * round trip. Uses the same object URL the preview needs, so this costs no
+ * extra allocation beyond `createObjectURL`.
+ */
+function readImageSize(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+
+    image.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve({ width: image.naturalWidth, height: image.naturalHeight })
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('The file could not be decoded as an image.'))
+    }
+    image.src = url
+  })
+}
 
 /**
  * Talks to the real API:
@@ -103,6 +152,14 @@ export default function AdminMenuPage() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  /**
+   * The object URL currently held by `previewUrl`, plus a token for the async
+   * dimension probe. Reading dimensions means `handleImageChange` awaits, and
+   * without these two the handler would act on a stale `previewUrl` closure and
+   * a slow probe for file A could overwrite a fast selection of file B.
+   */
+  const previewRef = useRef<string | null>(null)
+  const probeToken = useRef(0)
 
   const [categoryModal, setCategoryModal] = useState<{ open: boolean; category: Category | null }>({
     open: false,
@@ -150,6 +207,41 @@ export default function AdminMenuPage() {
       return matchesCategory && matchesSearch
     })
   }, [items, search, categoryFilter])
+
+  /**
+   * Images offered for reuse, by short alias.
+   *
+   * A curated list rather than "every image in the catalogue": the picker only
+   * offers the groupings that are actually reused across the menu, aliased to
+   * the store's own category names.
+   *
+   * `champ-burger`, `yumburger` and the other chickenjoy sizes are deliberately
+   * absent: their images exist but are not offered, so listing them would only
+   * lengthen the dropdown.
+   */
+  const libraryImages = useMemo(() => {
+    const bySlug = new Map(items.map((item) => [item.slug, item]))
+
+    return REUSABLE_IMAGES.flatMap(({ slug, label }) => {
+      const url = bySlug.get(slug)?.image_url
+      return url ? [{ url, label }] : []
+    })
+  }, [items])
+
+  /**
+   * The item being edited can hold an image that is not on the curated list —
+   * every menu item has one, but only four are offered for reuse. Without this,
+   * the select would fall back to its placeholder and imply no image was set.
+   */
+  const currentImageOption = useMemo(() => {
+    const url = draft.image_url
+
+    if (!url || libraryImages.some((image) => image.url === url)) return null
+
+    const owner = items.find((item) => item.image_url === url)
+
+    return { url, label: owner ? `${owner.name} (current)` : 'Current image' }
+  }, [draft.image_url, libraryImages, items])
 
   // Pagination is client-side against the fixture, but shaped exactly like
   // Laravel's paginator envelope so wiring GET /menu is a one-line swap:
@@ -463,17 +555,21 @@ export default function AdminMenuPage() {
   }
 
   function resetPendingImage() {
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    if (previewRef.current) URL.revokeObjectURL(previewRef.current)
+    previewRef.current = null
     setPendingFile(null)
     setPreviewUrl(null)
     setUploadError(null)
   }
 
-  function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
+  async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     // Clear the input so re-selecting the same file fires `change` again.
     event.target.value = ''
     if (!file) return
+
+    // Any in-flight probe for an earlier selection is now superseded.
+    const token = ++probeToken.current
 
     if (!IMAGE_MIME.includes(file.type)) {
       setUploadError('Choose a JPG, PNG, WebP or GIF image.')
@@ -485,15 +581,62 @@ export default function AdminMenuPage() {
       return
     }
 
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    // Checked here as well as server-side so a bad size fails on the spot.
+    let width = 0
+    let height = 0
+
+    try {
+      const size = await readImageSize(file)
+      width = size.width
+      height = size.height
+    } catch {
+      // A newer pick landed while this one was decoding; let it speak.
+      if (token === probeToken.current) {
+        setUploadError('That file could not be read as an image.')
+      }
+      return
+    }
+
+    if (token !== probeToken.current) return
+
+    if (width < IMAGE_MIN_EDGE || height < IMAGE_MIN_EDGE) {
+      setUploadError(
+        `Image must be at least ${IMAGE_MIN_EDGE}×${IMAGE_MIN_EDGE} pixels (this one is ${width}×${height}).`,
+      )
+      return
+    }
+
+    if (width > IMAGE_MAX_EDGE || height > IMAGE_MAX_EDGE) {
+      setUploadError(
+        `Image must be no more than ${IMAGE_MAX_EDGE}×${IMAGE_MAX_EDGE} pixels (this one is ${width}×${height}).`,
+      )
+      return
+    }
+
+    if (previewRef.current) URL.revokeObjectURL(previewRef.current)
+    const next = URL.createObjectURL(file)
+    previewRef.current = next
     setPendingFile(file)
-    setPreviewUrl(URL.createObjectURL(file))
+    setPreviewUrl(next)
     setUploadError(null)
   }
 
   function removeImage() {
     resetPendingImage()
     setDraft((current) => ({ ...current, image_url: null }))
+  }
+
+  /**
+   * Point the draft at an image already used by another menu item.
+   *
+   * Drops any pending upload first. Otherwise a file chosen but not yet saved
+   * would still be uploaded on save and silently overwrite the URL just picked
+   * from the library — the preview would show one image and the saved record
+   * would get the other.
+   */
+  function applyLibraryImage(url: string) {
+    resetPendingImage()
+    setDraft((current) => ({ ...current, image_url: url === '' ? null : url }))
   }
 
   return (
@@ -691,13 +834,13 @@ export default function AdminMenuPage() {
               {
                   key: 'name',
                   header: 'Category',
+                  // No thumbnail: categories carry an `image_url` column but
+                  // nothing sets it, and an empty MenuThumb is just a letter
+                  // tile repeating the name beside itself.
                   render: (category) => (
-                    <div className="flex items-center gap-3">
-                      <MenuThumb src={category.image_url} name={category.name} size="sm" />
-                      <p className="min-w-0 truncate font-extrabold text-slate-900 dark:text-white">
-                        {category.name}
-                      </p>
-                    </div>
+                    <p className="min-w-0 truncate font-extrabold text-slate-900 dark:text-white">
+                      {category.name}
+                    </p>
                   ),
                 },
               {
@@ -818,6 +961,42 @@ export default function AdminMenuPage() {
                     </Button>
                   )}
                 </div>
+
+                {/*
+                  Reuse picker. Hidden entirely while the library is empty — a
+                  catalogue with no uploaded images has nothing to offer, and a
+                  lone disabled option would just be noise.
+                */}
+                {libraryImages.length > 0 && (
+                  <div className="mt-3">
+                    <Label htmlFor="mi-reuse" className="mb-1.5">
+                      Or reuse an image already in use
+                    </Label>
+                    <Select
+                      id="mi-reuse"
+                      // A pending upload is not yet an image_url, so the
+                      // selection resets to the placeholder while it is held.
+                      value={pendingFile ? '' : (draft.image_url ?? '')}
+                      disabled={uploading}
+                      onChange={(event) => applyLibraryImage(event.target.value)}
+                    >
+                      <option value="">
+                        {pendingFile ? 'New image pending…' : 'Use a new upload…'}
+                      </option>
+                      {currentImageOption && (
+                        <option key={currentImageOption.url} value={currentImageOption.url}>
+                          {currentImageOption.label}
+                        </option>
+                      )}
+                      {libraryImages.map((image) => (
+                        <option key={image.url} value={image.url}>
+                          {image.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                )}
+
                 {uploadError ? (
                   <p className="mt-1 text-xs font-semibold text-red-600 dark:text-red-400">{uploadError}</p>
                 ) : pendingFile ? (
@@ -826,7 +1005,9 @@ export default function AdminMenuPage() {
                   </p>
                 ) : (
                   <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                    JPG, PNG, WebP or GIF · up to 5 MB. Replaces the generated placeholder.
+                    JPG, PNG, WebP or GIF · up to 5 MB · at least{' '}
+                    {IMAGE_MIN_EDGE}×{IMAGE_MIN_EDGE} pixels. Replaces the
+                    generated placeholder.
                   </p>
                 )}
               </div>

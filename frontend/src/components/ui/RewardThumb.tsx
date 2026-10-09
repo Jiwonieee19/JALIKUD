@@ -11,36 +11,33 @@ interface Props {
 /**
  * Artwork for a reward.
  *
- * ⚠️ Rewards have NO image field, on the frontend type or the backend. There is
- * no `rewards` table at all yet (see docs/API_WIRING.md §4), and `emoji` on the
- * `Reward` type is a design-only field carried over from mobile
- * (mobile/src/app/(tabs)/rewards.tsx:33) — the reconstructed schema has no
- * `rewards.emoji` column either.
+ * The `rewards` table (migration 2026_10_08_000002) has no `image_url` and no
+ * `emoji` column — only `menu_item_id`. So artwork is DERIVED, in priority order:
+ *   1. the linked menu item's image, passed in as `linkedItemImageUrl`
+ *   2. a letter tile from the reward's label
  *
- * So artwork is DERIVED, in priority order:
- *   1. the linked menu item's image — the only case with a real backing column
- *      (`menu_items.image_url`)
- *   2. the reward's own emoji tile, for vouchers which have no menu item
- *   3. MenuThumb's letter fallback
+ * `GET /api/admin/rewards` eager-loads `menuItem:id,name,slug` with no
+ * `image_url`, so the caller has to source that separately from `GET /api/menu`.
+ * Vouchers have no menu item and therefore always fall through to the letter.
  *
- * TODO(next-dev): if rewards ever need their own artwork, add `image_url` to the
- * rewards table and check it here first. Nothing else needs to change.
+ * If rewards ever need their own artwork, add `image_url` to the rewards table
+ * and check it here first. Nothing else needs to change.
  */
 export default function RewardThumb({ reward, linkedItemImageUrl, size = 'md' }: Props) {
   const className =
     size === 'sm' ? 'h-9 w-9 rounded-lg text-base' : size === 'lg' ? 'h-16 w-16 rounded-2xl text-3xl' : 'h-12 w-12 rounded-xl text-xl'
 
   if (linkedItemImageUrl) {
-    return <MenuThumb src={linkedItemImageUrl} name={reward.title} size={size} />
+    return <MenuThumb src={linkedItemImageUrl} name={reward.label} size={size} />
   }
 
   return (
     <span
       role="img"
-      aria-label={reward.title}
+      aria-label={reward.label}
       className={`flex shrink-0 items-center justify-center bg-amber-50 font-extrabold dark:bg-amber-500/10 ${className}`}
     >
-      {reward.emoji ?? reward.title.trim().charAt(0).toUpperCase()}
+      {reward.label.trim().charAt(0).toUpperCase()}
     </span>
   )
 }

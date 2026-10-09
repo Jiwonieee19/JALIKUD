@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import Card from '../components/ui/Card'
@@ -8,106 +8,101 @@ import Modal from '../components/ui/Modal'
 import Select from '../components/ui/Select'
 import Table from '../components/ui/Table'
 import Tabs from '../components/ui/Tabs'
-import Textarea from '../components/ui/Textarea'
-import {
-  formatDate,
-  mockMenuItems,
-  mockRedemptions,
-  mockRewards,
-  paginate,
-  peso,
-  rewardItemName,
-} from '../mock'
 import RewardThumb from '../components/ui/RewardThumb'
 import Pagination from '../components/ui/Pagination'
-import type { Reward, RewardRedemption, RewardRedemptionStatus, RewardType } from '../types'
+import api, { fieldError } from '../services/api'
+import { unwrapList } from '../services/lists'
+import { formatDate, paginate, peso } from '../mock'
+import type { MenuItem, Reward, RewardLedgerEntry } from '../types'
 
 /**
- * MOCK-DATA PAGE — stands in for:
- *   GET|POST       /api/admin/rewards
- *   PUT|DELETE     /api/admin/rewards/{reward}
- *   GET            /api/admin/rewards/redemptions
+ * Live loyalty catalogue. Endpoints (all behind `EnsureAdmin`):
  *
- * ⚠️ NONE OF THOSE ENDPOINTS EXIST. There is no Reward model, no rewards
- *    migration and no route. See docs/API_WIRING.md.
+ *   GET    /api/admin/rewards                     the catalogue — returns
+ *                                                    `{ data: [...] }` with NO meta
+ *   POST   /api/admin/rewards
+ *   PUT    /api/admin/rewards/{reward}            (key omitted: it is immutable)
+ *   DELETE /api/admin/rewards/{reward}            409 when a cart/order cites it
+ *   GET    /api/admin/rewards/redemptions?per_page=100   spent ledger rows
+ *   GET    /api/menu                              public; source of menu item
+ *                                                    names + image_url for thumbs
  *
- * The catalogue itself was copied from mobile/src/app/(tabs)/rewards.tsx:24-73
- * so the admin panel and the customer app agree on titles, point costs and
- * cash values. Two inconsistencies between the two apps are documented in
- * mock/rewards.ts and surfaced in the "Broken links" panel below.
+ * WHY `/api/menu` IS FETCHED
+ * The catalogue eager-loads `menuItem:id,name,slug` — deliberately no
+ * `image_url`. RewardThumb's artwork fallback needs the real image, and
+ * `GET /api/menu` is the only endpoint that returns it, so the page builds an
+ * id -> item map from it.
  *
- * ADMIN CAPABILITIES: create, edit, enable/disable, delete — mirroring the
- * Menu page. Disable (is_active) is preferred over delete so issued
- * redemptions stay traceable.
+ * FREE ITEMS ONLY
+ * ----------------
+ * Vouchers are gone from this page. The API still accepts `type: voucher`
+ * (AdminRewardController validates it and PointLedger::definitions() branches
+ * on it) and a legacy `voucher-100` row still exists in the catalogue, but it
+ * cannot be created or edited here, so it is filtered out entirely rather than
+ * shown as a row the admin cannot act on. Every reward this page writes is sent
+ * as `type: 'free_item'`.
+ *
+ * NO MOCK DATA: the catalogue and the redemption ledger both come from the API.
  */
 
+const PER_PAGE = 7
+
+/**
+ * Only the fields an admin actually chooses. `key` and `label` are NOT editable:
+ * both are derived from the chosen menu item on create (slug -> key, name ->
+ * label). Rewards can only be built from an item that already exists in the
+ * catalogue, which is also what makes the derived `key` unique — `rewards.key`
+ * has a unique index, and menu item slugs are unique, so one reward per item.
+ */
 interface Draft {
-  title: string
-  description: string
-  type: RewardType
-  points_required: string
-  monetary_value: string
+  points_cost: string
+  /** Required: every reward is a free item, so the backend rejects null. */
   menu_item_id: string
-  stock: string
-  emoji: string
   is_active: boolean
 }
 
 const emptyDraft: Draft = {
-  title: '',
-  description: '',
-  type: 'free_item',
-  points_required: '',
-  monetary_value: '',
+  points_cost: '',
   menu_item_id: '',
-  stock: '',
-  emoji: '',
   is_active: true,
 }
 
 function toDraft(reward: Reward): Draft {
   return {
-    title: reward.title,
-    description: reward.description ?? '',
-    // A reward is always a free item now — peso discounts live on Coupons — so a
-    // legacy voucher row opens as a free item and asks for its menu item.
-    type: 'free_item',
-    points_required: String(reward.points_required),
-    monetary_value: reward.monetary_value ?? '',
+    points_cost: String(reward.points_cost),
     menu_item_id: reward.menu_item_id === null ? '' : String(reward.menu_item_id),
-    stock: reward.stock === null ? '' : String(reward.stock),
-    emoji: reward.emoji ?? '',
     is_active: reward.is_active,
   }
 }
 
+/**
+ * What the catalogue shows as the reward's name.
+ *
+ * `menu_item.name` is the source of truth now that rewards are always free
+ * items. `label` is only reached for a legacy row with no menu item — a
+ * voucher, say — which the backend still permits even though this page cannot
+ * create one.
+ */
+function rewardName(reward: Reward): string {
+  return reward.menu_item?.name ?? reward.label
+}
+
 type Tab = 'catalogue' | 'redemptions'
-
-/** Rows per page in the reward and redemption tables. */
-const PER_PAGE = 7
-
-const REDEMPTION_STATUSES: RewardRedemptionStatus[] = ['issued', 'used', 'expired', 'revoked']
-
-const redemptionTone: Record<RewardRedemptionStatus, 'success' | 'info' | 'warning' | 'danger'> = {
-  issued: 'info',
-  used: 'success',
-  expired: 'warning',
-  revoked: 'danger',
-}
-
-/** Statuses are stored lowercase; the UI shows them capitalised. */
-function statusLabel(status: RewardRedemptionStatus): string {
-  return status.charAt(0).toUpperCase() + status.slice(1)
-}
 
 export default function AdminRewardsPage() {
   const [tab, setTab] = useState<Tab>('catalogue')
+  const [rewards, setRewards] = useState<Reward[]>([])
+  const [ledger, setLedger] = useState<RewardLedgerEntry[]>([])
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  const [redemptionSearch, setRedemptionSearch] = useState('')
   const [redemptionPage, setRedemptionPage] = useState(1)
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused'>('all')
-  const [redemptionSearch, setRedemptionSearch] = useState('')
-  const [redemptionStatus, setRedemptionStatus] = useState<'all' | RewardRedemptionStatus>('all')
   const [editing, setEditing] = useState<Reward | null>(null)
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState<Draft>(emptyDraft)
@@ -116,35 +111,135 @@ export default function AdminRewardsPage() {
   const [submitted, setSubmitted] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
+  /**
+   * The catalogue is small (one row per redeemable reward) and the redemptions
+   * endpoint caps at 100, so both are fetched whole and filtered/paged here —
+   * same approach as the Orders and Coupons pages. That keeps the search boxes
+   * working without a round trip per keystroke.
+   *
+   * `GET /api/menu` is public, so it needs no token and cannot fail the page on
+   * auth; artwork simply falls back to a letter tile if it errors.
+   */
+  const refresh = useCallback(async () => {
+    try {
+      const [catalogue, redemptions] = await Promise.all([
+        api.get('/admin/rewards'),
+        api.get('/admin/rewards/redemptions', { params: { per_page: 100 } }),
+      ])
+
+      setRewards(unwrapList<Reward>(catalogue.data).data)
+      setLedger(unwrapList<RewardLedgerEntry>(redemptions.data).data)
+      setLoadError('')
+    } catch (err) {
+      setLoadError(fieldError(err).form ?? 'Could not load rewards.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const refreshMenu = useCallback(async () => {
+    try {
+      const response = await api.get('/menu', { params: { per_page: 100 } })
+      setMenuItems(unwrapList<MenuItem>(response.data).data)
+    } catch {
+      // Artwork is cosmetic: RewardThumb falls back to a letter tile.
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    void refreshMenu()
+  }, [refresh, refreshMenu])
+
+  /** id -> menu item, for names, prices and image_url. */
+  const menuById = useMemo(
+    () => new Map(menuItems.map((item) => [item.id, item])),
+    [menuItems],
+  )
+
+  /** reward key -> reward, so a ledger row's reward_key can be labelled. */
+  const rewardByKey = useMemo(
+    () => new Map(rewards.map((reward) => [reward.key, reward])),
+    [rewards],
+  )
+
+  /**
+   * Menu item ids that are not already rewarded.
+   *
+   * `rewards.key` is uniquely indexed and a reward's key is derived from its
+   * item's slug, so a second reward on the same item would be rejected by the
+   * unique index. Filtering here turns that 422 into an option that simply is
+   * not offered. While editing, the reward's own item stays selectable.
+   */
+  const availableItemIds = useMemo(() => {
+    // While editing, keep the reward's own item selectable so saving an
+    // unchanged item is not blocked by its own row.
+    const rewarded = new Set(
+      rewards
+        .filter((reward) => editing === null || reward.id !== editing.id)
+        .map((reward) => reward.menu_item_id)
+        .filter((id): id is number => id !== null),
+    )
+
+    return new Set(menuItems.map((item) => item.id).filter((id) => !rewarded.has(id)))
+  }, [rewards, menuItems, editing])
+
+  /** The menu item the draft is pointed at, if any. Drives the thumb + derived fields. */
+  const chosenItem = useMemo(
+    () => (draft.menu_item_id === '' ? null : (menuById.get(Number(draft.menu_item_id)) ?? null)),
+    [draft.menu_item_id, menuById],
+  )
+
+  /**
+   * Free items only. The API can still return `type: voucher` rows, but they
+   * cannot be created or edited here, so they are left out rather than rendered
+   * as rows with dead actions.
+   */
+  const freeItemRewards = useMemo(
+    () => rewards.filter((reward) => reward.type === 'free_item'),
+    [rewards],
+  )
+
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
-    return mockRewards.filter((reward) => {
+    return freeItemRewards.filter((reward) => {
       const matchesStatus =
         statusFilter === 'all' ||
         (statusFilter === 'active' ? reward.is_active : !reward.is_active)
       const matchesSearch =
-        term.length === 0 || reward.title.toLowerCase().includes(term)
+        term.length === 0 ||
+        rewardName(reward).toLowerCase().includes(term) ||
+        reward.key.toLowerCase().includes(term)
       return matchesStatus && matchesSearch
     })
-  }, [search, statusFilter])
+  }, [freeItemRewards, search, statusFilter])
 
-  /** Redemptions get their own search + status filter, like the catalogue. */
+  /**
+   * The redemption rows are ledger entries, not issued codes: there is no
+   * `status`, `code` or `expires_at` because points are spent instantly at
+   * checkout. Searching therefore covers the order number, the customer and the
+   * reward label.
+   */
   const redemptionRows = useMemo(() => {
     const term = redemptionSearch.trim().toLowerCase()
-    return mockRedemptions.filter((redemption) => {
-      const matchesStatus =
-        redemptionStatus === 'all' || redemption.status === redemptionStatus
-      const matchesSearch =
-        term.length === 0 ||
-        redemption.code.toLowerCase().includes(term) ||
-        (redemption.user?.name ?? '').toLowerCase().includes(term) ||
-        (redemption.user?.email ?? '').toLowerCase().includes(term) ||
-        (redemption.reward?.title ?? '').toLowerCase().includes(term)
-      return matchesStatus && matchesSearch
-    })
-  }, [redemptionSearch, redemptionStatus])
+    if (term.length === 0) return ledger
 
-  const activeCount = mockRewards.filter((reward) => reward.is_active).length
+    return ledger.filter((entry) => {
+      const rewardLabel =
+        entry.order?.reward_key != null
+          ? (rewardByKey.get(entry.order.reward_key)?.label ?? '')
+          : ''
+
+      return (
+        (entry.order?.order_number ?? '').toLowerCase().includes(term) ||
+        (entry.user?.name ?? '').toLowerCase().includes(term) ||
+        (entry.user?.email ?? '').toLowerCase().includes(term) ||
+        rewardLabel.toLowerCase().includes(term)
+      )
+    })
+  }, [ledger, redemptionSearch, rewardByKey])
+
+  const activeCount = freeItemRewards.filter((reward) => reward.is_active).length
 
   // The two tables are on separate tabs, so each keeps its own page index.
   const { data: pagedRows, meta } = paginate(
@@ -160,11 +255,6 @@ export default function AdminRewardsPage() {
     ),
     PER_PAGE,
   )
-  const totalPoints = mockRewards.reduce((sum, reward) => sum + reward.points_required, 0)
-  const avgRatio =
-    mockRewards.length > 0
-      ? (mockRewards.reduce((sum, r) => sum + Number(r.monetary_value ?? 0), 0) / totalPoints).toFixed(4)
-      : '0.0000'
 
   function flash(message: string) {
     setToast(message)
@@ -173,12 +263,14 @@ export default function AdminRewardsPage() {
 
   function openCreate() {
     setDraft(emptyDraft)
+    setFormErrors({})
     setSubmitted(false)
     setCreating(true)
   }
 
   function openEdit(reward: Reward) {
     setDraft(toDraft(reward))
+    setFormErrors({})
     setSubmitted(false)
     setCreating(false)
     setEditing(reward)
@@ -188,36 +280,125 @@ export default function AdminRewardsPage() {
     setCreating(false)
     setEditing(null)
     setSubmitted(false)
+    setFormErrors({})
   }
 
   /**
-   * Mirrors the backend's eventual validation, so mistakes surface in the form.
-   *
-   * Nothing is reported until `submitted`: an empty form should look like a form
-   * waiting to be filled in, not a list of complaints about itself. The messages
-   * appear on the first Create/Save attempt.
+   * Mirrors `AdminRewardController::enforceTypeRequirements` so mistakes surface
+   * in the form instead of coming back as a 422. The backend stays the
+   * authority; this only saves a round trip.
    */
-  const draftErrors = (() => {
+  const draftErrors = useMemo(() => {
     if (!submitted) return {} as Partial<Record<keyof Draft, string>>
 
     const errors: Partial<Record<keyof Draft, string>> = {}
-    if (!draft.title.trim()) errors.title = 'Title is required.'
-    if (!Number.isFinite(Number(draft.points_required)) || Number(draft.points_required) <= 0) {
-      errors.points_required = 'Must be a positive number of points.'
+
+    if (!Number.isFinite(Number(draft.points_cost)) || Number(draft.points_cost) < 0) {
+      errors.points_cost = 'Must be zero or more.'
     }
-    if (draft.monetary_value && Number(draft.monetary_value) < 0) {
-      errors.monetary_value = 'Must not be negative.'
-    }
-    if (draft.stock !== '' && Number(draft.stock) < 0) {
-      errors.stock = 'Must not be negative, or blank for unlimited.'
-    }
-    if (draft.type === 'free_item' && draft.menu_item_id === '') {
+    // Every reward is a free item now, so the menu item is always required —
+    // AdminRewardController::enforceTypeRequirements rejects a null one, and it
+    // is what `key` and `label` are derived from.
+    if (draft.menu_item_id === '') {
       errors.menu_item_id = 'Pick the menu item this reward gives away.'
     }
+
     return errors
-  })()
+  }, [submitted, draft])
 
   const hasDraftErrors = Object.keys(draftErrors).length > 0
+
+  async function save() {
+    setSubmitted(true)
+    if (hasDraftErrors) return
+
+    const chosen = draft.menu_item_id === '' ? null : (menuById.get(Number(draft.menu_item_id)) ?? null)
+
+    const payload: Record<string, unknown> = {
+      // Derived, not typed. Slug and name come from the menu item, which is why
+      // a reward can only be created from an item that already exists.
+      label: chosen?.name ?? '',
+      // `type` is still required by the API even though the form no longer
+      // offers a choice — the only type this page writes is free_item.
+      type: 'free_item',
+      points_cost: Number(draft.points_cost),
+      is_active: draft.is_active,
+      menu_item_id: draft.menu_item_id === '' ? null : Number(draft.menu_item_id),
+      // Explicitly null so a row can never become a voucher by accident, and so
+      // the API never holds a discount the UI has no way to show or edit.
+      discount_amount: null,
+      min_order_amount: null,
+    }
+
+    setSaving(true)
+    try {
+      if (editing) {
+        // `key` is deliberately absent: AdminRewardController@update does not
+        // validate it, so sending it would be ignored anyway.
+        await api.put(`/admin/rewards/${editing.id}`, payload)
+        flash(`${payload.label} updated`)
+      } else {
+        // The key is the menu item's slug. `rewards.key` is uniquely indexed and
+        // menu item slugs are unique, so a second reward on the same item would
+        // 422 — which is why the picker only offers items not already rewarded.
+        await api.post('/admin/rewards', { ...payload, key: chosen?.slug ?? '' })
+        flash(`${payload.label} created`)
+      }
+
+      close()
+      await refresh()
+    } catch (err) {
+      const errors = fieldError(err)
+      // Backend field errors replace the local ones so the form shows the
+      // authoritative message; anything else (409, 403, 500) is a form-level error.
+      setFormErrors(
+        Object.keys(errors.errors).length > 0
+          ? Object.fromEntries(
+              Object.entries(errors.errors).map(([key, messages]) => [key, messages[0] ?? '']),
+            )
+          : { form: errors.form },
+      )
+      flash(errors.form)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  /**
+   * Pause/activate is an ordinary update — the endpoint has no dedicated toggle,
+   * so the full payload is resent with the flipped flag.
+   */
+  async function toggleActive(reward: Reward) {
+    const next = !reward.is_active
+    try {
+      await api.put(`/admin/rewards/${reward.id}`, {
+        label: rewardName(reward),
+        type: 'free_item',
+        points_cost: reward.points_cost,
+        is_active: next,
+        menu_item_id: reward.menu_item_id,
+        discount_amount: null,
+        min_order_amount: null,
+      })
+      flash(`${rewardName(reward)} ${next ? 'activated' : 'paused'}`)
+      await refresh()
+    } catch (err) {
+      flash(fieldError(err).form ?? 'Could not update the reward.')
+    }
+  }
+
+  async function destroy(reward: Reward) {
+    if (!window.confirm(`Delete ${rewardName(reward)}? This cannot be undone.`)) return
+
+    try {
+      await api.delete(`/admin/rewards/${reward.id}`)
+      flash(`${rewardName(reward)} deleted`)
+      await refresh()
+    } catch (err) {
+      // 409 means a cart or order still cites this key, so the catalogue keeps it.
+      flash(fieldError(err).form ?? 'Could not delete the reward.')
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -227,9 +408,8 @@ export default function AdminRewardsPage() {
             Rewards &amp; Redemption
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {activeCount} active of {mockRewards.length} ·{' '}
-            {mockRewards.filter((r) => r.stock !== null).reduce((s, r) => s + (r.stock ?? 0), 0)}{' '}
-            units in stock · avg ₱{avgRatio} per point
+            {activeCount} active of {freeItemRewards.length} · customers redeem
+            points against this catalogue
           </p>
         </div>
         <Button onClick={openCreate}>+ New Reward</Button>
@@ -239,10 +419,19 @@ export default function AdminRewardsPage() {
         value={tab}
         onChange={setTab}
         options={[
-          { value: 'catalogue', label: 'Catalogue', count: mockRewards.length },
-          { value: 'redemptions', label: 'Redemptions', count: mockRedemptions.length },
+          { value: 'catalogue', label: 'Catalogue', count: freeItemRewards.length },
+          { value: 'redemptions', label: 'Redemptions', count: ledger.length },
         ]}
       />
+
+      {loadError && (
+        <p
+          role="alert"
+          className="rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 ring-1 ring-red-200 ring-inset dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30"
+        >
+          {loadError}
+        </p>
+      )}
 
       {tab === 'catalogue' && (
         <>
@@ -254,7 +443,7 @@ export default function AdminRewardsPage() {
                 setSearch(event.target.value)
                 setPage(1)
               }}
-              placeholder="Search rewards…"
+              placeholder="Search label or key…"
               aria-label="Search rewards"
               className="max-w-xs"
             />
@@ -275,144 +464,116 @@ export default function AdminRewardsPage() {
           </div>
 
           <Card>
-            <Table
-              rows={pagedRows}
-              rowKey={(reward) => reward.id}
-              empty={
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  No rewards match. Adjust the search or status filter.
-                </p>
-              }
-              columns={[
-                {
-                  key: 'title',
-                  header: 'Reward',
-                  render: (reward: Reward) => (
-                    <div className="flex items-center gap-3">
-                      <RewardThumb
-                        reward={reward}
-                        linkedItemImageUrl={
-                          reward.menu_item_id === null
-                            ? null
-                            : mockMenuItems.find((item) => item.id === reward.menu_item_id)
-                                ?.image_url ?? null
-                        }
-                      />
-                      <div className="min-w-0">
-                        <p className="font-extrabold text-slate-900 dark:text-white">
-                          {reward.title}
-                        </p>
-                        <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                          {reward.description ?? '—'}
-                        </p>
+            {loading && rewards.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+                Loading.
+              </p>
+            ) : (
+              <Table
+                rows={pagedRows}
+                rowKey={(reward) => reward.id}
+                empty={
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    No rewards match. Adjust the search or status filter.
+                  </p>
+                }
+                columns={[
+                  {
+                    key: 'label',
+                    header: 'Reward',
+                    render: (reward: Reward) => (
+                      <div className="flex items-center gap-3">
+                        <RewardThumb
+                          reward={reward}
+                          linkedItemImageUrl={
+                            reward.menu_item_id === null
+                              ? null
+                              : (menuById.get(reward.menu_item_id)?.image_url ?? null)
+                          }
+                        />
+                        <div className="min-w-0">
+                          <p className="font-extrabold text-slate-900 dark:text-white">
+                            {rewardName(reward)}
+                          </p>
+                          <p className="truncate font-mono text-xs text-slate-500 dark:text-slate-400">
+                            {reward.key}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ),
-                },
-                {
-                  key: 'type',
-                  header: 'Type',
-                  render: (reward: Reward) =>
-                    reward.type === 'voucher' ? (
-                      <Badge tone="info">Voucher</Badge>
-                    ) : (
-                      <Badge tone="neutral">Free item</Badge>
                     ),
-                },
-                {
-                  key: 'item',
-                  header: 'Gives away',
-                  render: (reward: Reward) => {
-                    const name = rewardItemName(reward)
-                    if (reward.type === 'voucher') return <span className="text-slate-400">—</span>
-                    return name ? (
-                      name
-                    ) : (
-                      <span className="font-semibold text-amber-600 dark:text-amber-400">
-                        no menu item
-                      </span>
-                    )
                   },
-                },
-                {
-                  key: 'points',
-                  header: 'Points',
-                  align: 'right',
-                  render: (reward: Reward) => (
-                    <span className="font-extrabold tabular-nums">
-                      {reward.points_required.toLocaleString()}
-                    </span>
-                  ),
-                },
-                {
-                  key: 'value',
-                  header: 'Value',
-                  align: 'right',
-                  render: (reward: Reward) =>
-                    reward.monetary_value ? (
-                      <span className="tabular-nums">{peso(reward.monetary_value)}</span>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    ),
-                },
-                {
-                  key: 'stock',
-                  header: 'Stock',
-                  align: 'center',
-                  render: (reward: Reward) =>
-                    reward.stock === null ? (
-                      <span className="text-slate-400">∞</span>
-                    ) : (
-                      <span
-                        className={`tabular-nums ${
-                          reward.stock === 0
-                            ? 'font-bold text-red-600 dark:text-red-400'
-                            : reward.stock < 10
-                              ? 'font-bold text-amber-600 dark:text-amber-400'
-                              : ''
-                        }`}
-                      >
-                        {reward.stock}
+                  {
+                    key: 'item',
+                    header: 'Gives away',
+                    render: (reward: Reward) => {
+                      const name =
+                        reward.menu_item?.name ??
+                        (reward.menu_item_id === null
+                          ? null
+                          : (menuById.get(reward.menu_item_id)?.name ?? null))
+
+                      return name ? (
+                        name
+                      ) : (
+                        <span className="font-semibold text-amber-600 dark:text-amber-400">
+                          no menu item
+                        </span>
+                      )
+                    },
+                  },
+                  {
+                    key: 'points',
+                    header: 'Points',
+                    align: 'right',
+                    render: (reward: Reward) => (
+                      <span className="font-extrabold tabular-nums">
+                        {reward.points_cost.toLocaleString()}
                       </span>
                     ),
-                },
-                {
-                  key: 'status',
-                  header: 'Status',
-                  render: (reward: Reward) =>
-                    reward.is_active ? (
-                      <Badge tone="success">Active</Badge>
-                    ) : (
-                      <Badge tone="neutral">Paused</Badge>
+                  },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    render: (reward: Reward) =>
+                      reward.is_active ? (
+                        <Badge tone="success">Active</Badge>
+                      ) : (
+                        <Badge tone="neutral">Paused</Badge>
+                      ),
+                  },
+                  {
+                    key: 'actions',
+                    header: '',
+                    align: 'right',
+                    render: (reward: Reward) => (
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          className="px-2.5 py-1 text-xs"
+                          onClick={() => void toggleActive(reward)}
+                        >
+                          {reward.is_active ? 'Pause' : 'Activate'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="px-2.5 py-1 text-xs"
+                          onClick={() => openEdit(reward)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="px-2.5 py-1 text-xs"
+                          onClick={() => void destroy(reward)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     ),
-                },
-                {
-                  key: 'actions',
-                  header: '',
-                  align: 'right',
-                  render: (reward: Reward) => (
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        className="px-2.5 py-1 text-xs"
-                        onClick={() =>
-                          flash(`${reward.title} ${reward.is_active ? 'paused' : 'activated'}`)
-                        }
-                      >
-                        {reward.is_active ? 'Pause' : 'Activate'}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="px-2.5 py-1 text-xs"
-                        onClick={() => openEdit(reward)}
-                      >
-                        Edit
-                      </Button>
-                    </div>
-                  ),
-                },
-              ]}
-            />
+                  },
+                ]}
+              />
+            )}
             <div className="mt-4">
               <Pagination
                 page={meta.current_page}
@@ -437,130 +598,117 @@ export default function AdminRewardsPage() {
                 setRedemptionSearch(event.target.value)
                 setRedemptionPage(1)
               }}
-              placeholder="Search code, customer or reward…"
+              placeholder="Search order, customer or reward…"
               aria-label="Search redemptions"
               className="max-w-xs"
             />
-            <div className="w-40">
-              <Select
-                aria-label="Filter redemptions by status"
-                value={redemptionStatus}
-                onChange={(event) => {
-                  setRedemptionStatus(event.target.value as typeof redemptionStatus)
-                  setRedemptionPage(1)
-                }}
-              >
-                <option value="all">All Status</option>
-                {REDEMPTION_STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {statusLabel(status)}
-                  </option>
-                ))}
-              </Select>
-            </div>
           </div>
 
-          <Card description="Customers redeem points against this catalogue. Codes are single-use.">
+          <Card description="Points are spent the moment an order is placed, so these are ledger rows rather than issued codes — there is nothing for a customer to present and nothing to expire.">
             <Table
               rows={pagedRedemptions}
-              rowKey={(redemption) => redemption.id}
+              rowKey={(entry) => entry.id}
               empty={
-                redemptionSearch.trim() !== '' || redemptionStatus !== 'all' ? (
-                  <p className="text-sm text-slate-500 dark:text-slate-400">
-                    No redemptions match. Adjust the search or status filter.
-                  </p>
-                ) : (
-                  <p className="text-sm text-slate-500">No redemptions yet.</p>
-                )
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {redemptionSearch.trim() !== ''
+                    ? 'No redemptions match the search.'
+                    : 'No points have been spent yet.'}
+                </p>
               }
               columns={[
                 {
-                  key: 'code',
-                  header: 'Code',
-                render: (redemption: RewardRedemption) => (
-                  <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-extrabold tracking-wider text-slate-900 dark:bg-slate-800 dark:text-slate-100">
-                    {redemption.code}
-                  </span>
-                ),
-              },
-              {
-                key: 'customer',
-                header: 'Customer',
-                render: (redemption: RewardRedemption) => (
-                  <div>
-                    <p className="font-bold">{redemption.user?.name ?? '—'}</p>
-                    {redemption.user?.email && (
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {redemption.user.email}
-                      </p>
-                    )}
-                  </div>
-                ),
-              },
-              {
-                key: 'reward',
-                header: 'Reward',
-                render: (redemption: RewardRedemption) => (
-                  <span className="font-semibold">{redemption.reward?.title ?? '—'}</span>
-                ),
-              },
-              {
-                key: 'spent',
-                header: 'Points',
-                align: 'right',
-                render: (redemption: RewardRedemption) => (
-                  <span className="font-extrabold tabular-nums">
-                    −{redemption.points_spent.toLocaleString()}
-                  </span>
-                ),
-              },
-              {
-                key: 'redeemed',
-                header: 'Redeemed',
-                render: (redemption: RewardRedemption) => (
-                  <span className="text-slate-500 dark:text-slate-400">
-                    {formatDate(redemption.redeemed_at)}
-                  </span>
-                ),
-              },
-              {
-                key: 'expires',
-                header: 'Expires',
-                render: (redemption: RewardRedemption) => (
-                  <span className="text-slate-500 dark:text-slate-400">
-                    {formatDate(redemption.expires_at)}
-                  </span>
-                ),
-              },
-              {
-                key: 'status',
-                header: 'Status',
-                render: (redemption: RewardRedemption) => (
-                  <Badge tone={redemptionTone[redemption.status]}>
-                    {statusLabel(redemption.status)}
-                  </Badge>
-                ),
-              },
-            ]}
-          />
-          <div className="mt-4">
-            <Pagination
-              page={redemptionMeta.current_page}
-              lastPage={redemptionMeta.last_page}
-              total={redemptionMeta.total}
-              perPage={redemptionMeta.per_page}
-              itemLabel="redemptions"
-              onPageChange={setRedemptionPage}
+                  key: 'order',
+                  header: 'Order',
+                  render: (entry: RewardLedgerEntry) =>
+                    entry.order ? (
+                      <span className="font-extrabold tabular-nums">
+                        {entry.order.order_number}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    ),
+                },
+                {
+                  key: 'customer',
+                  header: 'Customer',
+                  render: (entry: RewardLedgerEntry) => (
+                    <div>
+                      <p className="font-bold">{entry.user?.name ?? '—'}</p>
+                      {entry.user?.email && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {entry.user.email}
+                        </p>
+                      )}
+                    </div>
+                  ),
+                },
+                {
+                  key: 'reward',
+                  header: 'Reward',
+                  render: (entry: RewardLedgerEntry) => {
+                    const key = entry.order?.reward_key
+                    if (!key) return <span className="text-slate-400">—</span>
+
+                    const reward = rewardByKey.get(key)
+
+                    return reward ? (
+                      <span className="font-semibold">{rewardName(reward)}</span>
+                    ) : (
+                      <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                        {key}
+                      </span>
+                    )
+                  },
+                },
+                {
+                  key: 'spent',
+                  header: 'Points',
+                  align: 'right',
+                  render: (entry: RewardLedgerEntry) => (
+                    <span className="font-extrabold tabular-nums text-red-600 dark:text-red-400">
+                      −{Math.abs(entry.points_delta).toLocaleString()}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'balance',
+                  header: 'Balance after',
+                  align: 'right',
+                  render: (entry: RewardLedgerEntry) => (
+                    <span className="tabular-nums text-slate-500 dark:text-slate-400">
+                      {entry.balance_after.toLocaleString()}
+                    </span>
+                  ),
+                },
+                {
+                  key: 'date',
+                  header: 'Spent',
+                  render: (entry: RewardLedgerEntry) => (
+                    <span className="text-slate-500 dark:text-slate-400">
+                      {formatDate(entry.created_at)}
+                    </span>
+                  ),
+                },
+              ]}
             />
-          </div>
-        </Card>
+            <div className="mt-4">
+              <Pagination
+                page={redemptionMeta.current_page}
+                lastPage={redemptionMeta.last_page}
+                total={redemptionMeta.total}
+                perPage={redemptionMeta.per_page}
+                itemLabel="redemptions"
+                onPageChange={setRedemptionPage}
+              />
+            </div>
+          </Card>
         </>
       )}
 
       <Modal
         open={creating || editing !== null}
         onClose={close}
-        title={editing ? `Edit ${editing.title}` : 'New reward'}
+        title={editing ? `Edit ${editing.label}` : 'New reward'}
         description={
           editing
             ? 'Changes take effect immediately on the customer app.'
@@ -574,13 +722,8 @@ export default function AdminRewardsPage() {
             <Button
               // Not disabled on an empty form — clicking is what reveals the
               // messages, so a greyed-out button would leave the user stuck.
-              disabled={submitted && hasDraftErrors}
-              onClick={() => {
-                setSubmitted(true)
-                if (hasDraftErrors) return
-                flash(editing ? `${editing.title} updated` : `${draft.title || 'Reward'} created`)
-                close()
-              }}
+              disabled={saving || (submitted && hasDraftErrors)}
+              onClick={() => void save()}
             >
               {editing ? 'Save Changes' : 'Create Reward'}
             </Button>
@@ -588,96 +731,55 @@ export default function AdminRewardsPage() {
         }
       >
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-<div className="sm:col-span-2 flex items-center gap-4 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200 ring-inset dark:bg-slate-800/50 dark:ring-slate-700">
-              <RewardThumb
-                size="lg"
-                reward={{
-                  id: editing?.id ?? 0,
-                  title: draft.title || 'New reward',
-                  description: draft.description || null,
-                  type: draft.type,
-                  points_required: Number(draft.points_required) || 0,
-                  monetary_value: draft.monetary_value || null,
-                  menu_item_id: draft.menu_item_id === '' ? null : Number(draft.menu_item_id),
-                  stock: draft.stock === '' ? null : Number(draft.stock),
-                  emoji: draft.emoji || null,
-                  is_active: draft.is_active,
-                  created_at: editing?.created_at ?? null,
-                  updated_at: editing?.updated_at ?? null,
-                }}
-                linkedItemImageUrl={
-                  draft.menu_item_id === ''
-                    ? null
-                    : mockMenuItems.find((item) => item.id === Number(draft.menu_item_id))
-                        ?.image_url ?? null
-                }
-              />
-              <div className="min-w-0">
-                <p className="text-sm font-extrabold text-slate-900 dark:text-white">
-                  {draft.title || 'New reward'}
-                </p>
-                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                  {draft.type === 'voucher'
-                    ? 'Vouchers have no menu item, so this falls back to the emoji.'
-                    : draft.menu_item_id === ''
-                      ? 'Pick a menu item and its artwork appears here.'
-                      : 'Artwork comes from the linked menu item.'}
-                </p>
-                <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 text-xs text-amber-800 ring-1 ring-amber-200 ring-inset dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30">
-                  <span className="font-extrabold">Design-only.</span> Rewards have no image field:
-                  there is no <span className="font-semibold">rewards</span> table yet, and neither
-                  <span className="font-semibold"> image_url </span> nor
-                  <span className="font-semibold"> emoji </span> exist as columns. Artwork is
-                  derived from <span className="font-semibold">menu_items.image_url</span>; the
-                  emoji is carried over from mobile.
-                </p>
-              </div>
-            </div>
-            <div className="sm:col-span-2">
-              <Label htmlFor="rw-title" className="mb-1.5">
-                Title
-              </Label>
-              <Input
-                id="rw-title"
-                value={draft.title}
-                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
-                placeholder="Free Chickenjoy 1pc"
-              />
-              {draftErrors.title && (
-                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{draftErrors.title}</p>
-              )}
-            </div>
-
-          <div>
-            <Label htmlFor="rw-emoji" className="mb-1.5">
-              Emoji <span className="font-normal text-slate-400">(optional)</span>
-            </Label>
-            <Input
-              id="rw-emoji"
-              value={draft.emoji}
-              onChange={(event) => setDraft({ ...draft, emoji: event.target.value })}
-              placeholder="🍗"
-              className="text-lg"
+          <div className="sm:col-span-2 flex items-center gap-4 rounded-xl bg-slate-50 p-3 ring-1 ring-slate-200 ring-inset dark:bg-slate-800/50 dark:ring-slate-700">
+            <RewardThumb
+              size="lg"
+              reward={{
+                id: editing?.id ?? 0,
+                key: chosenItem?.slug ?? 'new-reward',
+                label: chosenItem?.name ?? 'New reward',
+                type: 'free_item',
+                points_cost: Number(draft.points_cost) || 0,
+                menu_item_id: draft.menu_item_id === '' ? null : Number(draft.menu_item_id),
+                discount_amount: null,
+                min_order_amount: null,
+                is_active: draft.is_active,
+                created_at: editing?.created_at ?? null,
+                updated_at: editing?.updated_at ?? null,
+              }}
+              linkedItemImageUrl={chosenItem?.image_url ?? null}
             />
+            <p className="min-w-0 truncate text-sm font-extrabold text-slate-900 dark:text-white">
+              {chosenItem?.name ?? 'New reward'}
+            </p>
           </div>
 
-          {draft.type === 'free_item' && (
-            <div className="sm:col-span-2">
-              <Label htmlFor="rw-item" className="mb-1.5">
-                Menu item given away
-              </Label>
-              <Select
-                id="rw-item"
-                value={draft.menu_item_id}
-                onChange={(event) => setDraft({ ...draft, menu_item_id: event.target.value })}
-              >
-                <option value="">Select a menu item…</option>
-                {mockMenuItems
-                  .filter((item) => item.is_available)
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} — {peso(item.base_price)}
-                    </option>
+          {formErrors.form && (
+            <p
+              role="alert"
+              className="sm:col-span-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-700 ring-1 ring-red-200 ring-inset dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30"
+            >
+              {formErrors.form}
+            </p>
+          )}
+
+          <div className="sm:col-span-2">
+            <Label htmlFor="rw-item" className="mb-1.5">
+              Menu item given away
+            </Label>
+            <Select
+              id="rw-item"
+              value={draft.menu_item_id}
+              disabled={editing !== null}
+              onChange={(event) => setDraft({ ...draft, menu_item_id: event.target.value })}
+            >
+              <option value="">Select a menu item…</option>
+              {menuItems
+                .filter((item) => item.is_available && availableItemIds.has(item.id))
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} — {peso(item.base_price)}
+                  </option>
                   ))}
               </Select>
               {draftErrors.menu_item_id && (
@@ -686,65 +788,27 @@ export default function AdminRewardsPage() {
                 </p>
               )}
             </div>
-          )}
 
-          <div>
-            <Label htmlFor="rw-points" className="mb-1.5">
-              Points required
-            </Label>
-            <Input
-              id="rw-points"
-              type="number"
-              min="1"
-              value={draft.points_required}
-              onChange={(event) => setDraft({ ...draft, points_required: event.target.value })}
-              placeholder="500"
-            />
-            {draftErrors.points_required && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                {draftErrors.points_required}
-              </p>
-            )}
-          </div>
+            <div>
+              <Label htmlFor="rw-points" className="mb-1.5">
+                Points required
+              </Label>
+              <Input
+                id="rw-points"
+                type="number"
+                min="0"
+                value={draft.points_cost}
+                onChange={(event) => setDraft({ ...draft, points_cost: event.target.value })}
+                placeholder="500"
+              />
+              {draftErrors.points_cost && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">
+                  {draftErrors.points_cost}
+                </p>
+              )}
+            </div>
 
-          <div>
-            <Label htmlFor="rw-value" className="mb-1.5">
-              Cash value (₱)
-            </Label>
-            <Input
-              id="rw-value"
-              type="number"
-              min="0"
-              step="0.01"
-              value={draft.monetary_value}
-              onChange={(event) => setDraft({ ...draft, monetary_value: event.target.value })}
-              placeholder="109.00"
-            />
-            {draftErrors.monetary_value && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">
-                {draftErrors.monetary_value}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <Label htmlFor="rw-stock" className="mb-1.5">
-              Stock <span className="font-normal text-slate-400">(blank = unlimited)</span>
-            </Label>
-            <Input
-              id="rw-stock"
-              type="number"
-              min="0"
-              value={draft.stock}
-              onChange={(event) => setDraft({ ...draft, stock: event.target.value })}
-              placeholder="Unlimited"
-            />
-            {draftErrors.stock && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{draftErrors.stock}</p>
-            )}
-          </div>
-
-          <div className="flex items-end pb-1">
+            <div className="flex items-end pb-1">
             <label className="flex cursor-pointer items-center gap-2 text-sm font-bold text-slate-700 dark:text-slate-300">
               <input
                 type="checkbox"
@@ -755,21 +819,7 @@ export default function AdminRewardsPage() {
               Active
             </label>
           </div>
-
-          <div className="sm:col-span-2">
-            <Label htmlFor="rw-desc" className="mb-1.5">
-              Description
-            </Label>
-            <Textarea
-              id="rw-desc"
-              rows={2}
-              value={draft.description}
-              onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-              placeholder="Redeem for a free 1pc Chickenjoy"
-            />
-          </div>
-
-          </div>
+        </div>
       </Modal>
 
       {toast && (
